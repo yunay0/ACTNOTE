@@ -1,0 +1,27 @@
+---
+description: API 비용 가드레일
+globs: "**/*.py"
+alwaysApply: true
+---
+
+# API 비용 가드레일
+
+## 비용 단가 (2026.05 기준)
+- OpenAI Whisper API: $0.006/분
+- Claude Sonnet 4.6: input $3/Mtok, output $15/Mtok
+- 한 회의(60분) 처리 = 약 $0.42
+
+## 가드레일 규칙
+- 한 회의 처리당 $1 초과 예상 시 경고 출력
+- 누적 비용 $10 초과 시 자동 중단 + 사용자 confirmation 필요
+- 모든 API 호출은 cost_tracker 모듈 통해 기록
+
+## API 키 보안
+- 절대 코드에 하드코딩 금지
+- 항상 .env에서 로드
+- .env는 .gitignore에 무조건 포함
+
+## 호출 패턴
+- API 호출 실패 시 명확한 에러 메시지
+- 재시도는 최대 2회 (exponential backoff)
+- 무한 루프·재귀 호출 절대 금지

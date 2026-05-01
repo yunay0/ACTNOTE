@@ -1,0 +1,32 @@
+---
+description: 패키지 의존성 관리 규칙
+alwaysApply: true
+---
+
+# 의존성 관리
+
+## 사용 도구
+- uv 전용 (uv add, uv sync, uv run)
+- pip install 금지
+- requirements.txt 만들지 말 것 (pyproject.toml 단일)
+
+## 신규 패키지 추가 절차
+1. uv add <package> 명령어 사용
+2. pyproject.toml 변경 확인
+3. 코드에서 import 후 동작 확인
+
+## 허용된 패키지 (이외 추가 시 사용자에게 확인)
+- openai
+- anthropic
+- pyannote.audio
+- pydub
+- python-dotenv
+- typer (CLI 진입점, 선택)
+- rich (콘솔 출력 예쁘게, 선택)
+- jiwer (WER 등 전사 오류율, 선택)
+
+## 금지 패키지 (이거 쓰지 말 것)
+- flask, fastapi, django (웹 프레임워크)
+- sqlalchemy, supabase (DB)
+- celery, rq (큐)
+- requests (대신 httpx 사용)

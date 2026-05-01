@@ -1,0 +1,28 @@
+---
+description: Actnote 프로젝트 전체 컨텍스트
+alwaysApply: true
+---
+
+# Actnote 프로젝트
+
+## 목적
+음성 파일 → STT → 화자 분리 → LLM 액션 아이템 추출 풀 파이프라인을 
+콘솔에서 실행 가능하게 만들기.
+
+## 단계
+1주차 1일차. UI/DB/인증 없음. 콘솔 출력만.
+
+## 절대 추가하지 말 것
+- 웹 UI (Flask, FastAPI, Streamlit 등)
+- DB (Supabase, PostgreSQL 등)
+- 사용자 인증
+- 백그라운드 큐 (Celery, RQ 등)
+- 외부 통합 (Notion, Slack, Jira)
+- Docker 설정
+- 배포 설정 (Vercel, Railway 등)
+- 한국어 처리 (영어 only)
+
+## 핵심 차별점 (참고만, MVP에선 구현 X)
+- Draft → Publish 거버넌스
+- Notion DB 액션 아이템 자동 등록
+- 3층 RAG 컨텍스트
