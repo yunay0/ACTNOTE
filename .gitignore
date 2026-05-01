@@ -1,0 +1,37 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env
+.venv/
+venv/
+
+# uv
+.uv/
+
+# Test / output artifacts
+test_data/
+output/
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Note: .cursor/rules/ is intentionally tracked (project rules belong in repo)
