@@ -32,6 +32,22 @@ MAX_RETRIES: int = 2
 
 _console = Console()
 
+_client: OpenAI | None = None
+
+
+def _get_client() -> OpenAI:
+    """OpenAI 클라이언트를 lazy singleton 으로 생성/재사용한다."""
+    global _client
+    if _client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "OPENAI_API_KEY가 설정되지 않았습니다.\n"
+                "  .env 파일에 OPENAI_API_KEY=sk-... 을 추가하세요. (.env.example 참고)"
+            )
+        _client = OpenAI(api_key=api_key)
+    return _client
+
 
 def transcribe(
     audio_path: str,
@@ -58,13 +74,7 @@ def transcribe(
             f"오디오 파일을 찾을 수 없습니다: {audio_path}\n"
             f"  test_data/ 폴더에 파일을 두고 다시 시도하세요."
         )
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "OPENAI_API_KEY가 설정되지 않았습니다.\n"
-            "  .env 파일에 OPENAI_API_KEY=sk-... 을 추가하세요. (.env.example 참고)"
-        )
-    client = OpenAI(api_key=api_key)
+    client = _get_client()
     tr = tracker if tracker is not None else cost_tracker.default_tracker
 
     audio = AudioSegment.from_file(str(path))
@@ -202,7 +212,7 @@ if __name__ == "__main__":
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
     preview = result["text"][:200] + ("..." if len(result["text"]) > 200 else "")
-    _console.print(f"\n[green]✓[/] 저장: {out_path}")
+    _console.print(f"\n[green][OK][/] 저장: {out_path}")
     _console.print(f"  duration = {result['duration']:.1f}s, segments = {len(result['segments'])}")
     _console.print(f"  text 미리보기:\n    {preview}")
     cost_tracker.print_cost_summary()

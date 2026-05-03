@@ -57,6 +57,8 @@ def main(
     confirm: bool = typer.Option(False, "--confirm", help="비용 확인 후 진행 (y/n 프롬프트 생략)"),
     chunk_test: bool = typer.Option(False, "--chunk-test", help="청크 비교 CSV (chunk_comparison.csv)"),
     language: str = typer.Option("en", "--language", "-l", help="Whisper STT 언어 코드 (예: en, ko)"),
+    user_id: str = typer.Option("bench-user", "--user-id", help="벤치마크용 사용자 ID"),
+    workspace_id: str = typer.Option("bench-workspace", "--workspace-id", help="벤치마크용 워크스페이스 ID"),
 ) -> None:
     """test_data 폴더의 오디오마다 파이프라인을 돌리고 CSV로 집계한다."""
     root = Path(test_data).resolve()
@@ -127,6 +129,9 @@ def main(
         try:
             res = run_pipeline(
                 str(path),
+                user_id=user_id,
+                workspace_id=workspace_id,
+                meeting_id=path.stem,
                 output_dir=str(sub),
                 meeting_title=None,
                 tracker=batch_tracker,
