@@ -73,7 +73,7 @@ def diarize(audio_path: str) -> list[DiarizationSegment]:
         pipeline.to(torch.device("cpu"))
         annotation = pipeline(audio_input)
     elapsed = time.perf_counter() - t0
-    _console.print(f"[green]✓[/] 화자 분리 완료 ({elapsed:.1f}s)")
+    _console.print(f"[green][OK][/] 화자 분리 완료 ({elapsed:.1f}s)")
 
     # pyannote 4.x 호환: DiarizeOutput → 내부 Annotation 추출 (3.x/legacy는 Annotation 직접 반환)
     if hasattr(annotation, "speaker_diarization"):
@@ -186,7 +186,7 @@ if __name__ == "__main__":
         json.dumps(segments, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     speakers = sorted({s["speaker"] for s in segments})
-    _console.print(f"\n[green]✓[/] 저장: {out_path}")
+    _console.print(f"\n[green][OK][/] 저장: {out_path}")
     _console.print(f"  발화 구간 수: {len(segments)}")
     _console.print(f"  감지된 화자 수: {len(speakers)} ({', '.join(speakers)})")
     _console.print("  처음 5개 구간:")

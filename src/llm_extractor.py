@@ -45,6 +45,22 @@ SYSTEM_PROMPT = (
 
 _console = Console()
 
+_client: anthropic.Anthropic | None = None
+
+
+def _get_client() -> anthropic.Anthropic:
+    """Anthropic 클라이언트를 lazy singleton 으로 생성/재사용한다."""
+    global _client
+    if _client is None:
+        key = os.getenv("ANTHROPIC_API_KEY")
+        if not key:
+            raise ValueError(
+                "ANTHROPIC_API_KEY가 설정되지 않았습니다.\n"
+                "  .env 파일에 ANTHROPIC_API_KEY=sk-ant-api03-... 을 추가하세요."
+            )
+        _client = anthropic.Anthropic(api_key=key)
+    return _client
+
 
 def extract(
     formatted_transcript: str,
@@ -52,13 +68,6 @@ def extract(
     tracker: cost_tracker.CostTracker | None = None,
 ) -> ExtractedResult:
     """Claude Sonnet 4.6으로 회의 정보 추출."""
-    key = os.getenv("ANTHROPIC_API_KEY")
-    if not key:
-        raise ValueError(
-            "ANTHROPIC_API_KEY가 설정되지 않았습니다.\n"
-            "  .env 파일에 ANTHROPIC_API_KEY=sk-ant-api03-... 을 추가하세요."
-        )
-
     tr = tracker if tracker is not None else cost_tracker.default_tracker
 
     est_in = max(1, len(SYSTEM_PROMPT + formatted_transcript) // 4)
@@ -67,7 +76,7 @@ def extract(
     ) * cost_tracker.CLAUDE_SONNET_OUTPUT_PRICE_PER_MTOK
     tr.check_guardrail(est_cost)
 
-    client = anthropic.Anthropic(api_key=key)
+    client = _get_client()
     mt = meeting_title.strip() if meeting_title else ""
     provided = mt if mt else "Not provided, please generate"
     user_prompt = (

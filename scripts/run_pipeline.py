@@ -54,6 +54,13 @@ def main(
     output: str = typer.Option("output", help="결과 저장 폴더"),
     title: str | None = typer.Option(None, help="회의 제목 (선택)"),
     language: str = typer.Option("en", "--language", "-l", help="Whisper STT 언어 코드 (예: en, ko)"),
+    user_id: str = typer.Option("cli-user", "--user-id", help="요청 사용자 ID (CLI 기본값: cli-user)"),
+    workspace_id: str = typer.Option(
+        "cli-workspace", "--workspace-id", help="워크스페이스 ID (CLI 기본값: cli-workspace)"
+    ),
+    meeting_id: str | None = typer.Option(
+        None, "--meeting-id", help="회의 ID (생략 시 오디오 파일 stem 사용)"
+    ),
 ) -> None:
     """ACTNOTE 파이프라인 실행."""
     audio_path = Path(audio)
@@ -61,7 +68,16 @@ def main(
         _console.print(f"[red]파일 없음:[/] {audio_path}")
         raise typer.Exit(code=1)
 
-    result = run_pipeline(str(audio_path), output_dir=output, meeting_title=title, language=language)
+    mid = meeting_id or audio_path.stem
+    result = run_pipeline(
+        str(audio_path),
+        user_id=user_id,
+        workspace_id=workspace_id,
+        meeting_id=mid,
+        output_dir=output,
+        meeting_title=title,
+        language=language,
+    )
     print_results(result)
 
 
