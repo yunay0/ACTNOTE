@@ -1,0 +1,50 @@
+---
+description: ACTNOTE 도메인 모델 및 데이터 구조
+alwaysApply: true
+---
+
+# ACTNOTE Domain Model
+
+## 핵심 엔티티
+
+### meetings (회의)
+- 처리 상태 6단계: uploaded → transcribing → diarizing → summarizing → ready → error
+- 각 상태에 맞는 UI 표시 필수 (progress bar)
+
+### action_items (액션 아이템)
+- Bi-temporal: valid_from, valid_until 컬럼으로 시간 추적
+- 현재 유효한 액션만 표시: WHERE valid_until IS NULL
+- 변경 이력: superseded_by로 연결된 row 추적
+- change_type: 'ADD' | 'UPDATE' | 'DELETE'
+
+### decisions (결정사항)
+- 동일하게 Bi-temporal
+- 결정사항이 변경되면 기존 row의 valid_until = now()
+  새 row 추가, superseded_by로 연결
+
+## A.U.D.N 사이클 (백엔드 처리)
+새 회의 처리 시 LLM이 결정:
+- ADD: 완전히 새로운 액션
+- UPDATE: 기존 액션의 마감일/담당자 변경
+- DELETE: "취소됐어" 발화 → status를 cancelled로
+- NOOP: 중복, 무시
+
+## UI 표시 우선순위
+
+### 회의 상세 페이지에 보여줄 것
+1. 회의 메타: 제목, 날짜, 처리 상태
+2. 요약 (summary): 전체 회의 한 단락
+3. 결정사항 (현재 유효한 것만)
+4. 액션 아이템 (현재 유효한 것만)
+5. 각 항목 클릭 시 → 변경 이력 모달
+
+### 변경 타임라인 표시 규칙
+- ADD: 파란색 점
+- UPDATE: 주황색 점 (이전 row와 연결선)
+- DELETE: 빨간색 점 (취소선)
+- 시간순 정렬
+
+## 워크스페이스 격리
+- 모든 데이터는 workspace_id로 격리
+- 사용자는 자신이 속한 workspace의 데이터만 봐야 함
+- 회원가입 시 워크스페이스 자동 생성 (트리거 002)
