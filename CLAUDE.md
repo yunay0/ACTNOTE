@@ -33,13 +33,13 @@
 - 그 외에는 A에게 연락
 
 ## 프로젝트 폴더 구조
-actnote/                     ← 백엔드 (Python)
+이 Git 레포 루트 = 백엔드 (Python). `actnote/` 같은 중첩 폴더는 없음.
 ├── src/
 ├── scripts/
 ├── migrations/
 └── output/
 
-actnote-web/                 ← 프론트엔드 (Next.js, 신규)
+actnote-web/                 ← 프론트엔드 (Next.js, 동일 레포 내 신규 디렉터리)
 ├── app/
 ├── components/
 └── lib/
