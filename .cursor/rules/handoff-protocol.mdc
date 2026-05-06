@@ -1,0 +1,36 @@
+---
+description: 백엔드(A)와 프론트엔드(B) 협업 프로토콜
+alwaysApply: true
+---
+
+# Backend-Frontend Handoff Protocol
+
+## 1. DB 스키마는 A가 줌
+- migrations/*.sql 파일은 A가 작성
+- B는 Supabase SQL Editor에서 실행만
+- 실행 순서 절대 지킬 것: 001 → 002 → 003 → 004
+
+## 2. API는 Supabase 직접 호출이 기본
+- 별도 백엔드 API 만들지 않음
+- 권한은 RLS가 자동 처리
+- 단, 파이프라인 트리거(meeting/process)만 Inngest 이벤트 발송
+
+## 3. 파일 업로드 흐름
+1. 사용자가 파일 선택
+2. supabase.storage.from('meetings').upload(...)
+3. meetings 테이블에 row insert (status: 'uploaded')
+4. /api/trigger-pipeline POST → Inngest 이벤트 발송
+5. UI는 meeting.status를 polling 또는 realtime subscribe
+
+## 4. 막혔을 때
+- DB 쿼리 안 됨 → RLS 정책 확인
+- 인증 안 됨 → supabase 클라이언트 종류 확인 (browser vs server)
+- 데이터 없음 → workspace_id 일치 확인
+- A에게 연락
+
+## 5. 환경변수 동기화
+B가 Next.js에서 필요한 환경변수:
+- NEXT_PUBLIC_SUPABASE_URL
+- NEXT_PUBLIC_SUPABASE_ANON_KEY (service_role 아님)
+
+이 두 개는 B가 직접 Supabase 대시보드 → Settings → API에서 가져옴.
