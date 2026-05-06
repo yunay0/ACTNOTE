@@ -1,6 +1,15 @@
 ---
 description: Next.js + Supabase 프론트엔드 코딩 규칙
-globs: ["**/*.tsx", "**/*.ts", "app/**/*", "components/**/*"]
+globs:
+  - "**/*.tsx"
+  - "**/*.ts"
+  - "app/**/*"
+  - "components/**/*"
+  - "actnote-web/**/*.tsx"
+  - "actnote-web/**/*.ts"
+  - "actnote-web/app/**/*"
+  - "actnote-web/components/**/*"
+  - "actnote-web/lib/**/*"
 alwaysApply: true
 ---
 
@@ -12,12 +21,14 @@ alwaysApply: true
 - Tailwind CSS
 - shadcn/ui
 - Supabase JS Client v2
+- App Router SSR/쿠키: `@supabase/ssr`
 
 ## 필수 원칙
 
 ### 1. Supabase 클라이언트 분리
-- 클라이언트 컴포넌트: createBrowserClient (anon 키 사용)
-- 서버 컴포넌트: createServerClient (anon 키 + 쿠키)
+- App Router: `@supabase/ssr`의 `createBrowserClient` / `createServerClient`와 쿠키 유틸(`cookies()`)로 세션 연동
+- 클라이언트 컴포넌트: `createBrowserClient` (anon 키)
+- 서버 컴포넌트·Route Handler·Server Actions: `createServerClient` (anon 키 + 쿠키)
 - API 라우트만 service_role 사용 가능
 - service_role 키는 절대 클라이언트 코드에 노출 금지
 
@@ -27,8 +38,9 @@ alwaysApply: true
 - 단, 명시적으로 쓰면 가독성 ↑
 
 ### 3. 타입 안전성
-- Supabase 타입 자동 생성 사용:
-  npx supabase gen types typescript --project-id {id} > types/supabase.ts
+- Supabase 타입 자동 생성 → `lib/types/supabase.ts`에 저장 (actnote-web 루트 기준)
+- actnote-web 디렉터리에서: `npx supabase gen types typescript --project-id {id} > lib/types/supabase.ts`
+- 레포 루트에서: `npx supabase gen types typescript --project-id {id} > actnote-web/lib/types/supabase.ts`
 - 모든 쿼리에 타입 적용
 
 ### 4. 데이터 페칭 패턴
@@ -36,17 +48,18 @@ alwaysApply: true
 - 클라이언트 컴포넌트에서는 변경되는 데이터만
 - Realtime은 처리 상태(progress) 표시용으로만
 
-### 5. 폴더 구조
-app/
-├── (auth)/login, signup
-├── (dashboard)/meetings, meetings/[id], meetings/new
-├── api/ (서버 라우트)
-components/
-├── ui/ (shadcn)
-├── meetings/ (도메인 컴포넌트)
-lib/
-├── supabase/ (client, server)
-├── types/
+### 5. 폴더 구조 (actnote-web 기준)
+actnote-web/
+├── app/
+│   ├── (auth)/login, signup
+│   ├── (dashboard)/meetings, meetings/[id], meetings/new
+│   └── api/ (서버 라우트)
+├── components/
+│   ├── ui/ (shadcn)
+│   └── meetings/ (도메인 컴포넌트)
+└── lib/
+    ├── supabase/ (client, server)
+    └── types/ (supabase.ts 등)
 
 ### 6. 절대 하지 말 것
 - localStorage에 인증 토큰 저장 (Supabase가 자동 처리)
