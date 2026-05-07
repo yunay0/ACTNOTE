@@ -19,6 +19,7 @@ load_dotenv()
 WHISPER_PRICE_PER_MIN: float = 0.006
 CLAUDE_SONNET_INPUT_PRICE_PER_MTOK: float = 3.0
 CLAUDE_SONNET_OUTPUT_PRICE_PER_MTOK: float = 15.0
+EMBED_PRICE_PER_1K_TOKENS: float = 0.00002  # text-embedding-3-small
 
 MAX_COST_PER_MEETING_USD: float = float(os.getenv("MAX_COST_PER_MEETING_USD", "1.0"))
 MAX_TOTAL_COST_USD: float = float(os.getenv("MAX_TOTAL_COST_USD", "10.0"))
@@ -33,7 +34,7 @@ _console = Console()
 class _CostEntry:
     """단일 API 호출 비용 기록."""
 
-    kind: Literal["whisper", "claude"]
+    kind: Literal["whisper", "claude", "embedding"]
     cost_usd: float
     detail: str
 
@@ -62,6 +63,22 @@ class CostTracker:
         )
         return cost
 
+    def track_embedding(self, total_tokens: int) -> float:
+        """text-embedding-3-small 호출 비용을 계산·기록하고 반환한다."""
+        if total_tokens < 0:
+            raise ValueError(
+                f"track_embedding: total_tokens는 0 이상이어야 합니다 (받은 값: {total_tokens})"
+            )
+        cost = (total_tokens / 1_000.0) * EMBED_PRICE_PER_1K_TOKENS
+        self._record(
+            _CostEntry(
+                kind="embedding",
+                cost_usd=cost,
+                detail=f"{total_tokens} tokens",
+            )
+        )
+        return cost
+
     def track_claude(self, input_tokens: int, output_tokens: int) -> float:
         """Claude API 호출 비용을 계산·기록하고 반환한다."""
         if input_tokens < 0 or output_tokens < 0:
@@ -85,7 +102,7 @@ class CostTracker:
         """누적 비용(USD) 반환."""
         return self._total_cost_usd
 
-    def sum_cost_kind(self, kind: Literal["whisper", "claude"]) -> float:
+    def sum_cost_kind(self, kind: Literal["whisper", "claude", "embedding"]) -> float:
         """특정 API 종류만 합산한 비용(USD)."""
         return sum(e.cost_usd for e in self._entries if e.kind == kind)
 
@@ -165,12 +182,17 @@ def track_claude(input_tokens: int, output_tokens: int) -> float:
     return default_tracker.track_claude(input_tokens, output_tokens)
 
 
+def track_embedding(total_tokens: int) -> float:
+    """하위 호환: default_tracker 에 기록."""
+    return default_tracker.track_embedding(total_tokens)
+
+
 def get_total_cost() -> float:
     """하위 호환."""
     return default_tracker.get_total()
 
 
-def sum_cost_kind(kind: Literal["whisper", "claude"]) -> float:
+def sum_cost_kind(kind: Literal["whisper", "claude", "embedding"]) -> float:
     """하위 호환."""
     return default_tracker.sum_cost_kind(kind)
 
