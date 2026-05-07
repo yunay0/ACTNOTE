@@ -32,8 +32,8 @@ Decision = Literal["ADD", "UPDATE", "DELETE", "NOOP"]
 CLAUDE_MODEL = "claude-sonnet-4-6"
 MAX_LLM_TOKENS = 2048
 MAX_LLM_RETRIES = 2
-SIMILARITY_THRESHOLD = 0.75
-MAX_CANDIDATES = 3
+SIMILARITY_THRESHOLD = 0.5
+MAX_CANDIDATES = 20
 ACTION_ITEMS_TABLE = "action_items"
 
 _console = Console()
@@ -105,40 +105,48 @@ def _search_similar_actions(
 
 _SYSTEM_PROMPT = """\
 You are an expert at classifying meeting action items using the A.U.D.N cycle.
-Compare each new action item against the provided similar existing actions.
+For each new action, you receive up to 20 similar existing candidates ranked by similarity.
+Pick the SINGLE best-matching candidate (if any), then decide.
 Output ONLY a valid JSON array. No markdown, no explanations.
 
 Decision rules:
-- ADD          : Completely new task, no matching existing action.
-- UPDATE:<id>  : Same task but deadline/assignee/details changed. Replace <id> with the existing action's UUID.
-- DELETE:<id>  : Action explicitly cancelled/dropped in this meeting. Replace <id> with the existing action's UUID.
-- NOOP         : Exact or near-exact duplicate; no change needed.
+- ADD          : No candidate represents the same task. It is genuinely new.
+- UPDATE:<id>  : The best candidate is the same task, but deadline/assignee/details changed.
+- DELETE:<id>  : The action was explicitly cancelled in this meeting; best candidate is the target.
+- NOOP         : The best candidate is an exact or near-exact duplicate; no change needed.
 
 Output schema:
 [{"index": <int>, "decision": "ADD" | "UPDATE:<uuid>" | "DELETE:<uuid>" | "NOOP", "reason": "<short Korean explanation>"}]
 """
 
 
+_CANDIDATE_CONTENT_LIMIT = 60
+
+
 def _build_user_prompt(
     indexed_actions: list[tuple[int, dict, list[dict]]],
 ) -> str:
-    """(index, action, candidates) 리스트로 LLM 입력 프롬프트 생성."""
+    """(index, action, candidates) 리스트로 LLM 입력 프롬프트 생성.
+
+    후보가 최대 20개이므로 content는 60자로 잘라 토큰을 절약한다.
+    """
     lines = ["[새 액션들]"]
     for idx, action, candidates in indexed_actions:
         lines.append(
             f"\n{idx}. content: \"{action.get('content', '')}\""
-            f", assignee: \"{action.get('assignee') or '미지정'}\""
-            f", due_date: \"{action.get('due_date') or '미지정'}\""
+            f" | assignee: \"{action.get('assignee') or '미지정'}\""
+            f" | due_date: \"{action.get('due_date') or '미지정'}\""
         )
         if candidates:
-            lines.append("   유사 후보:")
+            lines.append(f"   유사 후보 ({len(candidates)}개, 유사도 내림차순):")
             for c in candidates:
+                raw = c["content"]
+                preview = raw[:_CANDIDATE_CONTENT_LIMIT] + ("…" if len(raw) > _CANDIDATE_CONTENT_LIMIT else "")
                 lines.append(
-                    f"   - id={c['id']}"
-                    f", content: \"{c['content']}\""
-                    f", assignee: \"{c.get('assignee') or '미지정'}\""
-                    f", due_date: \"{c.get('due_date') or '미지정'}\""
-                    f", similarity: {c.get('similarity', 0):.3f}"
+                    f"   [{c['id']}] \"{preview}\""
+                    f" | {c.get('assignee') or '미지정'}"
+                    f" | {c.get('due_date') or '미지정'}"
+                    f" | sim={c.get('similarity', 0):.2f}"
                 )
         else:
             lines.append("   유사 후보: 없음")
