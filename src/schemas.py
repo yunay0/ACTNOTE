@@ -32,6 +32,7 @@ class ActionItem(TypedDict):
     content: str
     assignee: str | None
     due_date: str | None
+    depends_on: str | None
     confidence: float
 
 

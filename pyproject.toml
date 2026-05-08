@@ -16,6 +16,9 @@ dependencies = [
     "jiwer>=4.0.0",
     "supabase>=2.0.0",
     "pgvector>=0.3.0",
+    "inngest>=0.5.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.20.0",
 ]
 
 [build-system]

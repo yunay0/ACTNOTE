@@ -7,10 +7,66 @@ from pathlib import Path
 
 from rich.console import Console
 
-from src import alignment, cost_tracker, diarization, llm_extractor, stt
-from src.storage import LocalStorage, StorageBackend
+from src import (
+    action_resolver,
+    alignment,
+    cost_tracker,
+    diarization,
+    embeddings,
+    llm_extractor,
+    stt,
+)
+from src.storage import LocalStorage, StorageBackend, SupabaseStorage
 
 _console = Console()
+
+
+def _insert_decisions(
+    sb_client,
+    meeting_id: str,
+    workspace_id: str,
+    decision_texts: list[str],
+) -> int:
+    """decisions 테이블에 batch INSERT. 삽입된 row 수 반환."""
+    rows = [
+        {
+            "meeting_id": meeting_id,
+            "workspace_id": workspace_id,
+            "content": text,
+            "confidence": None,
+            "valid_until": None,
+            "change_type": "ADD",
+        }
+        for text in decision_texts
+        if text.strip()
+    ]
+    if not rows:
+        return 0
+    sb_client.table("decisions").insert(rows).execute()
+    return len(rows)
+
+
+def _insert_transcripts(
+    sb_client,
+    meeting_id: str,
+    aligned_segments: list[dict],
+) -> int:
+    """transcripts 테이블에 batch INSERT. 삽입된 row 수 반환."""
+    rows = [
+        {
+            "meeting_id": meeting_id,
+            "speaker_label": seg.get("speaker"),
+            "text": seg.get("text", "").strip(),
+            "start_seconds": float(seg.get("start", 0.0)),
+            "end_seconds": float(seg.get("end", 0.0)),
+        }
+        for seg in aligned_segments
+        if seg.get("text", "").strip()
+    ]
+    if not rows:
+        return 0
+    sb_client.table("transcripts").insert(rows).execute()
+    return len(rows)
 
 
 def run_pipeline(
@@ -28,8 +84,8 @@ def run_pipeline(
 
     Whisper ``language`` 는 ISO 639-1 코드 (기본값 ``en``).
 
-    user_id/workspace_id/meeting_id 는 웹 연동 단계에서 DB 저장 시 사용된다.
-    현재 단계에서는 시그니처에만 받아두고, 메타에 echo 한다.
+    Steps 1-4 실패 시 예외를 그대로 전파한다.
+    Steps 5-6 (A.U.D.N, 임베딩) 실패 시 에러를 _pipeline_meta에 기록하고 4단계 결과를 반환한다.
 
     backend 가 None 이면 LocalStorage(output_dir) 가 사용된다 (기존 CLI 동작).
     """
@@ -41,27 +97,27 @@ def run_pipeline(
     t_pipeline = time.perf_counter()
 
     try:
-        # [1/4] STT
+        # [1/6] STT
         t0 = time.perf_counter()
-        _console.print("[cyan][1/4][/] STT (Whisper API)...")
+        _console.print("[cyan][1/6][/] STT (Whisper API)...")
         transcript = stt.transcribe(audio_path, language=language, tracker=tr)
         step_times["stt"] = time.perf_counter() - t0
         store.save_json("transcript.json", transcript)
         completed.append("STT (Whisper)")
         _console.print(f"        [green][OK][/] {step_times['stt']:.1f}s")
 
-        # [2/4] Diarization
+        # [2/6] Diarization
         t0 = time.perf_counter()
-        _console.print("[cyan][2/4][/] Speaker Diarization (pyannote speaker-diarization-3.1)...")
+        _console.print("[cyan][2/6][/] Speaker Diarization (pyannote speaker-diarization-3.1)...")
         diar = diarization.diarize(audio_path)
         step_times["diarization"] = time.perf_counter() - t0
         store.save_json("diarization.json", diar)
         completed.append("Speaker Diarization (pyannote)")
         _console.print(f"        [green][OK][/] {step_times['diarization']:.1f}s")
 
-        # [3/4] Alignment
+        # [3/6] Alignment
         t0 = time.perf_counter()
-        _console.print("[cyan][3/4][/] Alignment...")
+        _console.print("[cyan][3/6][/] Alignment...")
         aligned = alignment.align(transcript["segments"], diar)
         formatted = alignment.format_transcript(aligned)
         step_times["alignment"] = time.perf_counter() - t0
@@ -70,10 +126,15 @@ def run_pipeline(
         completed.append("Alignment")
         _console.print(f"        [green][OK][/] {step_times['alignment']:.1f}s")
 
-        # [4/4] LLM
+        # [4/6] LLM Extraction
         t0 = time.perf_counter()
-        _console.print("[cyan][4/4][/] LLM Extraction (Claude Sonnet 4.6)...")
-        extracted = llm_extractor.extract(formatted, meeting_title=meeting_title, tracker=tr)
+        _console.print("[cyan][4/6][/] LLM Extraction (Claude Sonnet 4.6)...")
+        extracted = llm_extractor.extract(
+            formatted,
+            meeting_title=meeting_title,
+            previous_context=None,  # CRAG: 메인2에서 실제 이전 회의 검색 연결 예정
+            tracker=tr,
+        )
         step_times["llm"] = time.perf_counter() - t0
         completed.append("LLM Extraction (Claude)")
         _console.print(f"        [green][OK][/] {step_times['llm']:.1f}s")
@@ -89,8 +150,92 @@ def run_pipeline(
         )
         raise
 
+    # -------------------------------------------------------------------------
+    # [4 post] decisions + transcripts DB INSERT (SupabaseStorage 전용)
+    # -------------------------------------------------------------------------
+    decisions_count: int = 0
+    transcripts_count: int = 0
+    decisions_db_error: str | None = None
+    transcripts_db_error: str | None = None
+
+    if isinstance(store, SupabaseStorage):
+        sb = store.client
+
+        try:
+            decisions_count = _insert_decisions(
+                sb, meeting_id, workspace_id, extracted.get("decisions", [])
+            )
+            _console.print(f"        [green][OK][/] decisions {decisions_count}개 저장")
+        except Exception as e:
+            decisions_db_error = f"{type(e).__name__}: {e}"
+            _console.print(f"        [yellow][WARN] decisions INSERT 실패: {decisions_db_error}[/]")
+
+        try:
+            transcripts_count = _insert_transcripts(sb, meeting_id, aligned)
+            _console.print(f"        [green][OK][/] transcripts {transcripts_count}개 저장")
+        except Exception as e:
+            transcripts_db_error = f"{type(e).__name__}: {e}"
+            _console.print(f"        [yellow][WARN] transcripts INSERT 실패: {transcripts_db_error}[/]")
+    else:
+        _console.print("[dim]        LocalStorage: decisions/transcripts DB INSERT 건너뜀[/]")
+
+    # -------------------------------------------------------------------------
+    # [5/6] A.U.D.N — 실패해도 4단계 결과 반환
+    # -------------------------------------------------------------------------
+    audn_results: list[dict] = []
+    audn_error: str | None = None
+
+    _console.print("[cyan][5/6][/] A.U.D.N (액션 비교)...")
+    t0 = time.perf_counter()
+    try:
+        audn_results = action_resolver.resolve_actions(
+            new_actions=extracted.get("action_items", []),
+            workspace_id=workspace_id,
+            meeting_id=meeting_id,
+            storage_backend=store,
+            tracker=tr,
+        )
+        step_times["audn"] = time.perf_counter() - t0
+        completed.append("A.U.D.N")
+        _console.print(f"        [green][OK][/] {step_times['audn']:.1f}s")
+    except Exception as e:
+        step_times["audn"] = time.perf_counter() - t0
+        audn_error = f"{type(e).__name__}: {e}"
+        _console.print(f"        [yellow][WARN] A.U.D.N 실패 (결과 유지): {audn_error}[/]")
+
+    # -------------------------------------------------------------------------
+    # [6/6] 임베딩 저장 — 실패해도 4단계 결과 반환
+    # -------------------------------------------------------------------------
+    embedding_count: int = 0
+    embed_error: str | None = None
+
+    _console.print("[cyan][6/6][/] 임베딩 저장...")
+    t0 = time.perf_counter()
+    try:
+        embedding_count = embeddings.embed_meeting(
+            meeting_id=meeting_id,
+            workspace_id=workspace_id,
+            aligned_segments=aligned,
+            decisions=extracted.get("decisions", []),
+            actions=extracted.get("action_items", []),
+            storage_backend=store,
+            tracker=tr,
+        )
+        step_times["embeddings"] = time.perf_counter() - t0
+        completed.append("임베딩 저장")
+        _console.print(
+            f"        [green][OK][/] {step_times['embeddings']:.1f}s  ({embedding_count}개)"
+        )
+    except Exception as e:
+        step_times["embeddings"] = time.perf_counter() - t0
+        embed_error = f"{type(e).__name__}: {e}"
+        _console.print(f"        [yellow][WARN] 임베딩 저장 실패 (결과 유지): {embed_error}[/]")
+
+    # -------------------------------------------------------------------------
+    # 최종 메타 + 저장
+    # -------------------------------------------------------------------------
     total_elapsed = time.perf_counter() - t_pipeline
-    extracted["_pipeline_meta"] = {
+    meta: dict = {
         "step_seconds": step_times,
         "total_seconds": round(total_elapsed, 2),
         "output_dir": store.location(),
@@ -98,7 +243,21 @@ def run_pipeline(
         "user_id": user_id,
         "workspace_id": workspace_id,
         "meeting_id": meeting_id,
+        "decisions_count": decisions_count,
+        "transcripts_count": transcripts_count,
+        "audn_results": audn_results,
+        "embedding_count": embedding_count,
     }
+    if decisions_db_error:
+        meta["decisions_db_error"] = decisions_db_error
+    if transcripts_db_error:
+        meta["transcripts_db_error"] = transcripts_db_error
+    if audn_error:
+        meta["audn_error"] = audn_error
+    if embed_error:
+        meta["embed_error"] = embed_error
+
+    extracted["_pipeline_meta"] = meta
     store.save_json("extracted.json", extracted)
 
     tr.print_summary()
