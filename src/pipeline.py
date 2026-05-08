@@ -16,9 +16,57 @@ from src import (
     llm_extractor,
     stt,
 )
-from src.storage import LocalStorage, StorageBackend
+from src.storage import LocalStorage, StorageBackend, SupabaseStorage
 
 _console = Console()
+
+
+def _insert_decisions(
+    sb_client,
+    meeting_id: str,
+    workspace_id: str,
+    decision_texts: list[str],
+) -> int:
+    """decisions 테이블에 batch INSERT. 삽입된 row 수 반환."""
+    rows = [
+        {
+            "meeting_id": meeting_id,
+            "workspace_id": workspace_id,
+            "content": text,
+            "confidence": None,
+            "valid_until": None,
+            "change_type": "ADD",
+        }
+        for text in decision_texts
+        if text.strip()
+    ]
+    if not rows:
+        return 0
+    sb_client.table("decisions").insert(rows).execute()
+    return len(rows)
+
+
+def _insert_transcripts(
+    sb_client,
+    meeting_id: str,
+    aligned_segments: list[dict],
+) -> int:
+    """transcripts 테이블에 batch INSERT. 삽입된 row 수 반환."""
+    rows = [
+        {
+            "meeting_id": meeting_id,
+            "speaker_label": seg.get("speaker"),
+            "text": seg.get("text", "").strip(),
+            "start_seconds": float(seg.get("start", 0.0)),
+            "end_seconds": float(seg.get("end", 0.0)),
+        }
+        for seg in aligned_segments
+        if seg.get("text", "").strip()
+    ]
+    if not rows:
+        return 0
+    sb_client.table("transcripts").insert(rows).execute()
+    return len(rows)
 
 
 def run_pipeline(
@@ -103,6 +151,35 @@ def run_pipeline(
         raise
 
     # -------------------------------------------------------------------------
+    # [4 post] decisions + transcripts DB INSERT (SupabaseStorage 전용)
+    # -------------------------------------------------------------------------
+    decisions_count: int = 0
+    transcripts_count: int = 0
+    decisions_db_error: str | None = None
+    transcripts_db_error: str | None = None
+
+    if isinstance(store, SupabaseStorage):
+        sb = store.client
+
+        try:
+            decisions_count = _insert_decisions(
+                sb, meeting_id, workspace_id, extracted.get("decisions", [])
+            )
+            _console.print(f"        [green][OK][/] decisions {decisions_count}개 저장")
+        except Exception as e:
+            decisions_db_error = f"{type(e).__name__}: {e}"
+            _console.print(f"        [yellow][WARN] decisions INSERT 실패: {decisions_db_error}[/]")
+
+        try:
+            transcripts_count = _insert_transcripts(sb, meeting_id, aligned)
+            _console.print(f"        [green][OK][/] transcripts {transcripts_count}개 저장")
+        except Exception as e:
+            transcripts_db_error = f"{type(e).__name__}: {e}"
+            _console.print(f"        [yellow][WARN] transcripts INSERT 실패: {transcripts_db_error}[/]")
+    else:
+        _console.print("[dim]        LocalStorage: decisions/transcripts DB INSERT 건너뜀[/]")
+
+    # -------------------------------------------------------------------------
     # [5/6] A.U.D.N — 실패해도 4단계 결과 반환
     # -------------------------------------------------------------------------
     audn_results: list[dict] = []
@@ -166,9 +243,15 @@ def run_pipeline(
         "user_id": user_id,
         "workspace_id": workspace_id,
         "meeting_id": meeting_id,
+        "decisions_count": decisions_count,
+        "transcripts_count": transcripts_count,
         "audn_results": audn_results,
         "embedding_count": embedding_count,
     }
+    if decisions_db_error:
+        meta["decisions_db_error"] = decisions_db_error
+    if transcripts_db_error:
+        meta["transcripts_db_error"] = transcripts_db_error
     if audn_error:
         meta["audn_error"] = audn_error
     if embed_error:
