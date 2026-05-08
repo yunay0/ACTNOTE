@@ -1,0 +1,99 @@
+export type MeetingStatus =
+  | "uploaded"
+  | "transcribing"
+  | "diarizing"
+  | "summarizing"
+  | "ready"
+  | "published"
+  | "error";
+
+export type ChangeType = "ADD" | "UPDATE" | "DELETE" | "NOOP";
+
+export type ActionItemStatus = "open" | "done" | "cancelled";
+
+export interface Meeting {
+  id: string;
+  title: string;
+  status: MeetingStatus;
+  created_at: string;
+  summary?: string | null;
+  audio_url?: string | null;
+  filename?: string | null;
+  workspace_id: string;
+}
+
+export interface Decision {
+  id: string;
+  meeting_id: string;
+  content: string;
+  valid_from: string;
+  valid_until: string | null;
+  change_type: ChangeType;
+  superseded_by: string | null;
+  workspace_id: string;
+}
+
+export interface ActionItem {
+  id: string;
+  meeting_id: string;
+  content: string;
+  assignee: string | null;
+  due_date: string | null;
+  confidence?: number;
+  status: ActionItemStatus;
+  valid_from: string;
+  valid_until: string | null;
+  change_type: ChangeType;
+  superseded_by: string | null;
+  workspace_id: string;
+}
+
+export interface MeetingDetail {
+  meeting: Meeting;
+  summary: string;
+  decisions: Decision[];
+  action_items: ActionItem[];
+}
+
+export const PROCESSING_STEPS: MeetingStatus[] = [
+  "uploaded",
+  "transcribing",
+  "diarizing",
+  "summarizing",
+  "ready",
+];
+
+export const STEP_LABELS: Record<MeetingStatus, string> = {
+  uploaded: "업로드 완료",
+  transcribing: "분석 중...",
+  diarizing: "분석 중...",
+  summarizing: "분석 중...",
+  ready: "임시 저장",
+  published: "발행 완료",
+  error: "오류 발생",
+};
+
+/** 목록 표시용 간략 라벨 */
+export const STATUS_DISPLAY: Record<MeetingStatus, string> = {
+  uploaded: "업로드됨",
+  transcribing: "분석 중...",
+  diarizing: "분석 중...",
+  summarizing: "분석 중...",
+  ready: "임시 저장",
+  published: "발행 완료",
+  error: "오류",
+};
+
+export function isProcessing(status: MeetingStatus): boolean {
+  return status === "transcribing" || status === "diarizing" || status === "summarizing" || status === "uploaded";
+}
+
+export function getProcessingProgress(status: MeetingStatus): number {
+  if (status === "error") return 0;
+  const idx = PROCESSING_STEPS.indexOf(status);
+  if (idx === -1) return 0;
+  return Math.round((idx / (PROCESSING_STEPS.length - 1)) * 100);
+}
+
+/** 모크 처리 완료까지 걸리는 시간 (ms) — 데모용 15초 */
+export const MOCK_PROCESSING_MS = 15_000;
