@@ -24,7 +24,7 @@ CLAUDE_MODEL = "claude-sonnet-4-6"  # docs.claude.com latest Sonnet 4.6 API ID
 MAX_TOKENS = 8192
 MAX_RETRIES_API = 2
 
-SYSTEM_PROMPT = (
+_SYSTEM_PROMPT_BASE = (
     "You are an expert PM assistant. Extract structured information from meeting transcripts.\n"
     "CRITICAL RULES:\n\n"
     "Output ONLY valid JSON. No markdown, no explanations.\n"
@@ -38,9 +38,41 @@ SYSTEM_PROMPT = (
     "<0.5: Don't include\n\n"
     "Title: max 50 chars, English only\n"
     "Summary: 3-5 sentences\n\n"
-    'Output schema:\n{\n  "title": "...",\n  "summary": "...",\n  "decisions": ["..."],\n'
-    '  "action_items": [\n    {\n      "content": "...",\n      "assignee": "name or null",\n'
-    '      "due_date": "YYYY-MM-DD or null",\n      "confidence": 0.85\n    }\n  ]\n}\n'
+    "[Atomic Decomposition 원칙]\n"
+    "액션 아이템 추출 시 반드시 다음 5가지 원자 사실로 분해하세요:\n"
+    "- content: 무엇을 할 것인지 (동사+목적어 형태로 명확하게)\n"
+    "- assignee: 누가 할 것인지 (발화에서 명시된 경우만, 없으면 null)\n"
+    "- due_date: 언제까지 할 것인지 (발화에서 명시된 경우만, 없으면 null)\n"
+    "- depends_on: 선행 조건이 있는지 (있으면 관련 액션 내용 요약, 없으면 null)\n"
+    "- confidence: 이게 진짜 액션인지 확신 (0.0~1.0)\n\n"
+    "transcript에 명시적으로 등장한 내용만 추출하세요.\n"
+    "추론하거나 일반 상식을 동원하지 마세요.\n"
+    "명시적이지 않으면 confidence < 0.7로 표시하세요.\n\n"
+    "Output schema:\n"
+    "{\n"
+    '  "title": "...",\n'
+    '  "summary": "...",\n'
+    '  "decisions": ["..."],\n'
+    '  "action_items": [\n'
+    "    {\n"
+    '      "content": "...",\n'
+    '      "assignee": "name or null",\n'
+    '      "due_date": "YYYY-MM-DD or null",\n'
+    '      "depends_on": "prior action summary or null",\n'
+    '      "confidence": 0.85\n'
+    "    }\n"
+    "  ]\n"
+    "}\n"
+)
+
+_PREVIOUS_CONTEXT_SECTION = (
+    "\n[이전 회의 컨텍스트]\n"
+    "{previous_context}\n\n"
+    "이전 회의 컨텍스트가 있는 경우:\n"
+    "- '지난번에 결정한 거' 같은 참조 발화를 이전 컨텍스트와 연결하세요\n"
+    "- 이전 회의의 액션이 이번 회의에서 변경/취소됐다면 명시하세요\n"
+    "  예: content에 '[UPDATE] PRD 마감일 5/22로 변경' 형태로 접두사 추가\n"
+    "- 이전 회의에 없던 완전히 새로운 액션은 접두사 없이 그대로\n"
 )
 
 _console = Console()
@@ -62,15 +94,25 @@ def _get_client() -> anthropic.Anthropic:
     return _client
 
 
+def _build_system_prompt(previous_context: str | None) -> str:
+    if not previous_context:
+        return _SYSTEM_PROMPT_BASE
+    return _SYSTEM_PROMPT_BASE + _PREVIOUS_CONTEXT_SECTION.format(
+        previous_context=previous_context
+    )
+
+
 def extract(
     formatted_transcript: str,
     meeting_title: str | None = None,
+    previous_context: str | None = None,
     tracker: cost_tracker.CostTracker | None = None,
 ) -> ExtractedResult:
     """Claude Sonnet 4.6으로 회의 정보 추출."""
     tr = tracker if tracker is not None else cost_tracker.default_tracker
+    system_prompt = _build_system_prompt(previous_context)
 
-    est_in = max(1, len(SYSTEM_PROMPT + formatted_transcript) // 4)
+    est_in = max(1, len(system_prompt + formatted_transcript) // 4)
     est_cost = (est_in / 1e6) * cost_tracker.CLAUDE_SONNET_INPUT_PRICE_PER_MTOK + (
         2048 / 1e6
     ) * cost_tracker.CLAUDE_SONNET_OUTPUT_PRICE_PER_MTOK
@@ -79,19 +121,29 @@ def extract(
     client = _get_client()
     mt = meeting_title.strip() if meeting_title else ""
     provided = mt if mt else "Not provided, please generate"
-    user_prompt = (
-        f"Meeting Title (provided): {provided}\nTranscript:\n{formatted_transcript}\n\n"
+
+    user_prompt_parts = [
+        f"Meeting Title (provided): {provided}",
+        f"Transcript:\n{formatted_transcript}",
+    ]
+    if previous_context:
+        user_prompt_parts.append(
+            f"이전 회의 관련 내용:\n{previous_context}\n\n"
+            "위 내용을 참고하여 이번 회의의 결정사항과 액션 아이템을 추출하세요."
+        )
+    user_prompt_parts.append(
         "Extract structured information following the schema above.\n"
         "Return ONLY the JSON, no other text."
     )
+    user_prompt = "\n\n".join(user_prompt_parts)
 
-    text, usage = _call_messages(client, user_prompt)
+    text, usage = _call_messages(client, user_prompt, system_prompt)
     data = _parse_json_strict(text)
     if data is None:
         retry_user = (
             user_prompt + "\n\nReturn ONLY valid JSON matching the schema. No markdown."
         )
-        text2, usage = _call_messages(client, retry_user)
+        text2, usage = _call_messages(client, retry_user, system_prompt)
         data = _parse_json_strict(text2)
         if data is None:
             raise ValueError(
@@ -103,14 +155,18 @@ def extract(
     return _normalize_result(data)
 
 
-def _call_messages(client: anthropic.Anthropic, user: str) -> tuple[str, anthropic.types.Usage]:
+def _call_messages(
+    client: anthropic.Anthropic,
+    user: str,
+    system: str,
+) -> tuple[str, anthropic.types.Usage]:
     last: Exception | None = None
     for attempt in range(1, MAX_RETRIES_API + 2):
         try:
             msg = client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=MAX_TOKENS,
-                system=SYSTEM_PROMPT,
+                system=system,
                 messages=[{"role": "user", "content": user}],
             )
             blk = msg.content[0]
@@ -160,33 +216,27 @@ def _normalize_result(data: dict) -> ExtractedResult:
             conf = float(it.get("confidence", 0))
             if conf < 0.5:
                 continue
-            a, d = it.get("assignee"), it.get("due_date")
+            a = it.get("assignee")
+            d = it.get("due_date")
+            dep = it.get("depends_on")
             items.append(
                 {
                     "content": str(it.get("content", "")).strip(),
                     "assignee": a if a else None,
                     "due_date": d if d else None,
+                    "depends_on": dep if dep else None,
                     "confidence": round(conf, 2),
                 }
             )
     return {"title": title, "summary": summary, "decisions": decisions, "action_items": items}
 
 
-if __name__ == "__main__":
-    root = Path(__file__).resolve().parents[1]
-    p = root / "output" / "transcript.txt"
-    if not p.exists():
-        _console.print(f"[red]파일 없음:[/] {p}\n  먼저 `uv run python src/alignment.py` 실행.")
-        sys.exit(1)
-
-    out = extract(p.read_text(encoding="utf-8"), meeting_title=None)
-    outp = root / "output" / "extracted.json"
-    outp.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-    _console.print(f"[green][OK][/] 저장: {outp}")
-
+def _print_result(out: ExtractedResult) -> None:
     ld = "\n".join(f"{i}. {d}" for i, d in enumerate(out["decisions"], 1))
     la = "\n".join(
-        f"{i}. {x['content']}\n   assignee={x['assignee']} due={x['due_date']} conf={x['confidence']}"
+        f"{i}. {x['content']}\n"
+        f"   assignee={x['assignee']} due={x['due_date']}\n"
+        f"   depends_on={x['depends_on']} conf={x['confidence']}"
         for i, x in enumerate(out["action_items"], 1)
     )
     _console.print(
@@ -197,4 +247,46 @@ if __name__ == "__main__":
             expand=False,
         )
     )
+
+
+if __name__ == "__main__":
+    root = Path(__file__).resolve().parents[1]
+
+    # --- 테스트 1: previous_context 없는 경우 (기존 동작) ---
+    _console.print("\n[bold cyan]=== 테스트 1: previous_context 없음 (기존 동작) ===[/]")
+    p = root / "output" / "transcript.txt"
+    if p.exists():
+        out1 = extract(p.read_text(encoding="utf-8"), meeting_title=None)
+        outp = root / "output" / "extracted.json"
+        outp.write_text(json.dumps(out1, ensure_ascii=False, indent=2), encoding="utf-8")
+        _console.print(f"[green][OK][/] 저장: {outp}")
+        _print_result(out1)
+    else:
+        _console.print(f"[yellow]파일 없음:[/] {p} — 테스트 1 건너뜀.")
+
+    # --- 테스트 2: previous_context 있는 경우 ([UPDATE] 접두사 확인) ---
+    _console.print("\n[bold cyan]=== 테스트 2: previous_context 있음 ([UPDATE] 접두사 확인) ===[/]")
+    prev_ctx = "이전 회의에서 PRD 마감일을 5/15로 결정했습니다."
+    sample_transcript = (
+        "참석자: 김팀장, 이개발\n"
+        "김팀장: 저번에 PRD 마감일 5/15로 결정했는데, 개발 일정 때문에 5/22로 미루기로 했어요.\n"
+        "이개발: 네, 5/22까지 PRD 완성하겠습니다.\n"
+        "김팀장: 그리고 API 명세서도 이번 주 안에 작성해주세요.\n"
+        "이개발: 알겠습니다. 금요일까지 완성할게요.\n"
+    )
+    out2 = extract(
+        sample_transcript,
+        meeting_title="5월 기획 회의",
+        previous_context=prev_ctx,
+    )
+    _print_result(out2)
+
+    update_items = [x for x in out2["action_items"] if "[UPDATE]" in x["content"]]
+    if update_items:
+        _console.print(f"[green][OK] [UPDATE] 항목 {len(update_items)}개 감지됨:[/]")
+        for item in update_items:
+            _console.print(f"  -> {item['content']}")
+    else:
+        _console.print("[yellow][WARN] [UPDATE] 항목 없음 -- LLM이 인식 못했을 수 있음[/]")
+
     cost_tracker.print_cost_summary()
