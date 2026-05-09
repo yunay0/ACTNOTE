@@ -13,10 +13,17 @@
 
 Step 흐름:
     1. meetings.status = "transcribing"
-    2. Supabase Storage 다운로드 → OS 임시 파일
-    3. 파이프라인 전체 실행 (STT → 화자분리 → Alignment → LLM → A.U.D.N → 임베딩)
+    2. Supabase Storage 다운로드 + 파이프라인 전체 실행 (단일 step)
+       (STT → 화자분리 → Alignment → LLM → A.U.D.N → 임베딩)
        임시 파일은 파이프라인 완료 후 삭제
-    4. meetings.status = "ready"
+       실패 시: meetings.status = "error", error_message 저장 + 실패 알림
+    3. meetings.status = "ready"
+    4. 완료 알림 생성
+
+NOTE: 다운로드와 파이프라인을 하나의 step으로 묶은 이유 —
+      Inngest SDK에서 step.run() 내부 예외는 StepError 등 특수 타입으로
+      래핑되어 일반 except Exception에 잡히지 않는다. 따라서 두 작업을
+      하나의 step으로 통합해 try/except가 확실히 동작하게 한다.
 
 pyannote/torch 는 step 3 내부에서 지연 import — 서버 시작 시 로딩 방지.
 """
@@ -56,6 +63,42 @@ def _update_meeting_status(meeting_id: str, status: str) -> None:
     sb.table("meetings").update({"status": status}).eq("id", meeting_id).execute()
 
 
+def _notify_complete(meeting_id: str, workspace_id: str) -> int:
+    """분석 완료 알림 생성. 실패해도 0 반환 (파이프라인 영향 없음)."""
+    try:
+        from src.storage import create_supabase_client_from_env
+        from src.notifications import notify_analysis_complete
+        sb = create_supabase_client_from_env()
+        return notify_analysis_complete(meeting_id, workspace_id, sb)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("완료 알림 생성 실패 (무시): %s", e)
+        return 0
+
+
+def _notify_failed(meeting_id: str, workspace_id: str, error_message: str) -> int:
+    """분석 실패 알림 생성. 실패해도 0 반환 (파이프라인 영향 없음)."""
+    try:
+        from src.storage import create_supabase_client_from_env
+        from src.notifications import notify_analysis_failed
+        sb = create_supabase_client_from_env()
+        return notify_analysis_failed(meeting_id, workspace_id, error_message, sb)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("실패 알림 생성 실패 (무시): %s", e)
+        return 0
+
+
+def _update_meeting_error(meeting_id: str, error_message: str) -> None:
+    """meetings 테이블을 error 상태로 업데이트하고 에러 메시지를 저장한다."""
+    from src.storage import create_supabase_client_from_env
+    sb = create_supabase_client_from_env()
+    sb.table("meetings").update({
+        "status": "error",
+        "error_message": error_message,
+    }).eq("id", meeting_id).execute()
+
+
 def _download_from_storage(audio_path: str) -> str:
     """Supabase Storage에서 오디오 다운로드 → OS 임시 파일 경로 반환.
 
@@ -85,6 +128,20 @@ def _download_from_storage(audio_path: str) -> str:
     with open(tmp_path, "wb") as f:
         f.write(data)
     return tmp_path
+
+
+def _download_and_run_pipeline(
+    audio_path: str,
+    user_id: str,
+    workspace_id: str,
+    meeting_id: str,
+) -> dict:
+    """다운로드 + 파이프라인을 단일 step으로 실행한다.
+
+    두 작업을 하나로 묶어 step 외부의 try/except가 예외를 확실히 잡을 수 있게 한다.
+    """
+    local_path = _download_from_storage(audio_path)
+    return _run_pipeline_full(local_path, user_id, workspace_id, meeting_id)
 
 
 def _run_pipeline_full(
@@ -158,29 +215,47 @@ async def process_meeting(ctx: inngest.Context) -> dict:
         "transcribing",
     )
 
-    # Step 2: Supabase Storage → 임시 파일
-    local_path: str = await ctx.step.run(
-        "download-audio",
-        _download_from_storage,
-        audio_path,
-    )
+    # Step 2: 다운로드 + 파이프라인 실행 (단일 step — try/except 확실히 잡힘)
+    try:
+        result: dict = await ctx.step.run(
+            "download-and-process",
+            _download_and_run_pipeline,
+            audio_path,
+            user_id,
+            workspace_id,
+            meeting_id,
+        )
+    except Exception as e:
+        err_msg = str(e)
+        await ctx.step.run(
+            "update-status-error",
+            _update_meeting_error,
+            meeting_id,
+            err_msg,
+        )
+        await ctx.step.run(
+            "notify-analysis-failed",
+            _notify_failed,
+            meeting_id,
+            workspace_id,
+            err_msg,
+        )
+        raise
 
-    # Step 3: 파이프라인 실행
-    result: dict = await ctx.step.run(
-        "run-pipeline",
-        _run_pipeline_full,
-        local_path,
-        user_id,
-        workspace_id,
-        meeting_id,
-    )
-
-    # Step 4: 상태 → ready
+    # Step 3: 상태 → ready
     await ctx.step.run(
         "update-status-ready",
         _update_meeting_status,
         meeting_id,
         "ready",
+    )
+
+    # Step 4: 완료 알림 (실패해도 step 자체는 성공으로 처리)
+    await ctx.step.run(
+        "notify-analysis-complete",
+        _notify_complete,
+        meeting_id,
+        workspace_id,
     )
 
     ctx.logger.info("meeting/process 완료: meeting_id=%s", meeting_id)

@@ -44,6 +44,49 @@ actnote-web/                 ← 프론트엔드 (Next.js, 동일 레포 내 신
 ├── components/
 └── lib/
 
+## 메인2 백로그
+
+### Worker 에러 상태 처리 (미해결 — 발견: 2026-05-09)
+
+**문제:** 파이프라인 실패 시 `meetings.status`가 `'transcribing'`에 멈춰있음. `update-status-error` step이 실행되지 않음.
+
+**시도한 것:**
+1. `run-pipeline` step만 try/except로 감쌌으나 실행 안 됨
+2. `download-audio` + `run-pipeline`을 `download-and-process` 단일 step으로 통합 후 try/except 감쌌으나 동일하게 실행 안 됨
+
+**추정 원인:** Inngest SDK 0.5.18에서 `step.run()` 내부 예외가 일반 `except Exception`에 잡히지 않음 (StepError 등 특수 타입으로 래핑 가능성).
+
+**메인2 대응 방향:**
+- Inngest 공식 문서/예제 재확인
+- `StepError` 등 특수 타입 명시적 catch 시도
+- 또는 Inngest의 `on_failure` 콜백 사용
+
+**영향:** 파이프라인 실패 시 사용자가 영원히 "처리 중" 상태로 보게 됨. 재시도 버튼/알림 기능 도입 시 반드시 해결 필요.
+
+---
+
+### 재분석 멱등성 (발견: 2026-05-09)
+
+**문제:** 같은 `meeting_id`로 파이프라인을 재실행하면 `transcripts`, `meeting_embeddings`가 중복 INSERT됨.
+재현: 같은 `meeting_id`로 `process_meeting` 이벤트 두 번 발송.
+
+**해결 방안:**
+`pipeline.py` 시작부에 멱등성 보장 로직 추가:
+- `transcripts`: DELETE 후 재INSERT
+- `meeting_embeddings`: DELETE 후 재INSERT
+- `decisions`: `valid_until` 만료 처리 (Bi-temporal)
+- `action_items`: A.U.D.N 사이클이 자동 처리 (이미 됨)
+
+**트리거:**
+- 사용자 "다시 분석" 버튼
+- 파이프라인 실패 후 자동 재시도
+
+**영향 파일:**
+- `src/pipeline.py` — 시작부 멱등성 로직
+- `src/worker.py` — 재분석 이벤트 핸들러 추가
+
+---
+
 ## 상세 룰 (별도 파일)
 - 프론트엔드 코딩 스타일: @.cursor/rules/frontend-style.mdc
 - 도메인 모델: @.cursor/rules/actnote-domain.mdc
