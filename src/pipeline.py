@@ -16,9 +16,40 @@ from src import (
     llm_extractor,
     stt,
 )
+from src import crag as _crag
+from src.policy import get_opt_out_status
 from src.storage import LocalStorage, StorageBackend, SupabaseStorage
 
 _console = Console()
+
+
+def _update_meeting(
+    sb_client,
+    meeting_id: str,
+    extracted: dict,
+    aligned_segments: list[dict],
+) -> None:
+    """meetings 테이블의 AI 추출 결과 컬럼을 UPDATE한다."""
+    import json
+
+    duration: float | None = None
+    if aligned_segments:
+        last_end = aligned_segments[-1].get("end")
+        if last_end is not None:
+            duration = float(last_end)
+
+    payload: dict = {
+        "summary": extracted.get("summary"),
+        "updated_at": "now()",
+    }
+    title = extracted.get("title")
+    if title is not None:
+        payload["title"] = title
+    if duration is not None:
+        payload["duration_seconds"] = int(duration)
+    payload["ai_draft_notes"] = json.dumps(extracted, ensure_ascii=False)
+
+    sb_client.table("meetings").update(payload).eq("id", meeting_id).execute()
 
 
 def _insert_decisions(
@@ -91,6 +122,10 @@ def run_pipeline(
     """
     store: StorageBackend = backend if backend is not None else LocalStorage(Path(output_dir))
 
+    # SEC-001: 옵트아웃 상태 조회 (SupabaseStorage 전용, 실패 시 보수적으로 True)
+    _sb_for_policy = store.client if isinstance(store, SupabaseStorage) else None
+    opt_out = get_opt_out_status(workspace_id, user_id, sb_client=_sb_for_policy)
+
     tr = tracker if tracker is not None else cost_tracker.CostTracker()
     completed: list[str] = []
     step_times: dict[str, float] = {}
@@ -100,7 +135,7 @@ def run_pipeline(
         # [1/6] STT
         t0 = time.perf_counter()
         _console.print("[cyan][1/6][/] STT (Whisper API)...")
-        transcript = stt.transcribe(audio_path, language=language, tracker=tr)
+        transcript = stt.transcribe(audio_path, language=language, tracker=tr, opt_out=opt_out)
         step_times["stt"] = time.perf_counter() - t0
         store.save_json("transcript.json", transcript)
         completed.append("STT (Whisper)")
@@ -126,14 +161,38 @@ def run_pipeline(
         completed.append("Alignment")
         _console.print(f"        [green][OK][/] {step_times['alignment']:.1f}s")
 
+        # [3.5/6] CRAG — 이전 회의 관련 컨텍스트 검색 (SupabaseStorage 전용)
+        previous_context: str | None = None
+        if isinstance(store, SupabaseStorage):
+            try:
+                # 제목이 없으면 transcript 앞 500자를 쿼리로 사용
+                crag_query = (meeting_title or "").strip() or formatted[:500]
+                previous_context = _crag.find_related_context(
+                    query_text=crag_query,
+                    workspace_id=workspace_id,
+                    current_meeting_id=meeting_id,
+                    sb_client=store.client,
+                    tracker=tr,
+                )
+                if previous_context:
+                    _console.print("        [green][OK][/] CRAG: 관련 컨텍스트 주입")
+                else:
+                    _console.print("[dim]        CRAG: 관련 이전 회의 없음[/]")
+            except Exception as _crag_err:
+                _console.print(f"        [yellow][WARN] CRAG 검색 실패: {_crag_err}[/]")
+        else:
+            _console.print("[dim]        LocalStorage: CRAG 건너뜀[/]")
+
         # [4/6] LLM Extraction
         t0 = time.perf_counter()
         _console.print("[cyan][4/6][/] LLM Extraction (Claude Sonnet 4.6)...")
         extracted = llm_extractor.extract(
             formatted,
             meeting_title=meeting_title,
-            previous_context=None,  # CRAG: 메인2에서 실제 이전 회의 검색 연결 예정
+            previous_context=previous_context,
             tracker=tr,
+            opt_out=opt_out,
+            workspace_id=workspace_id,
         )
         step_times["llm"] = time.perf_counter() - t0
         completed.append("LLM Extraction (Claude)")
@@ -151,15 +210,23 @@ def run_pipeline(
         raise
 
     # -------------------------------------------------------------------------
-    # [4 post] decisions + transcripts DB INSERT (SupabaseStorage 전용)
+    # [4 post] meetings UPDATE + decisions + transcripts DB INSERT (SupabaseStorage 전용)
     # -------------------------------------------------------------------------
     decisions_count: int = 0
     transcripts_count: int = 0
     decisions_db_error: str | None = None
     transcripts_db_error: str | None = None
+    meeting_update_error: str | None = None
 
     if isinstance(store, SupabaseStorage):
         sb = store.client
+
+        try:
+            _update_meeting(sb, meeting_id, extracted, aligned)
+            _console.print("        [green][OK][/] meetings UPDATE 완료")
+        except Exception as e:
+            meeting_update_error = f"{type(e).__name__}: {e}"
+            _console.print(f"        [yellow][WARN] meetings UPDATE 실패: {meeting_update_error}[/]")
 
         try:
             decisions_count = _insert_decisions(
@@ -243,11 +310,14 @@ def run_pipeline(
         "user_id": user_id,
         "workspace_id": workspace_id,
         "meeting_id": meeting_id,
+        "opt_out_training": opt_out,
         "decisions_count": decisions_count,
         "transcripts_count": transcripts_count,
         "audn_results": audn_results,
         "embedding_count": embedding_count,
     }
+    if meeting_update_error:
+        meta["meeting_update_error"] = meeting_update_error
     if decisions_db_error:
         meta["decisions_db_error"] = decisions_db_error
     if transcripts_db_error:

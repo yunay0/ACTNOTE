@@ -107,8 +107,17 @@ def extract(
     meeting_title: str | None = None,
     previous_context: str | None = None,
     tracker: cost_tracker.CostTracker | None = None,
+    opt_out: bool = True,
+    workspace_id: str | None = None,
 ) -> ExtractedResult:
-    """Claude Sonnet 4.6으로 회의 정보 추출."""
+    """Claude Sonnet 4.6으로 회의 정보 추출.
+
+    Args:
+        opt_out: 학습 옵트아웃 여부 (SEC-001). True이면 metadata에 감사 정보 포함.
+            Anthropic API는 기본적으로 API 데이터를 학습에 미사용.
+            metadata는 요청 추적/감사용으로만 사용됨.
+        workspace_id: 감사 metadata에 포함할 워크스페이스 ID.
+    """
     tr = tracker if tracker is not None else cost_tracker.default_tracker
     system_prompt = _build_system_prompt(previous_context)
 
@@ -137,13 +146,20 @@ def extract(
     )
     user_prompt = "\n\n".join(user_prompt_parts)
 
-    text, usage = _call_messages(client, user_prompt, system_prompt)
+    # Anthropic은 기본적으로 API 데이터를 학습에 미사용
+    # (https://www.anthropic.com/legal/privacy)
+    # metadata는 user_id 키만 허용 (감사 추적용)
+    audit_metadata: dict | None = None
+    if opt_out and workspace_id:
+        audit_metadata = {"user_id": f"workspace:{workspace_id}"}
+
+    text, usage = _call_messages(client, user_prompt, system_prompt, metadata=audit_metadata)
     data = _parse_json_strict(text)
     if data is None:
         retry_user = (
             user_prompt + "\n\nReturn ONLY valid JSON matching the schema. No markdown."
         )
-        text2, usage = _call_messages(client, retry_user, system_prompt)
+        text2, usage = _call_messages(client, retry_user, system_prompt, metadata=audit_metadata)
         data = _parse_json_strict(text2)
         if data is None:
             raise ValueError(
@@ -159,6 +175,7 @@ def _call_messages(
     client: anthropic.Anthropic,
     user: str,
     system: str,
+    metadata: dict | None = None,
 ) -> tuple[str, anthropic.types.Usage]:
     last: Exception | None = None
     for attempt in range(1, MAX_RETRIES_API + 2):
@@ -168,6 +185,7 @@ def _call_messages(
                 max_tokens=MAX_TOKENS,
                 system=system,
                 messages=[{"role": "user", "content": user}],
+                **({"metadata": metadata} if metadata else {}),
             )
             blk = msg.content[0]
             if blk.type != "text":

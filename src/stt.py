@@ -53,12 +53,18 @@ def transcribe(
     audio_path: str,
     language: str = "en",
     tracker: cost_tracker.CostTracker | None = None,
+    opt_out: bool = True,
 ) -> TranscriptionDict:
     """OpenAI Whisper API로 음성을 텍스트로 변환.
 
     Args:
         audio_path: 음성 파일 경로 (ffmpeg가 지원하는 포맷)
         language: ISO 639-1 코드. MVP는 "en" 고정 (변경 금지)
+        opt_out: 학습 옵트아웃 여부 (SEC-001).
+            OpenAI API는 별도 opt-out 파라미터를 제공하지 않음.
+            OpenAI 정책상 API 데이터는 기본적으로 학습에 미사용
+            (https://platform.openai.com/docs/models/default-usage-policies-by-endpoint).
+            이 파라미터는 감사 추적 및 향후 API 변경 대응용으로 보존.
 
     Returns:
         {
