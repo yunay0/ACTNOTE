@@ -2,147 +2,151 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 export default function SignupPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-
-  const isConfigured =
-    typeof window !== "undefined" &&
-    process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith("https://") &&
-    !process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("your-project-id");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
     setLoading(true);
+    setError(null);
 
-    // Supabase 미설정 시 mock 회원가입
-    if (!isConfigured) {
-      await new Promise((r) => setTimeout(r, 500));
+    const supabase = createClient();
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+    });
+
+    if (error) {
+      setError(error.message);
+      setLoading(false);
+    } else {
       setDone(true);
       setLoading(false);
-      return;
     }
-
-    try {
-      const supabase = createClient();
-      const { error: authError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/meetings`,
-        },
-      });
-
-      if (authError) {
-        setError(authError.message);
-        return;
-      }
-
-      setDone(true);
-    } catch {
-      setError("예상치 못한 오류가 발생했습니다. 다시 시도해 주세요.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  if (done) {
-    return (
-      <div className="space-y-6">
-        <div className="space-y-2 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-primary">ACTNOTE</h1>
-        </div>
-        <div className="rounded-lg border bg-card p-6 shadow-sm text-center space-y-3">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-green-100 text-green-600">
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          <p className="font-medium">이메일을 확인해 주세요</p>
-          <p className="text-sm text-muted-foreground">
-            <strong>{email}</strong>으로 확인 링크를 보냈습니다.
-          </p>
-          <button
-            onClick={() => router.push("/login")}
-            className="mt-2 text-sm text-primary hover:underline"
-          >
-            로그인 페이지로 →
-          </button>
-        </div>
-      </div>
-    );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2 text-center">
-        <h1 className="text-3xl font-bold tracking-tight text-primary">ACTNOTE</h1>
-        <p className="text-muted-foreground">새 워크스페이스 만들기</p>
-      </div>
+    <div className="flex h-screen w-screen overflow-hidden">
+      <div className="flex w-full">
 
-      <form onSubmit={handleSubmit} className="rounded-lg border bg-card p-6 shadow-sm space-y-4">
-        <div className="space-y-1.5">
-          <label htmlFor="email" className="block text-sm font-medium">
-            이메일
-          </label>
-          <input
-            id="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label htmlFor="password" className="block text-sm font-medium">
-            비밀번호
-          </label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={6}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="6자 이상"
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
-          />
-        </div>
-
-        {error && (
-          <p className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="inline-flex w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow hover:bg-primary/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        {/* Left — Branding */}
+        <div
+          className="hidden flex-1 flex-col justify-center p-16 md:flex"
+          style={{ background: "linear-gradient(135deg, #0a2540 0%, #1e3a5f 100%)" }}
         >
-          {loading ? "처리 중..." : "회원가입"}
-        </button>
-      </form>
+          <div className="mb-10 flex items-center gap-4">
+            <div className="flex h-16 w-16 items-center justify-center rounded-[12px] bg-[#ff6b35]">
+              <span className="text-4xl font-bold leading-none text-[#1e3a5f]">✓</span>
+            </div>
+            <span className="text-[36px] font-bold tracking-[-1px] text-white">ACTNOTE</span>
+          </div>
 
-      <p className="text-center text-sm text-muted-foreground">
-        이미 계정이 있으신가요?{" "}
-        <Link href="/login" className="font-medium text-primary hover:underline">
-          로그인
-        </Link>
-      </p>
+          <p className="mb-10 text-[22px] leading-[1.5] text-white/90">
+            Transform your meetings
+            <br />
+            into actionable insights
+          </p>
+
+          <div className="flex flex-col gap-6">
+            {[
+              { emoji: "🎙️", text: "AI-powered transcription & summary" },
+              { emoji: "✅", text: "Auto-extract action items" },
+              { emoji: "🎫", text: "One-click ticket creation" },
+            ].map(({ emoji, text }) => (
+              <div key={text} className="flex items-center gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px] bg-[rgba(255,107,53,0.2)] text-xl">
+                  {emoji}
+                </div>
+                <span className="text-[15px] text-white/85">{text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right — Signup Form */}
+        <div className="flex flex-1 flex-col items-center justify-center bg-white p-16">
+          <div className="w-full max-w-[360px]">
+            {done ? (
+              <div className="text-center">
+                <div className="mb-4 text-5xl">📬</div>
+                <h2 className="mb-2 text-2xl font-bold text-[#0a2540]">Check your email</h2>
+                <p className="text-[15px] text-[#64748b]">
+                  We sent a confirmation link to <strong>{email}</strong>.<br />
+                  Click it to activate your account.
+                </p>
+                <Link href="/login" className="mt-6 inline-block text-sm font-semibold text-[#ff6b35] hover:underline">
+                  Back to Sign In
+                </Link>
+              </div>
+            ) : (
+              <>
+                <div className="mb-8 text-center">
+                  <h1 className="mb-3 text-[31px] font-bold text-[#0a2540]">Get started 🚀</h1>
+                  <p className="text-[15px] text-[#64748b]">Create your ACTNOTE account</p>
+                </div>
+
+                <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium text-[#0a2540]">Email</label>
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@example.com"
+                      required
+                      className="h-12 w-full rounded-xl border-2 border-[#e2e8f0] px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a]"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-medium text-[#0a2540]">Password</label>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                      minLength={6}
+                      className="h-12 w-full rounded-xl border-2 border-[#e2e8f0] px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a]"
+                    />
+                  </div>
+
+                  {error && (
+                    <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="mt-2 flex h-12 w-full items-center justify-center rounded-xl text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+                    style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+                  >
+                    {loading ? (
+                      <span className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    ) : (
+                      "Create Account"
+                    )}
+                  </button>
+                </form>
+
+                <p className="mt-6 text-center text-sm text-[#64748b]">
+                  Already have an account?{" "}
+                  <Link href="/login" className="font-semibold text-[#ff6b35] hover:underline">
+                    Sign In
+                  </Link>
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
