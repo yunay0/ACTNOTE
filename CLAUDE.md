@@ -87,6 +87,21 @@ actnote-web/                 ← 프론트엔드 (Next.js, 동일 레포 내 신
 
 ---
 
+## 기능 ID 참조 룰
+
+작업 요청에 기능 ID(예: PUB-002, INTEG-001, SEC-009, CONTEXT-001 등)가 포함되면:
+
+1. 먼저 `docs/features.md` 파일을 읽는다
+2. 해당 ID의 스펙을 정확히 파악한다
+3. 스펙대로 구현한다
+4. 스펙이 모호하면 추측하지 말고 사용자에게 질문한다
+
+기능 ID 형식: 영문 대문자 + 하이픈 + 숫자
+예: CAP-001, DRAFT-002, PUB-001, INTEG-003, SEC-009, CONTEXT-001
+
+복합 ID 요청도 동일하게 처리:
+"PUB-002 + INTEG-001/003 구현해줘" → 세 기능 모두 `docs/features.md`에서 확인 후 구현
+
 ## 상세 룰 (별도 파일)
 - 프론트엔드 코딩 스타일: @.cursor/rules/frontend-style.mdc
 - 도메인 모델: @.cursor/rules/actnote-domain.mdc

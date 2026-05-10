@@ -157,18 +157,22 @@ def publish_meeting(meeting_id: str, user_id: str, workspace_id: str, sb_client)
     1. admin 권한 확인
     2. approval_status = 'ready' 확인
     3. validate_for_publication() 통과
-    4. approval_status = 'published', published_at = NOW()
+    4. INTEG-005: Notion 연동 확인 (미연동 시 ValidationError)
+    5. approval_status = 'published', published_at = NOW()
+    6. PUB-002: Notion 회의록 페이지 생성 → meetings.notion_page_id 저장
+    7. PUB-002: Notion 액션 아이템 티켓 생성 → action_items.notion_page_id 저장
     """
     _require_admin(user_id, workspace_id, sb_client)
 
     current = (
         sb_client.table("meetings")
-        .select("approval_status")
+        .select("approval_status, title, summary, decisions, meeting_date")
         .eq("id", meeting_id)
         .single()
         .execute()
     )
-    status = (current.data or {}).get("approval_status", "draft")
+    meeting_data = current.data or {}
+    status = meeting_data.get("approval_status", "draft")
     if status != "ready":
         raise StateError(
             f"publish 불가: 현재 approval_status='{status}' "
@@ -179,6 +183,18 @@ def publish_meeting(meeting_id: str, user_id: str, workspace_id: str, sb_client)
     if not is_valid:
         raise ValidationError(missing)
 
+    # INTEG-005: Notion 미연동 시 발행 차단
+    from src.notion_sync import (
+        check_notion_integration,
+        push_meeting as _push_meeting,
+        push_action_items as _push_action_items,
+    )
+    if not check_notion_integration(workspace_id, sb_client):
+        raise ValidationError([
+            "notion_integration (Notion 미연동 — 워크스페이스 설정 > 외부 연동에서 연동 후 재시도)"
+        ])
+
+    # Step 5: published 상태로 변경
     now = _now_iso()
     resp = (
         sb_client.table("meetings")
@@ -190,8 +206,53 @@ def publish_meeting(meeting_id: str, user_id: str, workspace_id: str, sb_client)
         .eq("id", meeting_id)
         .execute()
     )
-    _log.info("meeting published: meeting_id=%s user_id=%s", meeting_id, user_id)
-    return resp.data[0] if resp.data else {}
+    row = resp.data[0] if resp.data else {}
+
+    # Step 6: Notion 회의록 페이지 push
+    decisions_raw = meeting_data.get("decisions") or []
+    if decisions_raw and isinstance(decisions_raw[0], dict):
+        decision_texts = [d.get("content", "") for d in decisions_raw]
+    else:
+        decision_texts = [str(d) for d in decisions_raw]
+
+    actions_resp = (
+        sb_client.table("action_items")
+        .select("id, content, assignee, due_date")
+        .eq("meeting_id", meeting_id)
+        .in_("status", ["open", "in_progress"])
+        .execute()
+    )
+    action_items_data = actions_resp.data or []
+
+    notion_page_id = _push_meeting(
+        meeting_id=meeting_id,
+        title=meeting_data.get("title") or "",
+        summary=meeting_data.get("summary") or "",
+        decisions=decision_texts,
+        action_items=action_items_data,
+        meeting_date=meeting_data.get("meeting_date"),
+        workspace_id=workspace_id,
+        sb_client=sb_client,
+    )
+
+    sb_client.table("meetings").update(
+        {"notion_page_id": notion_page_id, "updated_at": _now_iso()}
+    ).eq("id", meeting_id).execute()
+
+    # Step 7: Notion 액션 아이템 티켓 push
+    _push_action_items(
+        meeting_id=meeting_id,
+        meeting_page_id=notion_page_id,
+        action_items=action_items_data,
+        workspace_id=workspace_id,
+        sb_client=sb_client,
+    )
+
+    _log.info(
+        "meeting published: meeting_id=%s user_id=%s notion_page_id=%s",
+        meeting_id, user_id, notion_page_id,
+    )
+    return {**row, "notion_page_id": notion_page_id}
 
 
 def revoke_publication(meeting_id: str, user_id: str, workspace_id: str, sb_client) -> dict:
@@ -246,8 +307,8 @@ if __name__ == "__main__":
     console = Console()
     sb = create_supabase_client_from_env()
 
-    workspace_id = os.environ["TEST_WORKSPACE_ID"]
-    user_id = os.environ["TEST_USER_ID"]
+    workspace_id = os.environ["ACTNOTE_TEST_WORKSPACE_ID"]
+    user_id = os.environ["ACTNOTE_TEST_USER_ID"]
 
     # 임시 meeting 생성 (필수 필드 없음)
     empty_meeting = (
@@ -261,7 +322,7 @@ if __name__ == "__main__":
     # --- validate: 필드 없음 → False ---
     ok, missing = validate_for_publication(mid_empty, sb)
     assert not ok, "빈 회의는 검증 실패여야 함"
-    console.print(f"[green][OK][/] validate False — 누락: {missing}")
+    console.print(f"[green][OK][/] validate False - 누락: {missing}")
 
     # --- 필드 채운 meeting 생성 ---
     full_meeting = (
@@ -295,14 +356,17 @@ if __name__ == "__main__":
     assert row["approval_status"] == "ready", f"expected ready, got {row['approval_status']}"
     console.print(f"[green][OK][/] set_ready → approval_status=ready")
 
-    # --- publish ---
-    publish_meeting(mid_full, user_id, workspace_id, sb)
-    row = sb.table("meetings").select("approval_status, published_at").eq("id", mid_full).single().execute().data
-    assert row["approval_status"] == "published"
-    assert row["published_at"] is not None
-    console.print(f"[green][OK][/] publish_meeting → published_at={row['published_at']}")
+    # --- INTEG-005: Notion 미연동 시 ValidationError 확인 ---
+    try:
+        publish_meeting(mid_full, user_id, workspace_id, sb)
+        assert False, "Notion 미연동 상태에서 ValidationError가 발생해야 합니다"
+    except ValidationError as e:
+        assert any("notion_integration" in m for m in e.missing), f"unexpected missing: {e.missing}"
+        console.print(f"[green][OK][/] INTEG-005 Notion 미연동 → ValidationError 정상 발생")
 
-    # --- revoke ---
+    # --- revoke (set_ready 이후 draft로 되돌리는 경로가 없으므로 published 경유) ---
+    # INTEG-005 체크 이후 상태는 여전히 'ready' 이므로 정리만 수행
+    sb.table("meetings").update({"approval_status": "published", "published_at": _now_iso()}).eq("id", mid_full).execute()
     revoke_publication(mid_full, user_id, workspace_id, sb)
     row = sb.table("meetings").select("approval_status, published_at").eq("id", mid_full).single().execute().data
     assert row["approval_status"] == "draft"
