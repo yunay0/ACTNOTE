@@ -46,22 +46,13 @@ actnote-web/                 ← 프론트엔드 (Next.js, 동일 레포 내 신
 
 ## 메인2 백로그
 
-### Worker 에러 상태 처리 (미해결 — 발견: 2026-05-09)
+### Worker 에러 상태 처리 (해결됨 — 2026-05-10)
 
-**문제:** 파이프라인 실패 시 `meetings.status`가 `'transcribing'`에 멈춰있음. `update-status-error` step이 실행되지 않음.
+**해결:** `download-audio` + `run-pipeline`을 `download-and-process` 단일 step으로 통합하고 try/except를 step **외부**(코루틴 레벨)에 두는 방식으로 정상 동작 확인. 현재 `src/worker.py`에서:
+1. 예외 catch → `update-status-error` step → `notify-analysis-failed` step → re-raise 흐름이 정상 실행됨.
+2. 이벤트 스펙은 `docs/events.md` 단일 진실 원천으로 분리.
 
-**시도한 것:**
-1. `run-pipeline` step만 try/except로 감쌌으나 실행 안 됨
-2. `download-audio` + `run-pipeline`을 `download-and-process` 단일 step으로 통합 후 try/except 감쌌으나 동일하게 실행 안 됨
-
-**추정 원인:** Inngest SDK 0.5.18에서 `step.run()` 내부 예외가 일반 `except Exception`에 잡히지 않음 (StepError 등 특수 타입으로 래핑 가능성).
-
-**메인2 대응 방향:**
-- Inngest 공식 문서/예제 재확인
-- `StepError` 등 특수 타입 명시적 catch 시도
-- 또는 Inngest의 `on_failure` 콜백 사용
-
-**영향:** 파이프라인 실패 시 사용자가 영원히 "처리 중" 상태로 보게 됨. 재시도 버튼/알림 기능 도입 시 반드시 해결 필요.
+**검증 방법:** 일부러 깨진 `audio_path`로 `meeting/process` 발송 → `meetings.status='error'` + `notifications` row 1건 생성 확인.
 
 ---
 
