@@ -22,7 +22,12 @@ import uvicorn
 import inngest.fast_api
 from fastapi import FastAPI
 
-from src.worker import client, process_meeting
+from src.worker import (
+    client,
+    process_meeting,
+    publish_meeting_handler,
+    send_email_handler,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,7 +36,11 @@ logging.basicConfig(
 
 app = FastAPI(title="Actnote Inngest Worker", version="0.1.0")
 
-inngest.fast_api.serve(app, client, [process_meeting])
+inngest.fast_api.serve(
+    app,
+    client,
+    [process_meeting, publish_meeting_handler, send_email_handler],
+)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

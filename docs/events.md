@@ -63,27 +63,13 @@
 
 ---
 
-### 2. `meeting/embed_index` *(이미 존재)* — 발행본 임베딩 (재)인덱싱
+### 2. `meeting/publish` — 발행 후 외부 동기화 + 재인덱싱
 
-발행 직후 RAG용 임베딩 생성/갱신.
+DB 상태 전환(`ready → published`)은 **Supabase RPC `publish_meeting`** 이 즉시 처리.
+이 이벤트는 **그 직후** 프론트가 `/api/trigger-publish` 로 워커에 위임하는 비동기 작업이다:
+Notion push, 임베딩 재인덱싱, 발행 완료 알림.
 
-```json
-{
-  "name": "meeting/embed_index",
-  "data": {
-    "meeting_id":   "uuid",
-    "workspace_id": "uuid"
-  }
-}
-```
-
-> 현재는 분석 단계에서도 `ACTNOTE_EMBED_ON_ANALYZE=true` 일 때 한 번 인덱싱한다. 발행 후 텍스트가 변경됐다면 이 이벤트로 다시 인덱싱한다.
-
----
-
-### 3. `meeting/publish` *(예정 — Phase 2-2에서 추가)*
-
-발행 시 Notion push + 임베딩 인덱싱을 한 번에 트리거. **현재는 미구현, 추가 후 이 문서에 반영 예정.**
+**페이로드:**
 
 ```json
 {
@@ -96,34 +82,116 @@
 }
 ```
 
-기대 동작 (워커):
-1. `notion_sync.push_meeting` (회의록 페이지)
-2. `notion_sync.push_action_items` (티켓)
-3. `embed_index` 재실행 (또는 동일 워커가 함수 호출)
-4. 실패 시 `meetings.notion_sync_error_at` 갱신 (별도 컬럼은 추가 마이그레이션에서)
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `meeting_id` | UUID | ✅ | RPC `publish_meeting` 으로 이미 `published` 상태가 된 회의. |
+| `user_id` | UUID | ✅ | 발행을 트리거한 사용자. |
+| `workspace_id` | UUID | ✅ | 워크스페이스 격리·Notion 토큰 조회에 사용. |
+
+**워커 동작 (단일 함수 `publish-meeting`, 재시도 3회):**
+1. `meetings` + `action_items` fetch (publish 시점의 텍스트로 push)
+2. **Notion push** — `push_meeting`(회의록 페이지) + `push_action_items`(티켓)
+   - Notion 미연동 → 조용히 skip (RPC 단계에서 이미 차단되지만 멱등성 보장)
+   - 일시 장애 → Inngest 재시도가 처리
+3. **임베딩 재인덱싱** — 발행본 텍스트가 draft 와 다를 수 있어 `meeting_embeddings` 정리 후 재INSERT
+4. `meetings.notion_page_id` 업데이트 (push 성공 시)
+5. (옵션) `publication_complete` 알림 INSERT — 메인2 이후 추가 예정
+
+**부수 효과:**
+- `meetings.notion_page_id` 갱신
+- `action_items.notion_page_id` 갱신 (티켓 단위)
+- `meeting_embeddings` 의 `meeting_id` row 재구성
+
+**실패 정책:**
+- Notion 단계 실패: 워커가 raise → Inngest 재시도. 3회 모두 실패 시 함수 실패로 마크 (DB 상태는 그대로 `published`).
+- 재인덱싱 단계 실패: 로그만 남기고 함수는 성공으로 마크 (검색 품질 저하만 발생).
 
 ---
 
-### 4. `notification/email_send` *(예정 — Phase 3-1에서 추가)*
+### 3. `meeting/embed_index` *(예정 — 명시적 재인덱싱이 필요할 때)*
 
-인앱 알림과 별도로 이메일을 보낼 때 사용. 메일 라이브러리·발신자 설정은 백엔드 모듈에서 처리.
+수동으로 임베딩만 다시 만들고 싶을 때 (예: 청킹 정책 변경 후 일괄 재처리). **현재는 워커 핸들러 미구현 — `meeting/publish` 가 자동으로 처리하므로 보통은 필요 없다.**
+
+```json
+{
+  "name": "meeting/embed_index",
+  "data": {
+    "meeting_id":   "uuid",
+    "workspace_id": "uuid"
+  }
+}
+```
+
+---
+
+### 4. `notification/email_send` — 외부 이메일 발송 (Resend)
+
+인앱 알림과 별도로 메일을 보낼 때. 워크스페이스 초대, 액션 할당, 분석 완료/실패 등 모든 메일은 이 이벤트 1종으로 통일한다 (라이브러리/발신자/재시도 정책을 워커가 일괄 관리).
+
+**페이로드:**
 
 ```json
 {
   "name": "notification/email_send",
   "data": {
-    "to":      "user@example.com",
-    "subject": "string",
-    "body_html": "string",
-    "body_text": "string",
+    "to":         "user@example.com",
+    "subject":    "string",
+    "body_html":  "string",
+    "body_text":  "string (optional)",
+    "from":       "Actnote <noreply@actnote.app> (optional)",
+    "reply_to":   "support@actnote.app (optional)",
     "ref": {
       "kind":         "analysis_complete | analysis_failed | action_assigned | workspace_invite",
-      "meeting_id":   "uuid?",
-      "workspace_id": "uuid?"
+      "meeting_id":   "uuid (optional)",
+      "workspace_id": "uuid (optional)"
     }
   }
 }
 ```
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `to` | string \| string[] | ✅ | 수신자 이메일. 배열로 여러 명 가능 (모두 `To:` 노출, BCC 아님) |
+| `subject` | string | ✅ | 제목. UTF-8 한글 OK |
+| `body_html` | string | ✅ | HTML 본문. `src/email_notifier.py` 의 템플릿 함수 결과 사용 권장 |
+| `body_text` | string | ⛔ | 미지정 시 워커가 HTML → text 자동 생성 |
+| `from` | string | ⛔ | 미지정 시 `EMAIL_FROM` env 또는 `onboarding@resend.dev` |
+| `reply_to` | string | ⛔ | 회신용 |
+| `ref` | object | ⛔ | 추적/디버깅 메타데이터. 워커는 로그만 함 |
+
+**워커 동작 (`send-email`, 재시도 3회):**
+1. 필수 필드 검증 → 누락 시 ValueError (재시도 안 함)
+2. Resend API 호출 (`src/email_notifier.send_email`)
+3. 성공 시 `{id, to, subject}` 반환 / 실패 시 raise → 자동 재시도
+
+**Dry-run 모드:**
+- `RESEND_API_KEY` 환경변수가 비어있으면 자동으로 콘솔 출력만 하고 종료 (개발/테스트 안전).
+
+**환경변수:**
+- `RESEND_API_KEY` (필수, 운영) — Resend 대시보드 → API Keys 발급
+- `EMAIL_FROM` (선택) — 도메인 인증 후 `Actnote <noreply@actnote.app>` 형식
+- `NEXT_PUBLIC_APP_URL` (선택) — 메일 본문 푸터에 사용
+
+**프론트 사용 예시:**
+
+```ts
+// app/api/workspace/invite/route.ts
+import { Inngest } from "inngest";
+const inngest = new Inngest({ id: "actnote" });
+
+await inngest.send({
+  name: "notification/email_send",
+  data: {
+    to: inviteeEmail,
+    subject: `${inviterName}님이 ${workspaceName} 워크스페이스에 초대했습니다`,
+    body_html: htmlString,  // 백엔드가 만들어둔 템플릿을 호출하거나, 프론트에서 직접 만들기
+    body_text: plainTextString,
+    ref: { kind: "workspace_invite", workspace_id: wsId },
+  },
+});
+```
+
+> 본문 HTML 을 직접 만들기 어렵다면 백엔드 헬퍼 (`src/email_notifier.render_invite_email`) 를 호출하는 백엔드 endpoint 를 별도로 두는 것을 권장.
 
 ---
 
