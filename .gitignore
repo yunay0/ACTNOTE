@@ -35,3 +35,4 @@ output/
 Thumbs.db
 
 # Note: .cursor/rules/ is intentionally tracked (project rules belong in repo)
+docs/features.md
