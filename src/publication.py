@@ -184,7 +184,7 @@ def publish_meeting(meeting_id: str, user_id: str, workspace_id: str, sb_client)
         raise ValidationError(missing)
 
     # INTEG-005: Notion 미연동 시 발행 차단
-    from src.notion_client import (
+    from src.notion_sync import (
         check_notion_integration,
         push_meeting as _push_meeting,
         push_action_items as _push_action_items,
@@ -307,8 +307,8 @@ if __name__ == "__main__":
     console = Console()
     sb = create_supabase_client_from_env()
 
-    workspace_id = os.environ["TEST_WORKSPACE_ID"]
-    user_id = os.environ["TEST_USER_ID"]
+    workspace_id = os.environ["ACTNOTE_TEST_WORKSPACE_ID"]
+    user_id = os.environ["ACTNOTE_TEST_USER_ID"]
 
     # 임시 meeting 생성 (필수 필드 없음)
     empty_meeting = (
@@ -322,7 +322,7 @@ if __name__ == "__main__":
     # --- validate: 필드 없음 → False ---
     ok, missing = validate_for_publication(mid_empty, sb)
     assert not ok, "빈 회의는 검증 실패여야 함"
-    console.print(f"[green][OK][/] validate False — 누락: {missing}")
+    console.print(f"[green][OK][/] validate False - 누락: {missing}")
 
     # --- 필드 채운 meeting 생성 ---
     full_meeting = (

@@ -1,6 +1,10 @@
 """INTEG-001 / INTEG-003 / INTEG-005 / INTEG-006 / PUB-002 / SEC-009:
 Notion 연동 클라이언트.
 
+파일명: notion_sync.py
+  (notion_client.py 로 명명하면 pip 패키지 notion-client 와 충돌하여
+   'from notion_client import Client' 시 자기 자신을 import하는 순환 참조 발생)
+
 Public API:
   check_notion_integration(workspace_id, sb_client) -> bool          # INTEG-005
   register_notion_integration(...)                    -> dict         # INTEG-001/003
@@ -401,7 +405,7 @@ if __name__ == "__main__":
             "Notion 실제 연동 테스트 건너뜀[/]"
         )
     else:
-        from src.notion_client import _client, ensure_action_db
+        from src.notion_sync import _client, ensure_action_db, _notion_page_url, _PRIORITY_DEFAULT
 
         notion = _client(notion_token)
 
@@ -439,7 +443,6 @@ if __name__ == "__main__":
             {"id": None, "content": "테스트 액션 아이템 2", "assignee": None, "due_date": None, "priority": None},
         ]
         notion_action_db = ensure_action_db(meeting_page_id, notion_token)
-        from src.notion_client import _notion_page_url, _PRIORITY_DEFAULT
         meeting_url = _notion_page_url(meeting_page_id)
 
         ticket_ids: list[str] = []
@@ -468,4 +471,4 @@ if __name__ == "__main__":
             notion.pages.update(page_id=tid, archived=True)
         console.print("[dim]테스트 페이지 archive 완료[/]")
 
-    console.print("\n[bold green]notion_client 모든 테스트 통과[/]")
+    console.print("\n[bold green]notion_sync 모든 테스트 통과[/]")
