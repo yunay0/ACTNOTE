@@ -36,8 +36,16 @@ class ActionItem(TypedDict):
     confidence: float
 
 
+class DocumentLink(TypedDict):
+    id: str
+    title: str
+    url: str
+
+
 class ExtractedResult(TypedDict):
     title: str
     summary: str
     decisions: list[str]
     action_items: list[ActionItem]
+    referenced_documents: list[str]       # DRAFT-006: LLM이 추출한 문서 언급 키워드
+    document_links: list[DocumentLink]    # DRAFT-006: Notion 검색으로 찾은 실제 문서 링크

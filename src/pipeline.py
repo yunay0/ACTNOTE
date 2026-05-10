@@ -49,6 +49,10 @@ def _update_meeting(
         payload["duration_seconds"] = int(duration)
     payload["ai_draft_notes"] = json.dumps(extracted, ensure_ascii=False)
 
+    ref_docs = extracted.get("referenced_documents")
+    if ref_docs is not None:
+        payload["referenced_documents"] = json.dumps(ref_docs, ensure_ascii=False)
+
     sb_client.table("meetings").update(payload).eq("id", meeting_id).execute()
 
 
@@ -208,6 +212,35 @@ def run_pipeline(
             f"  경과 시간: {total:.1f}s"
         )
         raise
+
+    # -------------------------------------------------------------------------
+    # [4.5/6] DRAFT-006: 관련 문서 자동 태깅 — 실패해도 파이프라인 진행
+    # -------------------------------------------------------------------------
+    referenced_docs = extracted.get("referenced_documents", [])
+    if isinstance(store, SupabaseStorage) and referenced_docs:
+        _console.print("[cyan][4.5/6][/] 관련 문서 자동 태깅 (DRAFT-006)...")
+        try:
+            from src.notion_sync import check_notion_integration, search_notion_documents
+
+            if check_notion_integration(workspace_id, store.client):
+                document_links: list[dict] = []
+                for query in referenced_docs[:10]:
+                    results = search_notion_documents(
+                        workspace_id, query, store.client, limit=2
+                    )
+                    document_links.extend(results)
+                extracted["document_links"] = document_links
+                _console.print(
+                    f"        [green][OK][/] 문서 링크 {len(document_links)}건 "
+                    f"({len(referenced_docs)}개 키워드 검색)"
+                )
+            else:
+                _console.print("        [dim]Notion 미연동 — 문서 검색 건너뜀[/]")
+        except Exception as _doc_err:
+            _console.print(f"        [yellow][WARN] 문서 자동 태깅 실패: {_doc_err}[/]")
+    else:
+        if not referenced_docs:
+            _console.print("[dim]        DRAFT-006: 문서 언급 없음[/]")
 
     # -------------------------------------------------------------------------
     # [4 post] meetings UPDATE + decisions + transcripts DB INSERT (SupabaseStorage 전용)

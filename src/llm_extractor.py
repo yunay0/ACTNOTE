@@ -48,6 +48,33 @@ _SYSTEM_PROMPT_BASE = (
     "transcript에 명시적으로 등장한 내용만 추출하세요.\n"
     "추론하거나 일반 상식을 동원하지 마세요.\n"
     "명시적이지 않으면 confidence < 0.7로 표시하세요.\n\n"
+    "[관련 문서 언급 추출 / Referenced Document Detection]\n\n"
+    "회의 중 언급된 문서, 자료, 참조 항목을 식별하세요.\n"
+    "Identify documents, materials, or references mentioned in the meeting.\n\n"
+    "추출 대상 (Extract):\n"
+    "- 문서 종류 / Document types:\n"
+    "  PRD, spec, brief, proposal, memo, report, 기획서, 명세서, 제안서, 보고서\n"
+    "- 디자인 / Design:\n"
+    "  design, mockup, wireframe, prototype, 시안, 목업, 디자인, 프로토타입\n"
+    "- 데이터·분석 / Data & Analysis:\n"
+    "  data, analysis, dashboard, report, 자료, 분석, 리포트, 통계\n"
+    "- 코드·레포 / Code & Repo:\n"
+    "  code, repo, repository, branch, PR, 코드, 레포, 브랜치\n"
+    "- 일반 참조 / General references:\n"
+    "  file, attachment, link, reference, 파일, 첨부, 링크\n\n"
+    "참조 패턴 (Reference patterns):\n"
+    '- "지난번 X" / "last X" / "previous X"\n'
+    '- "X v2" / "X version 2" / "X 두 번째"\n'
+    '- "X 문서" / "X document"\n'
+    '- "위에 언급한 X" / "the X mentioned above"\n'
+    '- "팀 X" / "team X"\n\n'
+    "추출 형식:\n"
+    "- 3~5단어 이내 키워드로 추출 (검색 쿼리로 사용)\n"
+    "- 발화에 명시적으로 등장한 것만 (추론 금지)\n"
+    "- 일반화 금지 (\"회의 자료\" 같은 일반 명사는 제외)\n"
+    "- 최대 10개\n\n"
+    "좋은 예시: \"PRD v2\", \"Q3 roadmap\", \"프로젝트 기획서\", \"와이어프레임 v3\"\n"
+    "나쁜 예시: \"문서\" (너무 일반적), \"회의 자료\" (모호함), \"지난주에 본 거\" (구체적이지 않음)\n\n"
     "Output schema:\n"
     "{\n"
     '  "title": "...",\n'
@@ -61,7 +88,8 @@ _SYSTEM_PROMPT_BASE = (
     '      "depends_on": "prior action summary or null",\n'
     '      "confidence": 0.85\n'
     "    }\n"
-    "  ]\n"
+    "  ],\n"
+    '  "referenced_documents": ["기획서 v2", "PRD 수정 건"]\n'
     "}\n"
 )
 
@@ -246,7 +274,18 @@ def _normalize_result(data: dict) -> ExtractedResult:
                     "confidence": round(conf, 2),
                 }
             )
-    return {"title": title, "summary": summary, "decisions": decisions, "action_items": items}
+    raw_docs = data.get("referenced_documents", [])
+    referenced_documents = [
+        str(d).strip() for d in raw_docs if isinstance(d, str) and str(d).strip()
+    ]
+    return {
+        "title": title,
+        "summary": summary,
+        "decisions": decisions,
+        "action_items": items,
+        "referenced_documents": referenced_documents,
+        "document_links": [],
+    }
 
 
 def _print_result(out: ExtractedResult) -> None:
@@ -257,10 +296,13 @@ def _print_result(out: ExtractedResult) -> None:
         f"   depends_on={x['depends_on']} conf={x['confidence']}"
         for i, x in enumerate(out["action_items"], 1)
     )
+    ref_docs = out.get("referenced_documents", [])
+    lr = "\n".join(f"- {d}" for d in ref_docs) if ref_docs else "(none)"
     _console.print(
         Panel(
             f"[bold]Title[/]\n{out['title']}\n\n[bold]Summary[/]\n{out['summary']}\n\n"
-            f"[bold]Decisions[/]\n{ld or '(none)'}\n\n[bold]Action items[/]\n{la or '(none)'}",
+            f"[bold]Decisions[/]\n{ld or '(none)'}\n\n[bold]Action items[/]\n{la or '(none)'}\n\n"
+            f"[bold]Referenced Documents[/]\n{lr}",
             title="Extracted",
             expand=False,
         )
@@ -308,3 +350,22 @@ if __name__ == "__main__":
         _console.print("[yellow][WARN] [UPDATE] 항목 없음 -- LLM이 인식 못했을 수 있음[/]")
 
     cost_tracker.print_cost_summary()
+
+    # --- 테스트 3: DRAFT-006 관련 문서 언급 추출 ---
+    _console.print("\n[bold cyan]=== 테스트 3: DRAFT-006 — 관련 문서 언급 추출 ===[/]")
+    doc_transcript = (
+        "참석자: 박PM, 최개발\n"
+        "박PM: 기획서 v2를 참고해야 해요. 지난번에 공유한 그 파일이요.\n"
+        "최개발: 아, PRD 수정 건 말씀하시는 건가요? 와이어프레임도 같이 보면 좋겠어요.\n"
+        "박PM: 맞아요. 그리고 이번 스프린트 전에 API 스펙 시트 꼭 확인해 주세요.\n"
+        "최개발: 네, 알겠습니다. 이번 주 안에 다 검토할게요.\n"
+    )
+    out3 = extract(doc_transcript, meeting_title="DRAFT-006 테스트 회의")
+    _print_result(out3)
+    ref_docs = out3.get("referenced_documents", [])
+    if ref_docs:
+        _console.print(f"[green][OK] referenced_documents {len(ref_docs)}개 추출:[/]")
+        for doc in ref_docs:
+            _console.print(f"  -> {doc!r}")
+    else:
+        _console.print("[yellow][WARN] referenced_documents 없음 — LLM이 인식 못했을 수 있음[/]")

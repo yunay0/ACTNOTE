@@ -154,6 +154,68 @@ def revoke_notion_integration(workspace_id: str, sb_client) -> None:
 
 
 # ---------------------------------------------------------------------------
+# DRAFT-006: search_notion_documents
+# ---------------------------------------------------------------------------
+
+def search_notion_documents(
+    workspace_id: str,
+    query: str,
+    sb_client,
+    limit: int = 3,
+) -> list[dict]:
+    """Notion search API로 query와 제목이 일치하는 페이지를 검색한다.
+
+    Returns:
+        [{"id": str, "title": str, "url": str}, ...]
+    """
+    row = _get_integration_row(workspace_id, sb_client)
+    token = _token_from_row(row)
+    notion = _client(token)
+
+    response = notion.search(
+        query=query,
+        filter={"property": "object", "value": "page"},
+        page_size=min(limit * 3, 20),
+    )
+
+    results: list[dict] = []
+    query_lower = query.lower()
+    for item in response.get("results") or []:
+        title_parts = (
+            item.get("properties", {}).get("title", {}).get("title", [])
+            or item.get("properties", {}).get("Name", {}).get("title", [])
+        )
+        if not title_parts:
+            # 일반 page인 경우 properties 구조가 다를 수 있으므로 추가 탐색
+            for _prop in item.get("properties", {}).values():
+                if _prop.get("type") == "title":
+                    title_parts = _prop.get("title", [])
+                    break
+
+        title_text = "".join(
+            t.get("plain_text", "") for t in title_parts if isinstance(t, dict)
+        ).strip()
+
+        if not title_text or query_lower not in title_text.lower():
+            continue
+
+        page_id: str = item["id"]
+        results.append({
+            "id": page_id,
+            "title": title_text,
+            "url": _notion_page_url(page_id),
+        })
+        if len(results) >= limit:
+            break
+
+    _log.info(
+        "search_notion_documents: query=%r → %d건 (workspace_id=%s)",
+        query, len(results), workspace_id,
+    )
+    return results
+
+
+# ---------------------------------------------------------------------------
 # INTEG-006: ensure_action_db
 # ---------------------------------------------------------------------------
 
@@ -208,6 +270,7 @@ def push_meeting(
     meeting_date: str | None,
     workspace_id: str,
     sb_client,
+    document_links: list[dict] | None = None,
 ) -> str:
     """회의록을 Notion 페이지로 생성/업데이트한다.
 
@@ -259,6 +322,28 @@ def push_meeting(
                 "object": "block",
                 "type": "bulleted_list_item",
                 "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": d}}]},
+            })
+
+    # DRAFT-006: Related Documents 섹션
+    if document_links:
+        blocks.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": [{"type": "text", "text": {"content": "Related Documents"}}]},
+        })
+        for doc in document_links:
+            doc_title = doc.get("title") or doc.get("id") or "Unknown"
+            doc_url = doc.get("url") or ""
+            rich_text: list[dict[str, Any]] = [
+                {
+                    "type": "text",
+                    "text": {"content": doc_title, "link": {"url": doc_url} if doc_url else None},
+                }
+            ]
+            blocks.append({
+                "object": "block",
+                "type": "bulleted_list_item",
+                "bulleted_list_item": {"rich_text": rich_text},
             })
 
     # --- Properties ---
