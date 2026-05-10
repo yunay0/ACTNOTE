@@ -24,7 +24,7 @@ export default function LoginPage() {
       setError(error.message);
       setLoading(false);
     } else {
-      router.push("/meetings");
+      router.push("/onboarding");
       router.refresh();
     }
   }
