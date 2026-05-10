@@ -1,76 +1,78 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { createClient } from "@/lib/supabase/client";
 import type { Meeting } from "@/lib/types/meeting";
-import { isProcessing, MOCK_PROCESSING_MS } from "@/lib/types/meeting";
+import { isProcessing } from "@/lib/types/meeting";
 
-const STORAGE_KEY = "actnote_meetings";
+function rowToMeeting(m: Record<string, unknown>): Meeting {
+  return {
+    id: m.id as string,
+    title: (m.title as string) || "Untitled Meeting",
+    status: m.status as Meeting["status"],
+    created_at: m.created_at as string,
+    summary: (m.summary as string | null) ?? null,
+    audio_url: (m.audio_file_url as string | null) ?? null,
+    filename: (m.audio_file_url as string | null)?.split("/").pop() ?? null,
+    workspace_id: m.workspace_id as string,
+  };
+}
 
 export function useMeetings() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
-  function load(): Meeting[] {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? (JSON.parse(raw) as Meeting[]) : [];
-    } catch {
-      return [];
-    }
-  }
+  const loadMeetings = useCallback(async (wsId: string) => {
+    const supabase = createClient();
+    const { data } = await (supabase as any)
+      .from("meetings")
+      .select("id, title, status, created_at, summary, audio_file_url, workspace_id")
+      .eq("workspace_id", wsId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
 
-  function save(list: Meeting[]) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-    setMeetings(list);
-  }
+    if (data) setMeetings((data as Record<string, unknown>[]).map(rowToMeeting));
+  }, []);
 
-  // 최초 로드 + 모크 상태 자동 업데이트 폴링
   useEffect(() => {
-    function tick() {
-      const list = load();
-      const now = Date.now();
-      let changed = false;
+    const supabase = createClient();
 
-      const updated = list.map((m) => {
-        if (!isProcessing(m.status)) return m;
-        const elapsed = now - new Date(m.created_at).getTime();
-        if (elapsed >= MOCK_PROCESSING_MS) {
-          changed = true;
-          // 모크: 분석 완료 → 임시 저장
-          return { ...m, status: "ready" as const };
-        }
-        return m;
-      });
+    async function init() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
 
-      if (changed) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-        setMeetings(updated);
-      } else {
-        setMeetings(list);
-      }
+      const { data: ws } = await (supabase as any)
+        .from("workspaces")
+        .select("id")
+        .eq("owner_id", user.id)
+        .single();
+
+      if (!ws) return;
+      setWorkspaceId(ws.id as string);
+      await loadMeetings(ws.id as string);
+      setHydrated(true);
     }
 
-    tick();
-    setHydrated(true);
+    init();
+  }, [loadMeetings]);
 
-    const id = setInterval(tick, 3000);
-    return () => clearInterval(id);
-  }, []);
+  // 처리 중인 미팅이 있으면 5초마다 상태 새로고침
+  useEffect(() => {
+    if (!workspaceId || !hydrated) return;
+    if (!meetings.some((m) => isProcessing(m.status))) return;
 
-  const addMeeting = useCallback((meeting: Meeting) => {
-    setMeetings((prev) => {
-      const updated = [meeting, ...prev];
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
+    const interval = setInterval(() => loadMeetings(workspaceId), 5000);
+    return () => clearInterval(interval);
+  }, [workspaceId, hydrated, meetings, loadMeetings]);
 
-  const deleteMeeting = useCallback((id: string) => {
-    setMeetings((prev) => {
-      const updated = prev.filter((m) => m.id !== id);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      return updated;
-    });
+  const deleteMeeting = useCallback(async (id: string) => {
+    const supabase = createClient();
+    await (supabase as any)
+      .from("meetings")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id);
+    setMeetings((prev) => prev.filter((m) => m.id !== id));
   }, []);
 
   const getMeeting = useCallback(
@@ -78,15 +80,5 @@ export function useMeetings() {
     [meetings]
   );
 
-  const publishMeeting = useCallback((id: string) => {
-    setMeetings((prev) => {
-      const updated = prev.map((m) =>
-        m.id === id ? { ...m, status: "published" as const } : m
-      );
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
-
-  return { meetings, addMeeting, deleteMeeting, getMeeting, publishMeeting, hydrated };
+  return { meetings, deleteMeeting, getMeeting, hydrated, workspaceId, reloadMeetings: loadMeetings };
 }

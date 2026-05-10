@@ -1,116 +1,132 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const isConfigured =
-    typeof window !== "undefined" &&
-    process.env.NEXT_PUBLIC_SUPABASE_URL?.startsWith("https://") &&
-    !process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("your-project-id");
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
     setLoading(true);
+    setError(null);
 
-    // Supabase 미설정 시 mock 로그인
-    if (!isConfigured) {
-      await new Promise((r) => setTimeout(r, 500));
-      router.push("/meetings");
-      return;
-    }
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
 
-    try {
-      const supabase = createClient();
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (authError) {
-        setError(authError.message);
-        return;
-      }
-
-      router.push("/meetings");
-      router.refresh();
-    } catch {
-      setError("예상치 못한 오류가 발생했습니다. 다시 시도해 주세요.");
-    } finally {
+    if (error) {
+      setError(error.message);
       setLoading(false);
+    } else {
+      router.push("/onboarding");
+      router.refresh();
     }
   }
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2 text-center">
-        <h1 className="text-3xl font-bold tracking-tight text-primary">ACTNOTE</h1>
-        <p className="text-muted-foreground">워크스페이스에 로그인</p>
-      </div>
+    <div className="flex h-screen w-screen overflow-hidden">
+      <div className="flex w-full">
 
-      <form onSubmit={handleSubmit} className="rounded-lg border bg-card p-6 shadow-sm space-y-4">
-        <div className="space-y-1.5">
-          <label htmlFor="email" className="block text-sm font-medium">
-            이메일
-          </label>
-          <input
-            id="email"
-            type="email"
-            autoComplete="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label htmlFor="password" className="block text-sm font-medium">
-            비밀번호
-          </label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="비밀번호 입력"
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
-          />
-        </div>
-
-        {error && (
-          <p className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-600">
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="inline-flex w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow hover:bg-primary/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        {/* Left — Branding */}
+        <div
+          className="hidden flex-1 flex-col justify-center p-16 md:flex"
+          style={{ background: "linear-gradient(135deg, #0a2540 0%, #1e3a5f 100%)" }}
         >
-          {loading ? "로그인 중..." : "로그인"}
-        </button>
-      </form>
+          <div className="mb-10 flex items-center gap-4">
+            <div className="flex h-16 w-16 items-center justify-center rounded-[12px] bg-[#ff6b35]">
+              <span className="text-4xl font-bold leading-none text-[#1e3a5f]">✓</span>
+            </div>
+            <span className="text-[36px] font-bold tracking-[-1px] text-white">ACTNOTE</span>
+          </div>
 
-      <p className="text-center text-sm text-muted-foreground">
-        계정이 없으신가요?{" "}
-        <Link href="/signup" className="font-medium text-primary hover:underline">
-          회원가입
-        </Link>
-      </p>
+          <p className="mb-10 text-[22px] leading-[1.5] text-white/90">
+            Transform your meetings
+            <br />
+            into actionable insights
+          </p>
+
+          <div className="flex flex-col gap-6">
+            {[
+              { emoji: "🎙️", text: "AI-powered transcription & summary" },
+              { emoji: "✅", text: "Auto-extract action items" },
+              { emoji: "🎫", text: "One-click ticket creation" },
+            ].map(({ emoji, text }) => (
+              <div key={text} className="flex items-center gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px] bg-[rgba(255,107,53,0.2)] text-xl">
+                  {emoji}
+                </div>
+                <span className="text-[15px] text-white/85">{text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right — Login Form */}
+        <div className="flex flex-1 flex-col items-center justify-center bg-white p-16">
+          <div className="w-full max-w-[360px]">
+            <div className="mb-8 text-center">
+              <h1 className="mb-3 text-[31px] font-bold text-[#0a2540]">Welcome 👋</h1>
+              <p className="text-[15px] text-[#64748b]">Sign in to continue to ACTNOTE</p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-[#0a2540]">Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  className="h-12 w-full rounded-xl border-2 border-[#e2e8f0] px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a]"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-[#0a2540]">Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="h-12 w-full rounded-xl border-2 border-[#e2e8f0] px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a]"
+                />
+              </div>
+
+              {error && (
+                <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="mt-2 flex h-12 w-full items-center justify-center rounded-xl text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+              >
+                {loading ? (
+                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                ) : (
+                  "Sign In"
+                )}
+              </button>
+            </form>
+
+            <p className="mt-6 text-center text-sm text-[#64748b]">
+              Don&apos;t have an account?{" "}
+              <Link href="/signup" className="font-semibold text-[#ff6b35] hover:underline">
+                Sign Up
+              </Link>
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

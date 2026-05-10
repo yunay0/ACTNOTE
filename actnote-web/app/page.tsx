@@ -1,182 +1,213 @@
 import Link from "next/link";
-import { ArrowRight, Mic, Zap, GitBranch } from "lucide-react";
 
 export default function LandingPage() {
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <LandingNav />
-      <main className="flex-1">
-        <HeroSection />
-        <FeaturesSection />
-        <CtaSection />
+    <div className="flex min-h-screen flex-col">
+      <Nav />
+      <main className="flex flex-1 flex-col md:flex-row">
+        <LeftColumn />
+        <RightColumn />
       </main>
-      <LandingFooter />
+      <Footer />
     </div>
   );
 }
 
-function LandingNav() {
+/* ── Navigation ── */
+function Nav() {
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-sm">
-      <div className="container flex h-14 items-center justify-between">
-        <span className="font-bold text-lg tracking-tight text-primary">
-          ACTNOTE
-        </span>
-        <nav className="flex items-center gap-2">
-          <Link
-            href="/login"
-            className="text-sm text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-md hover:bg-accent"
-          >
-            로그인/회원가입
-          </Link>
-          <Link
-            href="/signup"
-            className="inline-flex items-center gap-1.5 rounded-md bg-brand-accent px-4 py-1.5 text-sm font-semibold text-brand-accent-foreground shadow-sm hover:bg-brand-accent/90 transition-colors"
-          >
-            시작하기
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
-        </nav>
-      </div>
+    <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-[#e2e8f0] bg-white px-20">
+      <Logo />
+      <Link
+        href="/login"
+        className="flex h-10 w-[120px] items-center justify-center rounded-lg border border-[#2e5c8a] text-sm font-bold text-[#1e3a5f] hover:bg-[#f8fafc] transition-colors"
+      >
+        Sign In
+      </Link>
+
     </header>
   );
 }
 
-function HeroSection() {
+function Logo() {
   return (
-    <section className="relative flex flex-col items-center justify-center px-4 py-28 md:py-40 text-center overflow-hidden">
-      {/* 배경 그라디언트 (Deep Blue) */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_80%_60%_at_50%_-10%,hsl(225_64%_33%/0.10),transparent)]"
-      />
-
-      <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-muted/60 px-3 py-1 text-xs font-medium text-muted-foreground mb-8">
-        <span className="relative flex h-1.5 w-1.5">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-accent opacity-75" />
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-brand-accent" />
-        </span>
-        AI 기반 회의 분석
+    <div className="flex items-center gap-3">
+      <div className="flex h-8 w-8 items-center justify-center rounded-[6px] bg-[#1e3a5f]">
+        <span className="text-2xl font-bold leading-none text-[#ff6b35]">✓</span>
       </div>
-
-      <h1 className="text-5xl font-extrabold tracking-tight text-primary md:text-7xl lg:text-8xl">
+      <span className="text-[20px] font-bold tracking-[-0.5px] text-[#0a2540]">
         ACTNOTE
+      </span>
+    </div>
+  );
+}
+
+/* ── Left Column ── */
+function LeftColumn() {
+  return (
+    <div
+      className="flex flex-1 flex-col justify-center px-20 py-24"
+      style={{ background: "linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)" }}
+    >
+      {/* Headline */}
+      <h1 className="mb-6 text-[49px] font-bold leading-[1.22] tracking-[-1.5px] text-[#0a2540]">
+        AI writes your
+        <br />
+        meeting notes and
+        <br />
+        <span className="text-[#ff6b35]">auto-creates tickets</span>
       </h1>
-      <p className="mt-4 text-xl font-medium text-muted-foreground md:text-2xl">
-        AI 회의록 트래커
-      </p>
-      <p className="mt-6 max-w-xl text-base text-muted-foreground leading-relaxed">
-        회의 음성을 업로드하면 AI가 자동으로 요약·결정사항·액션 아이템을 추출합니다.
-        변경 이력까지 시간순으로 추적하세요.
+
+      {/* Subtitle */}
+      <p className="mb-12 text-[18px] text-[#64748b]">
+        Meeting automation tool for PMs
       </p>
 
-      <div className="mt-10 flex flex-col sm:flex-row items-center gap-3">
-        <Link
-          href="/signup"
-          className="inline-flex items-center gap-2 rounded-lg bg-brand-accent px-6 py-3 text-sm font-semibold text-brand-accent-foreground shadow hover:bg-brand-accent/90 transition-colors"
-        >
-          시작하기
-          <ArrowRight className="h-4 w-4" />
-        </Link>
-        <Link
-          href="/login"
-          className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-6 py-3 text-sm font-medium text-foreground hover:bg-accent transition-colors"
-        >
-          로그인/회원가입
-        </Link>
+      {/* Feature list */}
+      <div className="mb-14 flex flex-col gap-6">
+        {FEATURES.map(({ emoji, bold, rest }) => (
+          <div key={bold} className="flex items-center gap-4">
+            <div
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] text-xl"
+              style={{
+                background: "linear-gradient(135deg, #e3f2fd 0%, #fff4f0 100%)",
+              }}
+            >
+              {emoji}
+            </div>
+            <p className="text-[16px] text-[#0a2540]">
+              <strong className="font-bold">{bold}</strong>
+              <span className="font-normal">{rest}</span>
+            </p>
+          </div>
+        ))}
       </div>
-    </section>
+
+      {/* CTA */}
+      <Link
+        href="/login"
+        className="inline-flex w-fit items-center justify-center rounded-xl px-20 py-5 text-[17px] font-bold text-white shadow-[0px_8px_12px_rgba(255,107,53,0.3)] hover:opacity-90 transition-opacity"
+        style={{
+          background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)",
+        }}
+      >
+        Get Started
+      </Link>
+    </div>
   );
 }
 
 const FEATURES = [
   {
-    icon: Mic,
-    title: "자동 음성 변환",
-    description:
-      "회의 녹음 파일을 업로드하면 STT와 화자 분리까지 자동으로 처리합니다.",
+    emoji: "🎙️",
+    bold: "Upload recording",
+    rest: " → AI generates summary",
   },
   {
-    icon: Zap,
-    title: "A.U.D.N 사이클",
-    description:
-      "LLM이 액션 아이템을 ADD / UPDATE / DELETE / NOOP으로 자동 분류해 중복과 누락을 제거합니다.",
+    emoji: "✅",
+    bold: "Auto-extract",
+    rest: " action items with assignee & due date",
   },
   {
-    icon: GitBranch,
-    title: "Bi-temporal 이력",
-    description:
-      "결정사항과 액션 아이템의 변경 이력을 타임라인으로 추적합니다. 언제 무엇이 바뀌었는지 한눈에.",
+    emoji: "🎫",
+    bold: "One-click",
+    rest: " ticket creation in Notion DB",
   },
-] as const;
+];
 
-function FeaturesSection() {
+/* ── Right Column (Mockup) ── */
+function RightColumn() {
   return (
-    <section className="px-4 py-20 md:py-28 bg-muted/30">
-      <div className="container">
-        <div className="mx-auto mb-14 max-w-xl text-center">
-          <h2 className="text-3xl font-bold tracking-tight md:text-4xl">
-            회의에서 액션까지, 자동으로
-          </h2>
-          <p className="mt-3 text-muted-foreground">
-            반복적인 회의록 정리에서 벗어나 실행에 집중하세요.
-          </p>
+    <div className="flex flex-1 items-center justify-center bg-[#f8fafc] px-10 py-20">
+      <div className="w-full max-w-[600px] overflow-hidden rounded-[20px] bg-white shadow-[0px_0px_0px_1px_rgba(30,58,95,0.05),0px_20px_60px_0px_rgba(30,58,95,0.12),0px_40px_80px_0px_rgba(30,58,95,0.08)]">
+        {/* Mockup header */}
+        <div className="flex h-16 items-center justify-between border-b border-[#e2e8f0] bg-white px-6">
+          <span className="text-sm font-bold text-[#0a2540]">
+            📝 Team Sync - Q2 Planning
+          </span>
+          <span className="rounded-[6px] bg-[#fff4f0] px-2.5 py-1 text-xs font-bold text-[#ff6b35]">
+            DRAFT
+          </span>
         </div>
-        <div className="grid gap-6 md:grid-cols-3">
-          {FEATURES.map(({ icon: Icon, title, description }) => (
-            <div
-              key={title}
-              className="group rounded-xl border border-border/60 bg-card p-6 shadow-sm hover:border-primary/30 hover:shadow-md transition-all"
-            >
-              <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary group-hover:bg-primary/15 transition-colors">
-                <Icon className="h-5 w-5" />
-              </div>
-              <h3 className="mb-2 font-semibold">{title}</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                {description}
-              </p>
+
+        {/* Mockup content */}
+        <div className="flex flex-col gap-4 bg-[#f8fafc] p-7">
+          <MockupSection icon="✨" title="AI Summary">
+            <MockupLine width="100%" />
+            <MockupLine width="85%" />
+            <MockupLine width="65%" />
+          </MockupSection>
+
+          <MockupSection icon="💡" title="Decisions">
+            <MockupLine width="100%" />
+            <MockupLine width="85%" />
+          </MockupSection>
+
+          <MockupSection icon="✅" title="Action Items">
+            <div className="flex flex-col gap-2">
+              <ActionRow />
+              <ActionRow />
+              <ActionRow />
             </div>
-          ))}
+          </MockupSection>
         </div>
       </div>
-    </section>
+    </div>
   );
 }
 
-function CtaSection() {
+function MockupSection({
+  icon,
+  title,
+  children,
+}: {
+  icon: string;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="px-4 py-20 md:py-28">
-      <div className="container">
-        <div className="relative mx-auto max-w-2xl rounded-2xl border border-primary/20 bg-primary px-8 py-14 text-center overflow-hidden">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_70%_60%_at_50%_110%,hsl(225_64%_50%/0.3),transparent)]"
-          />
-          <h2 className="text-3xl font-bold tracking-tight text-primary-foreground">
-            지금 바로 시작하세요
-          </h2>
-          <p className="mt-3 text-primary-foreground/70">
-            첫 회의를 무료로 처리해 보세요.
-          </p>
-          <Link
-            href="/signup"
-            className="mt-8 inline-flex items-center gap-2 rounded-lg bg-brand-accent px-8 py-3 text-sm font-semibold text-brand-accent-foreground shadow hover:bg-brand-accent/90 transition-colors"
-          >
-            무료로 시작하기
-            <ArrowRight className="h-4 w-4" />
-          </Link>
-        </div>
+    <div className="flex flex-col gap-2 rounded-xl border border-[#e2e8f0] bg-white px-6 py-5">
+      <div className="mb-1 flex items-center gap-2 pb-2">
+        <span className="text-base leading-none">{icon}</span>
+        <span className="text-[14px] font-bold text-[#1e3a5f]">{title}</span>
       </div>
-    </section>
+      {children}
+    </div>
   );
 }
 
-function LandingFooter() {
+function MockupLine({ width }: { width: string }) {
   return (
-    <footer className="border-t border-border/40 py-8">
-      <div className="container flex flex-col items-center justify-between gap-4 text-sm text-muted-foreground sm:flex-row">
-        <span className="font-bold text-primary">ACTNOTE</span>
-        <span>© {new Date().getFullYear()} ACTNOTE. All rights reserved.</span>
+    <div
+      className="h-2.5 rounded-full bg-[#e2e8f0]"
+      style={{ width }}
+    />
+  );
+}
+
+function ActionRow() {
+  return (
+    <div className="flex items-center gap-3 rounded-md bg-[#f8fafc] p-2.5">
+      <div className="h-4 w-4 shrink-0 rounded-[4px] border-2 border-[#2e5c8a]" />
+      <div className="h-2 flex-1 rounded-full bg-[#cbd5e1]" />
+    </div>
+  );
+}
+
+/* ── Footer ── */
+function Footer() {
+  return (
+    <footer className="flex h-[60px] shrink-0 items-center justify-between bg-[#0a2540] px-20">
+      <span className="text-xs text-[#94a3b8]">
+        © 2026 ACTNOTE. All rights reserved.
+      </span>
+      <div className="flex gap-8">
+        <span className="cursor-pointer text-xs text-[#94a3b8] hover:text-white transition-colors">
+          Terms of Service
+        </span>
+        <span className="cursor-pointer text-xs text-[#94a3b8] hover:text-white transition-colors">
+          Privacy Policy
+        </span>
       </div>
     </footer>
   );
