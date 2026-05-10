@@ -367,6 +367,210 @@ def run_pipeline(
     return extracted
 
 
+def _parse_mock_transcript(text: str) -> list[dict]:
+    """'화자: 내용' 형식 텍스트를 aligned_segments 리스트로 변환.
+
+    타임스탬프는 글자 수 기반 추정값 (0.05초/글자, 최소 1.5초).
+    STT 없이 mock transcript를 파이프라인에 직접 주입할 때 사용.
+    """
+    segments: list[dict] = []
+    t = 0.0
+    for raw in text.strip().splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        colon_idx = line.find(":")
+        if colon_idx <= 0:
+            continue
+        speaker = line[:colon_idx].strip()
+        content = line[colon_idx + 1 :].strip()
+        if not content or speaker.startswith("참석자"):
+            continue
+        duration = max(1.5, len(content) * 0.05)
+        segments.append(
+            {
+                "speaker": speaker,
+                "start": round(t, 2),
+                "end": round(t + duration, 2),
+                "text": content,
+            }
+        )
+        t += duration
+    return segments
+
+
+def run_pipeline_from_transcript(
+    transcript_text: str,
+    user_id: str,
+    workspace_id: str,
+    meeting_id: str,
+    meeting_title: str | None = None,
+    output_dir: str = "output",
+    tracker: cost_tracker.CostTracker | None = None,
+    backend: StorageBackend | None = None,
+    disable_crag: bool = False,
+) -> dict:
+    """STT·화자분리·정렬을 스킵하고 LLM 추출부터 실행한다.
+
+    mock transcript 직접 주입 / 벤치마크 / 테스트 전용.
+    반환 형식은 run_pipeline() 과 동일.
+
+    Args:
+        disable_crag: True이면 CRAG 검색을 건너뛰고 previous_context=None 강제.
+    """
+    store: StorageBackend = backend if backend is not None else LocalStorage(Path(output_dir))
+
+    _sb_for_policy = store.client if isinstance(store, SupabaseStorage) else None
+    opt_out = get_opt_out_status(workspace_id, user_id, sb_client=_sb_for_policy)
+
+    tr = tracker if tracker is not None else cost_tracker.CostTracker()
+    t_pipeline = time.perf_counter()
+    step_times: dict[str, float] = {}
+    completed: list[str] = []
+
+    # aligned_segments: 임베딩·DB 저장용 (타임스탬프는 추정값)
+    aligned = _parse_mock_transcript(transcript_text)
+    store.save_text("transcript.txt", transcript_text)
+    store.save_json("aligned.json", aligned)
+
+    # [CRAG] 이전 회의 컨텍스트 검색
+    previous_context: str | None = None
+    crag_injected = False
+    if disable_crag:
+        _console.print("[dim]        CRAG: disable_crag=True — 건너뜀[/]")
+    elif isinstance(store, SupabaseStorage):
+        try:
+            crag_query = (meeting_title or "").strip() or transcript_text[:500]
+            previous_context = _crag.find_related_context(
+                query_text=crag_query,
+                workspace_id=workspace_id,
+                current_meeting_id=meeting_id,
+                sb_client=store.client,
+                tracker=tr,
+            )
+            if previous_context:
+                _console.print("        [green][OK][/] CRAG: 관련 컨텍스트 주입")
+                crag_injected = True
+            else:
+                _console.print("[dim]        CRAG: 관련 이전 회의 없음[/]")
+        except Exception as _crag_err:
+            _console.print(f"        [yellow][WARN] CRAG 검색 실패: {_crag_err}[/]")
+    else:
+        _console.print("[dim]        LocalStorage: CRAG 건너뜀[/]")
+
+    # [LLM] 추출
+    t0 = time.perf_counter()
+    _console.print("[cyan][LLM][/] Extraction (Claude Sonnet 4.6)...")
+    try:
+        extracted = llm_extractor.extract(
+            transcript_text,
+            meeting_title=meeting_title,
+            previous_context=previous_context,
+            tracker=tr,
+            opt_out=opt_out,
+            workspace_id=workspace_id,
+        )
+    except Exception as e:
+        raise RuntimeError(f"LLM 추출 실패: {e}") from e
+    step_times["llm"] = time.perf_counter() - t0
+    completed.append("LLM Extraction (Claude)")
+    _console.print(f"        [green][OK][/] {step_times['llm']:.1f}s")
+
+    # [DRAFT-006] 관련 문서 태깅
+    referenced_docs = extracted.get("referenced_documents", [])
+    if isinstance(store, SupabaseStorage) and referenced_docs:
+        try:
+            from src.notion_sync import check_notion_integration, search_notion_documents
+
+            if check_notion_integration(workspace_id, store.client):
+                document_links: list[dict] = []
+                for query in referenced_docs[:10]:
+                    results = search_notion_documents(
+                        workspace_id, query, store.client, limit=2
+                    )
+                    document_links.extend(results)
+                extracted["document_links"] = document_links
+        except Exception as _doc_err:
+            _console.print(f"        [yellow][WARN] 문서 자동 태깅 실패: {_doc_err}[/]")
+
+    # [DB] meetings UPDATE + decisions + transcripts
+    decisions_count = 0
+    transcripts_count = 0
+    if isinstance(store, SupabaseStorage):
+        sb = store.client
+        try:
+            _update_meeting(sb, meeting_id, extracted, aligned)
+        except Exception as e:
+            _console.print(f"        [yellow][WARN] meetings UPDATE 실패: {e}[/]")
+        try:
+            decisions_count = _insert_decisions(
+                sb, meeting_id, workspace_id, extracted.get("decisions", [])
+            )
+        except Exception as e:
+            _console.print(f"        [yellow][WARN] decisions INSERT 실패: {e}[/]")
+        try:
+            transcripts_count = _insert_transcripts(sb, meeting_id, aligned)
+        except Exception as e:
+            _console.print(f"        [yellow][WARN] transcripts INSERT 실패: {e}[/]")
+
+    # [A.U.D.N]
+    audn_results: list[dict] = []
+    t0 = time.perf_counter()
+    try:
+        audn_results = action_resolver.resolve_actions(
+            new_actions=extracted.get("action_items", []),
+            workspace_id=workspace_id,
+            meeting_id=meeting_id,
+            storage_backend=store,
+            tracker=tr,
+        )
+        step_times["audn"] = time.perf_counter() - t0
+        completed.append("A.U.D.N")
+    except Exception as e:
+        step_times["audn"] = time.perf_counter() - t0
+        _console.print(f"        [yellow][WARN] A.U.D.N 실패: {e}[/]")
+
+    # [임베딩]
+    embedding_count = 0
+    t0 = time.perf_counter()
+    try:
+        embedding_count = embeddings.embed_meeting(
+            meeting_id=meeting_id,
+            workspace_id=workspace_id,
+            aligned_segments=aligned,
+            decisions=extracted.get("decisions", []),
+            actions=extracted.get("action_items", []),
+            storage_backend=store,
+            tracker=tr,
+        )
+        step_times["embeddings"] = time.perf_counter() - t0
+        completed.append("임베딩 저장")
+    except Exception as e:
+        step_times["embeddings"] = time.perf_counter() - t0
+        _console.print(f"        [yellow][WARN] 임베딩 저장 실패: {e}[/]")
+
+    total_elapsed = time.perf_counter() - t_pipeline
+    meta: dict = {
+        "step_seconds": step_times,
+        "total_seconds": round(total_elapsed, 2),
+        "output_dir": store.location(),
+        "tracked_total_usd": round(tr.get_total(), 6),
+        "user_id": user_id,
+        "workspace_id": workspace_id,
+        "meeting_id": meeting_id,
+        "opt_out_training": opt_out,
+        "decisions_count": decisions_count,
+        "transcripts_count": transcripts_count,
+        "audn_results": audn_results,
+        "embedding_count": embedding_count,
+        "crag_injected": crag_injected,
+        "disable_crag": disable_crag,
+    }
+    extracted["_pipeline_meta"] = meta
+    store.save_json("extracted.json", extracted)
+    return extracted
+
+
 if __name__ == "__main__":
     import sys
 
