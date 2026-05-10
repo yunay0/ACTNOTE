@@ -28,6 +28,21 @@ alwaysApply: true
 - 데이터 없음 → workspace_id 일치 확인
 - A에게 연락
 
+## 6. 기능 ID 참조 룰
+
+작업 요청에 기능 ID(예: PUB-002, INTEG-001, SEC-009, CONTEXT-001 등)가 포함되면:
+
+1. 먼저 `docs/features.md` 파일을 읽는다
+2. 해당 ID의 스펙을 정확히 파악한다
+3. 스펙대로 구현한다
+4. 스펙이 모호하면 추측하지 말고 사용자에게 질문한다
+
+기능 ID 형식: 영문 대문자 + 하이픈 + 숫자
+예: CAP-001, DRAFT-002, PUB-001, INTEG-003, SEC-009, CONTEXT-001
+
+복합 ID 요청도 동일하게 처리:
+"PUB-002 + INTEG-001/003 구현해줘" → 세 기능 모두 `docs/features.md`에서 확인 후 구현
+
 ## 5. 환경변수 동기화
 B가 Next.js에서 필요한 환경변수:
 - NEXT_PUBLIC_SUPABASE_URL
