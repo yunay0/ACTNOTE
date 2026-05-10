@@ -1,4 +1,9 @@
-"""Claude Sonnet 4.6으로 회의록에서 요약·결정·액션 아이템을 JSON으로 추출한다."""
+"""Claude Sonnet 4.6으로 회의록에서 요약·결정·액션 아이템을 JSON으로 추출한다.
+
+회의 유형(meeting_type)에 따라 ``prompts/templates/<type>.md`` 를 system prompt 로 로드한다.
+지원 type: ``default`` (기본), ``sprint``, ``planning``, ``retro``, ``1on1``.
+미지원 / NULL 인 경우 자동으로 ``default`` 로 폴백한다 (MTG-004).
+"""
 
 from __future__ import annotations
 
@@ -24,7 +29,73 @@ CLAUDE_MODEL = "claude-sonnet-4-6"  # docs.claude.com latest Sonnet 4.6 API ID
 MAX_TOKENS = 8192
 MAX_RETRIES_API = 2
 
-_SYSTEM_PROMPT_BASE = (
+# ---------------------------------------------------------------------------
+# MTG-004: 회의유형별 system prompt 템플릿
+# ---------------------------------------------------------------------------
+
+_TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "prompts" / "templates"
+_DEFAULT_TEMPLATE = "default"
+_SUPPORTED_TYPES: set[str] = {"default", "general", "sprint", "planning", "retro", "1on1"}
+_TYPE_ALIAS: dict[str, str] = {
+    # 한국어/영어 사용자 표기 → 표준 type 매핑
+    "general": "default",
+    "기본": "default",
+    "일반": "default",
+    "sprint_review": "sprint",
+    "sprint_planning": "sprint",
+    "standup": "sprint",
+    "데일리": "sprint",
+    "스프린트": "sprint",
+    "기획": "planning",
+    "kickoff": "planning",
+    "회고": "retro",
+    "postmortem": "retro",
+    "1:1": "1on1",
+    "one_on_one": "1on1",
+    "oneonone": "1on1",
+}
+_template_cache: dict[str, str] = {}
+
+
+def _resolve_template_name(meeting_type: str | None) -> str:
+    """meeting_type 입력값을 표준 템플릿 이름으로 정규화한다.
+
+    NULL/빈 문자열/미지원 type 은 모두 ``default`` 로 폴백.
+    """
+    if not meeting_type:
+        return _DEFAULT_TEMPLATE
+    key = meeting_type.strip().lower().replace("-", "_").replace(" ", "_")
+    key = _TYPE_ALIAS.get(key, key)
+    if key in _SUPPORTED_TYPES:
+        return key if key != "general" else _DEFAULT_TEMPLATE
+    return _DEFAULT_TEMPLATE
+
+
+def _load_template(name: str) -> str:
+    """``prompts/templates/<name>.md`` 를 디스크에서 읽는다 (캐시 사용).
+
+    파일이 없으면 default.md 를 반환. default.md 도 없으면 RuntimeError.
+    """
+    if name in _template_cache:
+        return _template_cache[name]
+
+    path = _TEMPLATES_DIR / f"{name}.md"
+    if not path.exists():
+        if name != _DEFAULT_TEMPLATE:
+            return _load_template(_DEFAULT_TEMPLATE)
+        raise RuntimeError(
+            f"system prompt template 파일이 없습니다: {path}. "
+            "최소 default.md 는 존재해야 합니다."
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise RuntimeError(f"템플릿 로드 실패 ({path}): {e}") from e
+    _template_cache[name] = text
+    return text
+
+
+_SYSTEM_PROMPT_BASE_FALLBACK = (
     "You are an expert PM assistant. Extract structured information from meeting transcripts.\n"
     "CRITICAL RULES:\n\n"
     "Output ONLY valid JSON. No markdown, no explanations.\n"
@@ -93,6 +164,20 @@ _SYSTEM_PROMPT_BASE = (
     "}\n"
 )
 
+
+def _system_prompt_base(meeting_type: str | None = None) -> str:
+    """meeting_type 에 대응하는 system prompt 본문을 반환한다.
+
+    템플릿 디렉터리/파일 누락 시 인라인 fallback 사용 (safety net).
+    """
+    name = _resolve_template_name(meeting_type)
+    try:
+        return _load_template(name)
+    except RuntimeError:
+        # 디스크 템플릿 전부 누락 — 코드에 박힌 fallback 사용 (절대 0% 다운 방지)
+        return _SYSTEM_PROMPT_BASE_FALLBACK
+
+
 _PREVIOUS_CONTEXT_SECTION = (
     "\n[이전 회의 컨텍스트]\n"
     "{previous_context}\n\n"
@@ -122,12 +207,14 @@ def _get_client() -> anthropic.Anthropic:
     return _client
 
 
-def _build_system_prompt(previous_context: str | None) -> str:
+def _build_system_prompt(
+    previous_context: str | None,
+    meeting_type: str | None = None,
+) -> str:
+    base = _system_prompt_base(meeting_type)
     if not previous_context:
-        return _SYSTEM_PROMPT_BASE
-    return _SYSTEM_PROMPT_BASE + _PREVIOUS_CONTEXT_SECTION.format(
-        previous_context=previous_context
-    )
+        return base
+    return base + _PREVIOUS_CONTEXT_SECTION.format(previous_context=previous_context)
 
 
 def extract(
@@ -137,6 +224,7 @@ def extract(
     tracker: cost_tracker.CostTracker | None = None,
     opt_out: bool = True,
     workspace_id: str | None = None,
+    meeting_type: str | None = None,
 ) -> ExtractedResult:
     """Claude Sonnet 4.6으로 회의 정보 추출.
 
@@ -145,9 +233,11 @@ def extract(
             Anthropic API는 기본적으로 API 데이터를 학습에 미사용.
             metadata는 요청 추적/감사용으로만 사용됨.
         workspace_id: 감사 metadata에 포함할 워크스페이스 ID.
+        meeting_type: 회의 유형 (MTG-004). ``default``/``sprint``/``planning``/
+            ``retro``/``1on1`` 또는 한국어 alias. 미지원/NULL 이면 default 폴백.
     """
     tr = tracker if tracker is not None else cost_tracker.default_tracker
-    system_prompt = _build_system_prompt(previous_context)
+    system_prompt = _build_system_prompt(previous_context, meeting_type)
 
     est_in = max(1, len(system_prompt + formatted_transcript) // 4)
     est_cost = (est_in / 1e6) * cost_tracker.CLAUDE_SONNET_INPUT_PRICE_PER_MTOK + (
@@ -311,6 +401,27 @@ def _print_result(out: ExtractedResult) -> None:
 
 if __name__ == "__main__":
     root = Path(__file__).resolve().parents[1]
+
+    # --- 테스트 0: MTG-004 템플릿 로드 검증 (API 호출 없음) ---
+    _console.print("\n[bold cyan]=== 테스트 0: MTG-004 템플릿 로드/폴백 검증 ===[/]")
+    for case in [
+        ("default", "default"),
+        (None, "default"),
+        ("sprint", "sprint"),
+        ("스프린트", "sprint"),
+        ("회고", "retro"),
+        ("1:1", "1on1"),
+        ("unknown_type_xyz", "default"),
+    ]:
+        in_type, expected = case
+        resolved = _resolve_template_name(in_type)
+        ok = "[green][OK][/]" if resolved == expected else "[red][FAIL][/]"
+        body = _system_prompt_base(in_type)
+        _console.print(
+            f"  {ok} input={in_type!r:>22}  resolved={resolved!r:<10}  "
+            f"len={len(body):>5}"
+        )
+    _console.print("[dim]  → 모두 정상 폴백되면 OK[/]")
 
     # --- 테스트 1: previous_context 없는 경우 (기존 동작) ---
     _console.print("\n[bold cyan]=== 테스트 1: previous_context 없음 (기존 동작) ===[/]")

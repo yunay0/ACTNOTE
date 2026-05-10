@@ -81,6 +81,85 @@ def _insert_decisions(
     return len(rows)
 
 
+def _cleanup_for_reanalysis(sb_client, meeting_id: str) -> dict:
+    """B-5-3: 재분석 멱등성 보장.
+
+    같은 ``meeting_id`` 로 파이프라인을 두 번 이상 돌릴 때 derived 테이블이
+    중복되지 않도록 안전하게 정리한다.
+
+    정책:
+        * ``transcripts``         : 하드 DELETE (이력 보존 불필요, meeting_id 만 가짐)
+        * ``meeting_embeddings``  : 하드 DELETE (재생성 가능, 비용도 자동 재발생)
+        * ``decisions``           : ``valid_until = now()`` 로 bi-temporal 만료 (이력 보존)
+        * ``action_items``        : ``valid_until = now()`` + ``change_type='DELETE'`` 로 만료
+            - 단, ``meeting_id`` 가 이번 회의인 active row 만 (다른 회의 chain 보호)
+            - A.U.D.N 사이클이 새 추출 결과로 ADD/UPDATE/NOOP 재결정
+
+    안전:
+        * **첫 실행에선 0건 정리**되어 무해 — 항상 호출해도 됨.
+        * cleanup 실패 시 ``RuntimeError`` raise → 파이프라인 중단 (중복 방지).
+        * ``meetings`` row 자체와 ``ai_draft_notes`` 같은 컬럼은 UPDATE 로 자동 멱등.
+
+    Returns:
+        ``{"transcripts": N, "embeddings": N, "decisions": N, "actions": N}``
+    """
+    counts = {"transcripts": 0, "embeddings": 0, "decisions": 0, "actions": 0}
+    now_iso = _now_iso()
+
+    try:
+        # 1) transcripts 하드 DELETE
+        resp = (
+            sb_client.table("transcripts")
+            .delete()
+            .eq("meeting_id", meeting_id)
+            .execute()
+        )
+        counts["transcripts"] = len(resp.data or [])
+
+        # 2) meeting_embeddings 하드 DELETE
+        resp = (
+            sb_client.table("meeting_embeddings")
+            .delete()
+            .eq("meeting_id", meeting_id)
+            .execute()
+        )
+        counts["embeddings"] = len(resp.data or [])
+
+        # 3) decisions bi-temporal 만료
+        resp = (
+            sb_client.table("decisions")
+            .update({"valid_until": now_iso})
+            .eq("meeting_id", meeting_id)
+            .is_("valid_until", "null")
+            .execute()
+        )
+        counts["decisions"] = len(resp.data or [])
+
+        # 4) action_items bi-temporal 만료 (이번 meeting_id 의 active row 만)
+        resp = (
+            sb_client.table("action_items")
+            .update({"valid_until": now_iso})
+            .eq("meeting_id", meeting_id)
+            .is_("valid_until", "null")
+            .execute()
+        )
+        counts["actions"] = len(resp.data or [])
+
+    except Exception as e:
+        raise RuntimeError(
+            f"재분석 cleanup 실패 (meeting_id={meeting_id}): "
+            f"{type(e).__name__}: {e}. "
+            f"중복 derived 데이터 방지를 위해 파이프라인을 중단합니다."
+        ) from e
+
+    return counts
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _insert_transcripts(
     sb_client,
     meeting_id: str,
@@ -111,6 +190,7 @@ def run_pipeline(
     meeting_id: str,
     output_dir: str = "output",
     meeting_title: str | None = None,
+    meeting_type: str | None = None,
     tracker: cost_tracker.CostTracker | None = None,
     language: str = "en",
     backend: StorageBackend | None = None,
@@ -134,6 +214,18 @@ def run_pipeline(
     completed: list[str] = []
     step_times: dict[str, float] = {}
     t_pipeline = time.perf_counter()
+
+    # [B-5-3] 재분석 멱등성: derived 데이터 안전 cleanup (첫 실행 무해)
+    if isinstance(store, SupabaseStorage):
+        cleanup = _cleanup_for_reanalysis(store.client, meeting_id)
+        if any(cleanup.values()):
+            _console.print(
+                f"[yellow][reanalysis][/] cleanup: "
+                f"transcripts={cleanup['transcripts']} "
+                f"embeddings={cleanup['embeddings']} "
+                f"decisions={cleanup['decisions']} "
+                f"actions={cleanup['actions']}"
+            )
 
     try:
         # [1/6] STT
@@ -187,9 +279,10 @@ def run_pipeline(
         else:
             _console.print("[dim]        LocalStorage: CRAG 건너뜀[/]")
 
-        # [4/6] LLM Extraction
+        # [4/6] LLM Extraction (MTG-004: meeting_type 별 system prompt 분기)
         t0 = time.perf_counter()
-        _console.print("[cyan][4/6][/] LLM Extraction (Claude Sonnet 4.6)...")
+        type_label = meeting_type or "default"
+        _console.print(f"[cyan][4/6][/] LLM Extraction (Claude Sonnet 4.6, type={type_label})...")
         extracted = llm_extractor.extract(
             formatted,
             meeting_title=meeting_title,
@@ -197,6 +290,7 @@ def run_pipeline(
             tracker=tr,
             opt_out=opt_out,
             workspace_id=workspace_id,
+            meeting_type=meeting_type,
         )
         step_times["llm"] = time.perf_counter() - t0
         completed.append("LLM Extraction (Claude)")
@@ -243,6 +337,33 @@ def run_pipeline(
             _console.print("[dim]        DRAFT-006: 문서 언급 없음[/]")
 
     # -------------------------------------------------------------------------
+    # [4.6/6] DRAFT-010: 화자 후보 추측 (실패해도 파이프라인 진행)
+    # -------------------------------------------------------------------------
+    if isinstance(store, SupabaseStorage):
+        _console.print("[cyan][4.6/6][/] 화자 후보 추측 (DRAFT-010)...")
+        try:
+            from src.speaker_matcher import match_speakers
+            speaker_candidates = match_speakers(
+                aligned_segments=aligned,
+                workspace_id=workspace_id,
+                sb_client=store.client,
+                meeting_id=meeting_id,
+                tracker=tr,
+                opt_out=opt_out,
+            )
+            if speaker_candidates:
+                extracted["speaker_candidates"] = speaker_candidates
+                matched = sum(1 for v in speaker_candidates.values() if v)
+                _console.print(
+                    f"        [green][OK][/] 화자 {len(speaker_candidates)}명 중 "
+                    f"{matched}명에 후보 추측"
+                )
+            else:
+                _console.print("[dim]        DRAFT-010: 추측 결과 없음 (멤버/샘플 부족)[/]")
+        except Exception as _spk_err:
+            _console.print(f"        [yellow][WARN] 화자 추측 실패: {_spk_err}[/]")
+
+    # -------------------------------------------------------------------------
     # [4 post] meetings UPDATE + decisions + transcripts DB INSERT (SupabaseStorage 전용)
     # -------------------------------------------------------------------------
     decisions_count: int = 0
@@ -278,6 +399,32 @@ def run_pipeline(
             _console.print(f"        [yellow][WARN] transcripts INSERT 실패: {transcripts_db_error}[/]")
     else:
         _console.print("[dim]        LocalStorage: decisions/transcripts DB INSERT 건너뜀[/]")
+
+    # -------------------------------------------------------------------------
+    # [4.7/6] DRAFT-005: assignee 텍스트 → user_id 자동 매칭 (Supabase 전용)
+    # -------------------------------------------------------------------------
+    if isinstance(store, SupabaseStorage) and extracted.get("action_items"):
+        try:
+            from src.assignee_matcher import match_assignees
+            match_assignees(
+                actions=extracted["action_items"],
+                workspace_id=workspace_id,
+                sb_client=store.client,
+                tracker=tr,
+            )
+            mapped = sum(
+                1 for a in extracted["action_items"]
+                if a.get("assignee_user_id")
+            )
+            _console.print(
+                f"        [green][OK][/] assignee 매칭 {mapped}/"
+                f"{len(extracted['action_items'])}건"
+            )
+        except Exception as _am_err:
+            _console.print(
+                f"        [yellow][WARN] assignee 매칭 실패 (NULL 유지): "
+                f"{type(_am_err).__name__}: {_am_err}[/]"
+            )
 
     # -------------------------------------------------------------------------
     # [5/6] A.U.D.N — 실패해도 4단계 결과 반환
@@ -405,10 +552,12 @@ def run_pipeline_from_transcript(
     workspace_id: str,
     meeting_id: str,
     meeting_title: str | None = None,
+    meeting_type: str | None = None,
     output_dir: str = "output",
     tracker: cost_tracker.CostTracker | None = None,
     backend: StorageBackend | None = None,
     disable_crag: bool = False,
+    disable_speaker_match: bool = False,
 ) -> dict:
     """STT·화자분리·정렬을 스킵하고 LLM 추출부터 실행한다.
 
@@ -427,6 +576,18 @@ def run_pipeline_from_transcript(
     t_pipeline = time.perf_counter()
     step_times: dict[str, float] = {}
     completed: list[str] = []
+
+    # [B-5-3] 재분석 멱등성: derived 데이터 안전 cleanup (첫 실행 무해)
+    if isinstance(store, SupabaseStorage):
+        cleanup = _cleanup_for_reanalysis(store.client, meeting_id)
+        if any(cleanup.values()):
+            _console.print(
+                f"[yellow][reanalysis][/] cleanup: "
+                f"transcripts={cleanup['transcripts']} "
+                f"embeddings={cleanup['embeddings']} "
+                f"decisions={cleanup['decisions']} "
+                f"actions={cleanup['actions']}"
+            )
 
     # aligned_segments: 임베딩·DB 저장용 (타임스탬프는 추정값)
     aligned = _parse_mock_transcript(transcript_text)
@@ -458,9 +619,10 @@ def run_pipeline_from_transcript(
     else:
         _console.print("[dim]        LocalStorage: CRAG 건너뜀[/]")
 
-    # [LLM] 추출
+    # [LLM] 추출 (MTG-004: meeting_type 별 system prompt 분기)
     t0 = time.perf_counter()
-    _console.print("[cyan][LLM][/] Extraction (Claude Sonnet 4.6)...")
+    type_label = meeting_type or "default"
+    _console.print(f"[cyan][LLM][/] Extraction (Claude Sonnet 4.6, type={type_label})...")
     try:
         extracted = llm_extractor.extract(
             transcript_text,
@@ -469,6 +631,7 @@ def run_pipeline_from_transcript(
             tracker=tr,
             opt_out=opt_out,
             workspace_id=workspace_id,
+            meeting_type=meeting_type,
         )
     except Exception as e:
         raise RuntimeError(f"LLM 추출 실패: {e}") from e
@@ -493,6 +656,23 @@ def run_pipeline_from_transcript(
         except Exception as _doc_err:
             _console.print(f"        [yellow][WARN] 문서 자동 태깅 실패: {_doc_err}[/]")
 
+    # [DRAFT-010] 화자 후보 추측 (벤치마크에서 disable_speaker_match=True 로 끔)
+    if isinstance(store, SupabaseStorage) and not disable_speaker_match:
+        try:
+            from src.speaker_matcher import match_speakers
+            speaker_candidates = match_speakers(
+                aligned_segments=aligned,
+                workspace_id=workspace_id,
+                sb_client=store.client,
+                meeting_id=meeting_id,
+                tracker=tr,
+                opt_out=opt_out,
+            )
+            if speaker_candidates:
+                extracted["speaker_candidates"] = speaker_candidates
+        except Exception as _spk_err:
+            _console.print(f"        [yellow][WARN] 화자 추측 실패: {_spk_err}[/]")
+
     # [DB] meetings UPDATE + decisions + transcripts
     decisions_count = 0
     transcripts_count = 0
@@ -512,6 +692,21 @@ def run_pipeline_from_transcript(
             transcripts_count = _insert_transcripts(sb, meeting_id, aligned)
         except Exception as e:
             _console.print(f"        [yellow][WARN] transcripts INSERT 실패: {e}[/]")
+
+    # [DRAFT-005] assignee 텍스트 → user_id 자동 매칭
+    if isinstance(store, SupabaseStorage) and extracted.get("action_items"):
+        try:
+            from src.assignee_matcher import match_assignees
+            match_assignees(
+                actions=extracted["action_items"],
+                workspace_id=workspace_id,
+                sb_client=store.client,
+                tracker=tr,
+            )
+        except Exception as _am_err:
+            _console.print(
+                f"        [yellow][WARN] assignee 매칭 실패 (NULL 유지): {_am_err}[/]"
+            )
 
     # [A.U.D.N]
     audn_results: list[dict] = []

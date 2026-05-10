@@ -150,29 +150,30 @@ def set_ready(meeting_id: str, user_id: str, workspace_id: str, sb_client) -> di
     return resp.data[0] if resp.data else {}
 
 
-def publish_meeting(meeting_id: str, user_id: str, workspace_id: str, sb_client) -> dict:
-    """회의록 발행 — ready → published.
+def publish_meeting_db_only(
+    meeting_id: str,
+    user_id: str,
+    workspace_id: str,
+    sb_client,
+) -> dict:
+    """회의록 발행 DB 상태만 변경: ready → published. (외부 동기화 없음)
 
-    Steps:
-    1. admin 권한 확인
-    2. approval_status = 'ready' 확인
-    3. validate_for_publication() 통과
-    4. INTEG-005: Notion 연동 확인 (미연동 시 ValidationError)
-    5. approval_status = 'published', published_at = NOW()
-    6. PUB-002: Notion 회의록 페이지 생성 → meetings.notion_page_id 저장
-    7. PUB-002: Notion 액션 아이템 티켓 생성 → action_items.notion_page_id 저장
+    Supabase RPC ``publish_meeting`` 과 동일한 동작이다. 프론트는 RPC 를 쓰면 되고,
+    이 함수는 백엔드 스크립트/워커가 service_role 로 동일 동작을 재현할 때 사용한다.
+
+    Notion push, 임베딩 재인덱싱은 호출자가 ``meeting/publish`` 이벤트 발송 또는
+    ``push_published_to_notion`` 직접 호출로 처리해야 한다.
     """
     _require_admin(user_id, workspace_id, sb_client)
 
     current = (
         sb_client.table("meetings")
-        .select("approval_status, title, summary, decisions, meeting_date")
+        .select("approval_status")
         .eq("id", meeting_id)
         .single()
         .execute()
     )
-    meeting_data = current.data or {}
-    status = meeting_data.get("approval_status", "draft")
+    status = (current.data or {}).get("approval_status", "draft")
     if status != "ready":
         raise StateError(
             f"publish 불가: 현재 approval_status='{status}' "
@@ -183,18 +184,12 @@ def publish_meeting(meeting_id: str, user_id: str, workspace_id: str, sb_client)
     if not is_valid:
         raise ValidationError(missing)
 
-    # INTEG-005: Notion 미연동 시 발행 차단
-    from src.notion_sync import (
-        check_notion_integration,
-        push_meeting as _push_meeting,
-        push_action_items as _push_action_items,
-    )
+    from src.notion_sync import check_notion_integration
     if not check_notion_integration(workspace_id, sb_client):
         raise ValidationError([
             "notion_integration (Notion 미연동 — 워크스페이스 설정 > 외부 연동에서 연동 후 재시도)"
         ])
 
-    # Step 5: published 상태로 변경
     now = _now_iso()
     resp = (
         sb_client.table("meetings")
@@ -206,9 +201,46 @@ def publish_meeting(meeting_id: str, user_id: str, workspace_id: str, sb_client)
         .eq("id", meeting_id)
         .execute()
     )
-    row = resp.data[0] if resp.data else {}
+    return resp.data[0] if resp.data else {}
 
-    # Step 6: Notion 회의록 페이지 push
+
+def push_published_to_notion(
+    meeting_id: str,
+    workspace_id: str,
+    sb_client,
+) -> dict:
+    """published 상태 회의의 Notion 페이지 + 액션 티켓을 생성한다.
+
+    워커의 ``meeting/publish`` 핸들러가 호출한다. 멱등성: 같은 회의에 대해 여러 번
+    호출되면 ``notion_page_id`` 가 이미 있는 경우 업데이트로 동작 (notion_sync 가 처리).
+
+    Returns:
+        ``{"notion_page_id": str, "action_ticket_count": int}``
+
+    Raises:
+        ValueError: Notion 미연동.
+        RuntimeError: Notion API 호출 실패 (Inngest 재시도가 처리).
+    """
+    from src.notion_sync import (
+        check_notion_integration,
+        push_action_items as _push_action_items,
+        push_meeting as _push_meeting,
+    )
+
+    if not check_notion_integration(workspace_id, sb_client):
+        raise ValueError(
+            f"push_published_to_notion: Notion 미연동 (workspace_id={workspace_id!r})"
+        )
+
+    meeting_resp = (
+        sb_client.table("meetings")
+        .select("title, summary, decisions, meeting_date, notion_page_id")
+        .eq("id", meeting_id)
+        .single()
+        .execute()
+    )
+    meeting_data = meeting_resp.data or {}
+
     decisions_raw = meeting_data.get("decisions") or []
     if decisions_raw and isinstance(decisions_raw[0], dict):
         decision_texts = [d.get("content", "") for d in decisions_raw]
@@ -239,8 +271,7 @@ def publish_meeting(meeting_id: str, user_id: str, workspace_id: str, sb_client)
         {"notion_page_id": notion_page_id, "updated_at": _now_iso()}
     ).eq("id", meeting_id).execute()
 
-    # Step 7: Notion 액션 아이템 티켓 push
-    _push_action_items(
+    ticket_ids = _push_action_items(
         meeting_id=meeting_id,
         meeting_page_id=notion_page_id,
         action_items=action_items_data,
@@ -249,10 +280,35 @@ def publish_meeting(meeting_id: str, user_id: str, workspace_id: str, sb_client)
     )
 
     _log.info(
-        "meeting published: meeting_id=%s user_id=%s notion_page_id=%s",
-        meeting_id, user_id, notion_page_id,
+        "push_published_to_notion 완료: meeting_id=%s notion_page_id=%s tickets=%d",
+        meeting_id, notion_page_id, len(ticket_ids),
     )
-    return {**row, "notion_page_id": notion_page_id}
+    return {
+        "notion_page_id": notion_page_id,
+        "action_ticket_count": len(ticket_ids),
+    }
+
+
+def publish_meeting(
+    meeting_id: str,
+    user_id: str,
+    workspace_id: str,
+    sb_client,
+) -> dict:
+    """[DEPRECATED — 동기 호출] 회의록 발행 + Notion push 를 한 번에 처리.
+
+    프론트는 이 함수를 직접 호출하지 말 것:
+    - 새 권장 흐름: Supabase RPC ``publish_meeting`` (DB 상태만)
+                   + ``meeting/publish`` Inngest 이벤트 (Notion push)
+    - 이 함수는 기존 스크립트/테스트 호환을 위해 유지된다.
+
+    Steps (전과 동일):
+    1. ``publish_meeting_db_only`` (admin/state/validation 검증 + DB 갱신)
+    2. ``push_published_to_notion`` (Notion 회의록 + 티켓 push)
+    """
+    row = publish_meeting_db_only(meeting_id, user_id, workspace_id, sb_client)
+    push_result = push_published_to_notion(meeting_id, workspace_id, sb_client)
+    return {**row, **push_result}
 
 
 def revoke_publication(meeting_id: str, user_id: str, workspace_id: str, sb_client) -> dict:

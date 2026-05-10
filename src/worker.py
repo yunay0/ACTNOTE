@@ -63,17 +63,25 @@ def _update_meeting_status(meeting_id: str, status: str) -> None:
     sb.table("meetings").update({"status": status}).eq("id", meeting_id).execute()
 
 
-def _notify_complete(meeting_id: str, workspace_id: str) -> int:
-    """분석 완료 알림 생성. 실패해도 0 반환 (파이프라인 영향 없음)."""
+def _notify_complete(meeting_id: str, workspace_id: str) -> dict:
+    """분석 완료 + 액션 할당 알림 생성. 실패해도 빈 dict 반환 (파이프라인 영향 없음).
+
+    Returns:
+        {"complete": int, "assigned": int}
+    """
+    out = {"complete": 0, "assigned": 0}
     try:
         from src.storage import create_supabase_client_from_env
-        from src.notifications import notify_analysis_complete
+        from src.notifications import notify_action_assigned, notify_analysis_complete
         sb = create_supabase_client_from_env()
-        return notify_analysis_complete(meeting_id, workspace_id, sb)
+        out["complete"] = notify_analysis_complete(meeting_id, workspace_id, sb)
+        # B-3-2: 담당자 매칭된 액션은 별도 알림 + 메일
+        out["assigned"] = notify_action_assigned(
+            meeting_id, workspace_id, sb, inngest_client=client,
+        )
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning("완료 알림 생성 실패 (무시): %s", e)
-        return 0
+        logging.getLogger(__name__).warning("완료/할당 알림 생성 실패 (무시): %s", e)
+    return out
 
 
 def _notify_failed(meeting_id: str, workspace_id: str, error_message: str) -> int:
@@ -144,6 +152,25 @@ def _download_and_run_pipeline(
     return _run_pipeline_full(local_path, user_id, workspace_id, meeting_id)
 
 
+def _fetch_meeting_metadata(sb_client, meeting_id: str) -> tuple[str | None, str | None]:
+    """meetings row 에서 title 과 meeting_type 을 조회.
+
+    실패하거나 row 가 없으면 (None, None) 반환 — 파이프라인은 default 로 동작.
+    """
+    try:
+        resp = (
+            sb_client.table("meetings")
+            .select("title, meeting_type")
+            .eq("id", meeting_id)
+            .single()
+            .execute()
+        )
+        row = resp.data or {}
+        return row.get("title"), row.get("meeting_type")
+    except Exception:
+        return None, None
+
+
 def _run_pipeline_full(
     audio_path: str,
     user_id: str,
@@ -168,12 +195,17 @@ def _run_pipeline_full(
             prefix=f"{meeting_id}/results",
         )
 
+        # MTG-002 / MTG-004: title + meeting_type 을 메타에서 불러와 전달
+        meeting_title, meeting_type = _fetch_meeting_metadata(sb, meeting_id)
+
         result = run_pipeline(
             audio_path=audio_path,
             user_id=user_id,
             workspace_id=workspace_id,
             meeting_id=meeting_id,
             backend=storage,
+            meeting_title=meeting_title,
+            meeting_type=meeting_type,
         )
         # Inngest 응답 크기 제한 대비 — 메타는 제외하고 반환
         result.pop("_pipeline_meta", None)
@@ -260,3 +292,199 @@ async def process_meeting(ctx: inngest.Context) -> dict:
 
     ctx.logger.info("meeting/process 완료: meeting_id=%s", meeting_id)
     return {"meeting_id": meeting_id, "status": "ready", "action_count": len(result.get("action_items", []))}
+
+
+# ---------------------------------------------------------------------------
+# B-2-2: meeting/publish — 발행 후 Notion push + 임베딩 재인덱싱
+# ---------------------------------------------------------------------------
+
+def _push_published_to_notion(meeting_id: str, workspace_id: str) -> dict:
+    """Notion 페이지 + 티켓 생성. 실패는 step 외부에서 catch."""
+    from src.publication import push_published_to_notion
+    from src.storage import create_supabase_client_from_env
+
+    sb = create_supabase_client_from_env()
+    return push_published_to_notion(meeting_id, workspace_id, sb)
+
+
+def _reindex_meeting_embeddings(meeting_id: str, workspace_id: str) -> int:
+    """발행본 텍스트 기준으로 meeting_embeddings 를 재구성한다.
+
+    실패해도 0 반환 (검색 품질 저하만 발생, 발행 자체는 막지 않음).
+    """
+    try:
+        from src.embeddings import EMBED_TABLE, embed_meeting
+        from src.storage import SupabaseStorage, create_supabase_client_from_env
+
+        sb = create_supabase_client_from_env()
+
+        # 기존 임베딩 정리 (멱등성)
+        sb.table(EMBED_TABLE).delete().eq("meeting_id", meeting_id).execute()
+
+        # 발행 시점 데이터로 임베딩 다시 만들기
+        meeting_resp = (
+            sb.table("meetings")
+            .select("decisions")
+            .eq("id", meeting_id)
+            .single()
+            .execute()
+        )
+        decisions_raw = (meeting_resp.data or {}).get("decisions") or []
+        if decisions_raw and isinstance(decisions_raw[0], dict):
+            decision_texts = [d.get("content", "") for d in decisions_raw]
+        else:
+            decision_texts = [str(d) for d in decisions_raw]
+
+        actions_resp = (
+            sb.table("action_items")
+            .select("content")
+            .eq("meeting_id", meeting_id)
+            .in_("status", ["open", "in_progress"])
+            .execute()
+        )
+        actions = actions_resp.data or []
+
+        transcripts_resp = (
+            sb.table("transcripts")
+            .select("speaker_label, text, start_seconds, end_seconds")
+            .eq("meeting_id", meeting_id)
+            .order("start_seconds")
+            .execute()
+        )
+        aligned = [
+            {
+                "speaker": row.get("speaker_label") or "UNKNOWN",
+                "text": row.get("text") or "",
+                "start": row.get("start_seconds") or 0.0,
+                "end": row.get("end_seconds") or 0.0,
+            }
+            for row in (transcripts_resp.data or [])
+        ]
+
+        bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "meetings")
+        backend = SupabaseStorage(client=sb, bucket=bucket, prefix=f"{meeting_id}/results")
+        return embed_meeting(
+            meeting_id=meeting_id,
+            workspace_id=workspace_id,
+            aligned_segments=aligned,
+            decisions=decision_texts,
+            actions=[{"content": a.get("content", "")} for a in actions],
+            storage_backend=backend,
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "재인덱싱 실패 (무시) meeting_id=%s: %s", meeting_id, e,
+        )
+        return 0
+
+
+@client.create_function(
+    fn_id="publish-meeting",
+    trigger=inngest.TriggerEvent(event="meeting/publish"),
+    retries=3,
+)
+async def publish_meeting_handler(ctx: inngest.Context) -> dict:
+    """meeting/publish 이벤트 핸들러.
+
+    DB 상태(`approval_status='published'`) 는 Supabase RPC 가 이미 처리한 상태에서 호출된다.
+    이 핸들러는 외부 동기화 (Notion push) 와 임베딩 재인덱싱만 담당한다.
+    """
+    data = ctx.event.data
+    meeting_id: str = data["meeting_id"]
+    workspace_id: str = data["workspace_id"]
+
+    # Step 1: Notion push (실패 시 Inngest 자동 재시도)
+    push_result: dict = await ctx.step.run(
+        "push-to-notion",
+        _push_published_to_notion,
+        meeting_id,
+        workspace_id,
+    )
+
+    # Step 2: 임베딩 재인덱싱 (best-effort)
+    embedding_count: int = await ctx.step.run(
+        "reindex-embeddings",
+        _reindex_meeting_embeddings,
+        meeting_id,
+        workspace_id,
+    )
+
+    ctx.logger.info(
+        "meeting/publish 완료: meeting_id=%s notion_page_id=%s reindex=%d",
+        meeting_id, push_result.get("notion_page_id"), embedding_count,
+    )
+    return {
+        "meeting_id": meeting_id,
+        "notion_page_id": push_result.get("notion_page_id"),
+        "action_ticket_count": push_result.get("action_ticket_count", 0),
+        "embedding_count": embedding_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# B-3-1: notification/email_send — 외부 이메일 발송
+# ---------------------------------------------------------------------------
+
+def _send_email_step(
+    to: list[str],
+    subject: str,
+    html: str,
+    text: str,
+    from_addr: str | None,
+    reply_to: str | None,
+) -> dict:
+    """Resend 발송. 실패 시 raise → Inngest 재시도."""
+    from src.email_notifier import send_email
+    return send_email(
+        to=to,
+        subject=subject,
+        html=html,
+        text=text,
+        from_addr=from_addr,
+        reply_to=reply_to,
+    )
+
+
+@client.create_function(
+    fn_id="send-email",
+    trigger=inngest.TriggerEvent(event="notification/email_send"),
+    retries=3,
+)
+async def send_email_handler(ctx: inngest.Context) -> dict:
+    """notification/email_send 이벤트 핸들러.
+
+    페이로드 스키마는 docs/events.md 의 `notification/email_send` 참조.
+    필수 필드 누락 시 ValueError → 비재시도 가능 에러 (Inngest 가 dead letter 처리).
+    """
+    data = ctx.event.data
+
+    to = data.get("to")
+    subject = data.get("subject")
+    html = data.get("body_html")
+    text = data.get("body_text", "")
+    if not to or not subject or not html:
+        raise ValueError(
+            "notification/email_send: to / subject / body_html 모두 필수입니다."
+        )
+
+    if isinstance(to, str):
+        to_list = [to]
+    else:
+        to_list = list(to)
+
+    result: dict = await ctx.step.run(
+        "resend-send",
+        _send_email_step,
+        to_list,
+        subject,
+        html,
+        text,
+        data.get("from"),
+        data.get("reply_to"),
+    )
+
+    ctx.logger.info(
+        "notification/email_send 완료: id=%s to=%s subject=%r",
+        result.get("id"), to_list, subject,
+    )
+    return result

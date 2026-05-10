@@ -116,12 +116,15 @@ def _create_benchmark_workspace(label: str, owner_id: str, sb) -> str:
 
 
 def _delete_benchmark_workspace(workspace_id: str, sb) -> None:
-    """워크스페이스 hard delete (FK CASCADE 누락 대비, 자식 먼저 삭제)."""
+    """워크스페이스 hard delete (FK CASCADE 누락 대비, 자식 먼저 삭제).
+
+    참고: ``transcripts`` 는 ``workspace_id`` 컬럼이 없고 ``meeting_id → meetings``
+    의 ON DELETE CASCADE 로 자동 삭제되므로 여기 목록에 포함하지 않는다.
+    """
     for child in (
         "meeting_embeddings",
         "action_items",
         "decisions",
-        "transcripts",
         "meetings",
         "workspace_members",
     ):
@@ -199,6 +202,7 @@ def _process_one_meeting(
         tracker=tr,
         backend=store,
         disable_crag=disable_crag,
+        disable_speaker_match=True,  # 벤치마크는 CRAG 효과 측정이 목적 — 추가 LLM 호출 차단
     )
 
     elapsed = time.perf_counter() - t_start

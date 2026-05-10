@@ -8,6 +8,8 @@ Notion 연동 클라이언트.
 Public API:
   check_notion_integration(workspace_id, sb_client) -> bool          # INTEG-005
   register_notion_integration(...)                    -> dict         # INTEG-001/003
+  exchange_notion_code(code, redirect_uri=None)       -> dict         # INTEG-001 OAuth
+  complete_notion_oauth(...)                          -> dict         # INTEG-001 OAuth wrapper
   revoke_notion_integration(workspace_id, sb_client)  -> None         # SEC-009
   ensure_action_db(parent_page_id, token)             -> str          # INTEG-006
   push_meeting(...)                                   -> str          # INTEG-003
@@ -16,10 +18,13 @@ Public API:
 
 from __future__ import annotations
 
+import base64
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 from notion_client import Client as _NotionClient
 
 from src.encryption import decrypt_token, encrypt_token
@@ -139,6 +144,165 @@ def register_notion_integration(
     )
     _log.info("register_notion_integration 완료 (workspace_id=%s)", workspace_id)
     return resp.data[0] if resp.data else {}
+
+
+# ---------------------------------------------------------------------------
+# INTEG-001: OAuth code → access_token 교환
+# ---------------------------------------------------------------------------
+
+NOTION_OAUTH_TOKEN_URL = "https://api.notion.com/v1/oauth/token"
+NOTION_API_VERSION = "2022-06-28"
+_NOTION_OAUTH_TIMEOUT_S = 30.0
+
+
+def exchange_notion_code(
+    code: str,
+    redirect_uri: str | None = None,
+    *,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    timeout_s: float = _NOTION_OAUTH_TIMEOUT_S,
+) -> dict[str, Any]:
+    """Notion OAuth ``authorization_code`` 를 access_token 으로 교환한다.
+
+    프론트의 OAuth callback (예: ``/api/integrations/notion/callback``) 에서
+    Next.js Route Handler 가 이 함수의 HTTP 엔드포인트 wrapper 를 호출해야 한다.
+    파이썬에서 직접 호출도 가능 (스크립트/테스트용).
+
+    참고: https://developers.notion.com/reference/create-a-token
+
+    Args:
+        code: Notion 이 redirect 로 넘긴 ``code`` 쿼리 파라미터.
+        redirect_uri: Authorize URL 에 ``redirect_uri`` 가 포함됐거나 통합 설정에
+            여러 redirect URI 가 등록돼 있다면 **동일 값을 다시 전달해야 한다**.
+        client_id / client_secret: 환경변수 ``NOTION_CLIENT_ID`` /
+            ``NOTION_CLIENT_SECRET`` 대신 직접 주입하고 싶을 때만 사용.
+        timeout_s: HTTP 타임아웃.
+
+    Returns:
+        Notion 응답 dict. 주요 키:
+            - ``access_token``: str — integrations 테이블에 암호화 저장
+            - ``token_type``: "bearer"
+            - ``bot_id``: str — 봇 식별자
+            - ``workspace_id``: str — Notion 워크스페이스 ID (Actnote workspace_id 와 다름)
+            - ``workspace_name``: str | None
+            - ``workspace_icon``: str | None
+            - ``owner``: dict
+            - ``duplicated_template_id``: str | None
+
+    Raises:
+        ValueError: ``NOTION_CLIENT_ID`` / ``NOTION_CLIENT_SECRET`` 미설정 또는 ``code`` 누락.
+        RuntimeError: Notion OAuth 응답이 비-200 또는 네트워크 오류.
+    """
+    if not code or not isinstance(code, str):
+        raise ValueError("exchange_notion_code: code 가 비어있습니다.")
+
+    cid = client_id or os.getenv("NOTION_CLIENT_ID")
+    csec = client_secret or os.getenv("NOTION_CLIENT_SECRET")
+    if not cid or not csec:
+        raise ValueError(
+            "NOTION_CLIENT_ID / NOTION_CLIENT_SECRET 환경변수가 설정되지 않았습니다.\n"
+            "  Notion Developer Portal → Integration 설정에서 OAuth credentials 를 발급받으세요."
+        )
+
+    body: dict[str, Any] = {
+        "grant_type": "authorization_code",
+        "code": code,
+    }
+    if redirect_uri:
+        body["redirect_uri"] = redirect_uri
+
+    basic = base64.b64encode(f"{cid}:{csec}".encode("utf-8")).decode("ascii")
+    headers = {
+        "Authorization": f"Basic {basic}",
+        "Content-Type": "application/json",
+        "Notion-Version": NOTION_API_VERSION,
+    }
+
+    try:
+        resp = httpx.post(
+            NOTION_OAUTH_TOKEN_URL,
+            json=body,
+            headers=headers,
+            timeout=timeout_s,
+        )
+    except httpx.HTTPError as e:
+        raise RuntimeError(
+            f"Notion OAuth API 호출 실패 (network): {type(e).__name__}: {e}"
+        ) from e
+
+    if resp.status_code != 200:
+        # Notion 은 4xx 에서도 JSON {error, error_description} 형태를 줌
+        try:
+            err_body = resp.json()
+        except Exception:
+            err_body = {"raw": resp.text}
+        raise RuntimeError(
+            f"Notion OAuth 토큰 교환 실패 "
+            f"(status={resp.status_code}, body={err_body!r})"
+        )
+
+    payload = resp.json()
+    if "access_token" not in payload:
+        raise RuntimeError(
+            f"Notion OAuth 응답에 access_token 이 없습니다: {payload!r}"
+        )
+    _log.info(
+        "exchange_notion_code: 토큰 교환 성공 (notion_workspace_id=%s, bot_id=%s)",
+        payload.get("workspace_id"), payload.get("bot_id"),
+    )
+    return payload
+
+
+def complete_notion_oauth(
+    *,
+    workspace_id: str,
+    code: str,
+    redirect_uri: str | None,
+    connected_by: str,
+    sb_client,
+    meeting_db_id: str | None = None,
+    action_db_id: str | None = None,
+    field_mapping: dict | None = None,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+) -> dict[str, Any]:
+    """OAuth callback 한방 처리: ``code`` → access_token 교환 + integrations 저장.
+
+    프론트는 이 함수에 대응되는 HTTP 엔드포인트만 호출하면 된다.
+
+    Args:
+        workspace_id: Actnote workspace_id (Notion workspace_id 가 아님).
+        code: callback 쿼리스트링의 ``code`` 값.
+        redirect_uri: Authorize URL 에 사용한 redirect URI.
+        connected_by: 연동을 수행한 사용자 ID.
+        sb_client: supabase-py Client (service_role).
+        meeting_db_id / action_db_id / field_mapping: 사용자가 사전에 선택했다면 함께 저장.
+        client_id / client_secret: 명시적으로 주입하고 싶을 때만 (테스트용).
+
+    Returns:
+        ``register_notion_integration`` 의 결과 + ``notion_workspace_name`` 등 메타.
+    """
+    payload = exchange_notion_code(
+        code,
+        redirect_uri=redirect_uri,
+        client_id=client_id,
+        client_secret=client_secret,
+    )
+    saved = register_notion_integration(
+        workspace_id=workspace_id,
+        token=payload["access_token"],
+        connected_by=connected_by,
+        sb_client=sb_client,
+        meeting_db_id=meeting_db_id,
+        action_db_id=action_db_id,
+        bot_id=payload.get("bot_id"),
+        workspace_id_notion=payload.get("workspace_id"),
+        field_mapping=field_mapping,
+    )
+    saved.setdefault("notion_workspace_name", payload.get("workspace_name"))
+    saved.setdefault("notion_workspace_icon", payload.get("workspace_icon"))
+    return saved
 
 
 # ---------------------------------------------------------------------------

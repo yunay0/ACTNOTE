@@ -277,6 +277,9 @@ def _insert_action(
         "status": status,
         "embedding": embedding,
     }
+    # DRAFT-005: assignee_matcher 가 채운 값 그대로 전달 (없으면 NULL)
+    if action.get("assignee_user_id"):
+        row["assignee_user_id"] = action["assignee_user_id"]
     if superseded_by is not None:
         row["superseded_by"] = superseded_by
     result = sb_client.table(ACTION_ITEMS_TABLE).insert(row).execute()
