@@ -55,7 +55,7 @@
 레포 루트에서:
 
 ```powershell
-cd C:\Users\ttojo\Actnote
+cd Actnote
 uv sync
 uv run python scripts/serve_worker.py
 ```
@@ -75,7 +75,7 @@ npx inngest-cli@latest dev -u http://127.0.0.1:8000/api/inngest
 ### 터미널 C — Next.js (프론트)
 
 ```powershell
-cd C:\Users\ttojo\Actnote\actnote-web
+cd Actnote\actnote-web
 npm install
 npm run dev
 ```
