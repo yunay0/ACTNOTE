@@ -167,47 +167,42 @@ export default function MeetingDetailPage() {
     setSaving(false);
   }
 
-  // PUB-001: 발행 전 필수 필드 검증
-  function validateBeforePublish(): string[] {
-    const errors: string[] = [];
-    if (!meeting) return errors;
-    if (!meeting.title?.trim()) errors.push("Meeting title is required.");
-    if (!meeting.summary?.trim()) errors.push("AI summary must exist. Edit and add a summary before publishing.");
-    if (actionItems.filter((a) => a.status !== "cancelled").length === 0)
-      errors.push("At least 1 action item is required.");
-    return errors;
-  }
-
-  // INTEG-005: Notion 연동 여부 확인
-  async function checkNotionConnection(): Promise<boolean> {
-    if (notionConnected !== null) return notionConnected;
-    const supabase = createClient();
-    const { data } = await (supabase as any)
-      .from("integrations")
-      .select("id")
-      .eq("workspace_id", meeting!.workspace_id)
-      .eq("provider", "notion")
-      .single();
-    const connected = !!data;
-    setNotionConnected(connected);
-    return connected;
-  }
-
+  // PUB-001: validate_meeting_for_publication RPC 사용
   async function handlePublishClick() {
     if (!meeting || publishing) return;
 
-    // PUB-001 검증
-    const errors = validateBeforePublish();
-    if (errors.length > 0) {
-      setPubValidErrors(errors);
+    const supabase = createClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: validation, error: valErr } = await (supabase as any).rpc(
+      "validate_meeting_for_publication",
+      { p_meeting_id: meeting.id }
+    );
+
+    if (valErr) {
+      setPubValidErrors([valErr.message]);
       setPubValidModal(true);
       return;
     }
 
-    // INTEG-005 Notion 연동 확인
-    const connected = await checkNotionConnection();
-    if (!connected) {
-      setNotionWarningModal(true);
+    if (!validation?.ok) {
+      const missing: string[] = validation?.missing ?? [];
+      const msgs = missing.map((key: string) => {
+        if (key === "title") return "Meeting title is required.";
+        if (key === "summary") return "AI summary must be added before publishing.";
+        if (key === "action_items") return "At least 1 active action item is required.";
+        if (key === "notion_integration") {
+          // INTEG-005: Notion 미연동 경고
+          setNotionConnected(false);
+          setNotionWarningModal(true);
+          return null;
+        }
+        return `Missing: ${key}`;
+      }).filter(Boolean) as string[];
+
+      if (!missing.includes("notion_integration") && msgs.length > 0) {
+        setPubValidErrors(msgs);
+        setPubValidModal(true);
+      }
       return;
     }
 
@@ -218,12 +213,28 @@ export default function MeetingDetailPage() {
     if (!meeting) return;
     setPublishing(true);
     setNotionWarningModal(false);
+
     const supabase = createClient();
-    const { error } = await (supabase as any)
-      .from("meetings")
-      .update({ approval_status: "published", published_at: new Date().toISOString() })
-      .eq("id", meeting.id);
-    if (error) { alert(`Failed to publish: ${error.message}`); setPublishing(false); return; }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any).rpc("publish_meeting", {
+      p_meeting_id: meeting.id,
+    });
+
+    if (error) {
+      const msg =
+        error.code === "42501" ? "You need admin or owner role to publish." : error.message;
+      alert(`Failed to publish: ${msg}`);
+      setPublishing(false);
+      return;
+    }
+
+    // Notion push + 임베딩 재인덱싱 비동기 트리거
+    await fetch("/api/trigger-publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ meeting_id: meeting.id }),
+    }).catch(() => null);
+
     setMeeting((prev) => prev ? { ...prev, approval_status: "published" } : prev);
     setPublishDone(true);
     setPublishing(false);

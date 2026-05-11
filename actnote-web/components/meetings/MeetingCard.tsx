@@ -32,16 +32,11 @@ function formatDate(iso: string) {
 }
 
 const MEETING_TYPE_LABELS: Record<string, string> = {
-  sprint_planning: "Sprint Planning",
-  sprint_review:   "Sprint Review",
-  retrospective:   "Retrospective",
-  design_review:   "Design Review",
-  planning:        "Planning",
-  one_on_one:      "1:1",
-  team_sync:       "Team Sync",
-  kickoff:         "Kickoff",
-  client_meeting:  "Client Meeting",
-  other:           "Other",
+  default:  "General",
+  sprint:   "Sprint",
+  planning: "Planning",
+  retro:    "Retro",
+  "1on1":   "1:1",
 };
 
 export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {

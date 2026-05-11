@@ -484,7 +484,7 @@ export default function NewMeetingPage() {
                     </div>
                     <p className="text-xs text-[#94a3b8]">
                       {uploadProgress < 100
-                        ? `${(file.size * uploadProgress / 100 / 1024 / 1024).toFixed(1)} MB / ${(file.size / 1024 / 1024).toFixed(1)} MB`
+                        ? `${(file!.size * uploadProgress / 100 / 1024 / 1024).toFixed(1)} MB / ${(file!.size / 1024 / 1024).toFixed(1)} MB`
                         : "Processing..."}
                     </p>
                   </div>
@@ -587,30 +587,21 @@ const inputCls =
   "h-11 w-full rounded-xl border border-[#e2e8f0] bg-white px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10";
 
 // MTG-004: 회의 유형 템플릿
+// 백엔드 스펙: 'default' | 'sprint' | 'planning' | 'retro' | '1on1'
 const MEETING_TYPES = [
-  { value: "sprint_planning",  label: "🗂 Sprint Planning" },
-  { value: "sprint_review",    label: "✅ Sprint Review" },
-  { value: "retrospective",    label: "🔄 Retrospective" },
-  { value: "design_review",    label: "🎨 Design Review" },
-  { value: "planning",         label: "📋 Planning" },
-  { value: "one_on_one",       label: "👤 1:1" },
-  { value: "team_sync",        label: "👥 Team Sync" },
-  { value: "kickoff",          label: "🚀 Project Kickoff" },
-  { value: "client_meeting",   label: "🤝 Client Meeting" },
-  { value: "other",            label: "💬 Other" },
+  { value: "default",  label: "General Meeting" },
+  { value: "sprint",   label: "Sprint" },
+  { value: "planning", label: "Planning" },
+  { value: "retro",    label: "Retrospective" },
+  { value: "1on1",     label: "1:1" },
 ];
 
 const MEETING_TYPE_HINTS: Record<string, string> = {
-  sprint_planning:  "AI will focus on extracting task assignments, story points, and sprint goals.",
-  sprint_review:    "AI will highlight completed items, demos, and stakeholder feedback.",
-  retrospective:    "AI will identify what went well, what didn't, and action items for improvement.",
-  design_review:    "AI will capture design decisions, feedback, and revision tasks.",
-  planning:         "AI will extract goals, timelines, owners, and key decisions.",
-  one_on_one:       "AI will focus on personal goals, blockers, and follow-up actions.",
-  team_sync:        "AI will summarize status updates, blockers, and team-wide action items.",
-  kickoff:          "AI will extract project goals, roles, milestones, and next steps.",
-  client_meeting:   "AI will highlight client requests, commitments, and follow-ups.",
-  other:            "AI will extract general action items and decisions.",
+  default:  "AI will extract general action items, decisions, and key discussion points.",
+  sprint:   "AI will focus on task assignments, story points, sprint goals, and blockers.",
+  planning: "AI will extract goals, timelines, owners, milestones, and key decisions.",
+  retro:    "AI will identify what went well, what didn't, and action items for improvement.",
+  "1on1":   "AI will focus on personal goals, blockers, feedback, and follow-up actions.",
 };
 
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
