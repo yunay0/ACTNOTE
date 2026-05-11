@@ -131,8 +131,8 @@ export async function GET(req: NextRequest) {
   const now = new Date().toISOString();
 
   try {
-    const admin = createServiceRoleClient();
-    const { error: upsertErr } = await admin.from("integrations").upsert(
+    const sbService = createServiceRoleClient();
+    const { error: upsertErr } = await sbService.from("integrations").upsert(
       {
         workspace_id: workspaceId,
         platform: "notion",

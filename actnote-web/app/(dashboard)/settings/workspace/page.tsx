@@ -5,11 +5,37 @@ import { X, Copy, Check, Link2, ChevronDown } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
 
-type Role = "owner" | "admin" | "member";
+/** Supabase `workspace_members.role` */
+type DbRole = "owner" | "admin" | "member";
+
+/**
+ * UI roles (two tiers):
+ * - Member: read-only here (lowest privilege; unchanged behavior).
+ * - Owner: merged former DB `owner` + `admin` for display; full management UI except RPC-only actions.
+ */
+type UiRole = "owner" | "member";
+
+function toUiRole(db: string | null | undefined): UiRole {
+  return db === "member" ? "member" : "owner";
+}
+
+function parseDbRole(raw: string | null | undefined): DbRole {
+  if (raw === "owner" || raw === "admin" || raw === "member") return raw;
+  return "member";
+}
+
+function dbRoleSortKey(db: DbRole): number {
+  if (db === "owner") return 0;
+  if (db === "admin") return 1;
+  return 2;
+}
 
 interface Member {
   user_id: string;
-  role: Role;
+  /** Raw DB role (admin ≠ member for remove / RPC rules). */
+  dbRole: DbRole;
+  /** Display tier: Owner = DB owner or admin. */
+  role: UiRole;
   name: string;
   email: string;
   initials: string;
@@ -24,9 +50,8 @@ const GRADIENTS = [
   "linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%)",
 ];
 
-const ROLE_STYLE: Record<Role, { label: string; bg: string; text: string }> = {
-  owner: { label: "Owner",  bg: "bg-[#fff4f0]", text: "text-[#ff6b35]" },
-  admin: { label: "Admin",  bg: "bg-[#eff6ff]", text: "text-[#2e5c8a]" },
+const ROLE_STYLE: Record<UiRole, { label: string; bg: string; text: string }> = {
+  owner: { label: "Owner", bg: "bg-[#fff4f0]", text: "text-[#ff6b35]" },
   member: { label: "Member", bg: "bg-[#f1f5f9]", text: "text-[#64748b]" },
 };
 
@@ -43,10 +68,10 @@ export default function WorkspaceSettingsPage() {
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [workspaceSlug, setWorkspaceSlug] = useState<string>("");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [currentRole, setCurrentRole] = useState<Role>("member");
+  const [currentDbRole, setCurrentDbRole] = useState<DbRole>("member");
+  const [currentRole, setCurrentRole] = useState<UiRole>("member");
   const [members, setMembers] = useState<Member[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
   const [inviteSent, setInviteSent] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
   const [optOut, setOptOut] = useState(true);
@@ -56,8 +81,10 @@ export default function WorkspaceSettingsPage() {
   const [roleChanging, setRoleChanging] = useState<string | null>(null);
   const [roleError, setRoleError] = useState<string | null>(null);
 
-  const isOwner = currentRole === "owner";
-  const isAdmin = currentRole === "owner" || currentRole === "admin";
+  /** Merged former DB `owner` + `admin`: edit settings, invite, remove members (not role RPC). */
+  const isElevated = currentDbRole === "owner" || currentDbRole === "admin";
+  /** DB workspace owner row only — `set_member_role` RPC & danger zone. */
+  const isDbOwner = currentDbRole === "owner";
 
   const loadWorkspace = useCallback(async () => {
     const supabase = createClient();
@@ -81,7 +108,9 @@ export default function WorkspaceSettingsPage() {
     setSavedName(ws.name ?? "");
     setWorkspaceSlug(ws.slug ?? "");
     setOptOut(ws.opt_out_training ?? true);
-    setCurrentRole((memRow.role as Role) ?? "member");
+    const myDb = parseDbRole(memRow.role as string);
+    setCurrentDbRole(myDb);
+    setCurrentRole(toUiRole(myDb));
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: memberRows } = await (supabase as any)
@@ -95,17 +124,18 @@ export default function WorkspaceSettingsPage() {
         const u = Array.isArray(row.users) ? row.users[0] : row.users;
         const name = u?.name ?? "";
         const email = u?.email ?? "";
+        const dbRole = parseDbRole(row.role as string);
         return {
           user_id: row.user_id,
-          role: (row.role as Role) ?? "member",
+          dbRole,
+          role: toUiRole(dbRole),
           name,
           email,
           initials: getInitials(name, email),
           gradient: GRADIENTS[idx % GRADIENTS.length],
         };
       });
-      const roleOrder: Record<Role, number> = { owner: 0, admin: 1, member: 2 };
-      list.sort((a, b) => roleOrder[a.role] - roleOrder[b.role]);
+      list.sort((a, b) => dbRoleSortKey(a.dbRole) - dbRoleSortKey(b.dbRole));
       setMembers(list);
     }
 
@@ -138,7 +168,7 @@ export default function WorkspaceSettingsPage() {
   }
 
   async function handleRemoveMember(userId: string) {
-    if (!workspaceId || !isAdmin) return;
+    if (!workspaceId || !isElevated) return;
     setRemoving(userId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (createClient() as any)
@@ -150,18 +180,19 @@ export default function WorkspaceSettingsPage() {
     setRemoving(null);
   }
 
-  // WS-003: set_member_role RPC (owner only)
-  async function handleRoleChange(targetUserId: string, newRole: Role) {
-    if (!workspaceId || !isOwner) return;
+  // WS-003: `set_member_role` — only callable by DB `owner` (not DB `admin`).
+  async function handleRoleChange(targetUserId: string, newUiRole: UiRole) {
+    if (!workspaceId || !isDbOwner) return;
     setRoleChanging(targetUserId);
     setRoleError(null);
 
     const supabase = createClient();
+    const p_new_role = newUiRole === "owner" ? "owner" : "member";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any).rpc("set_member_role", {
       p_workspace_id: workspaceId,
       p_target_user_id: targetUserId,
-      p_new_role: newRole,
+      p_new_role,
     });
 
     if (error) {
@@ -169,13 +200,11 @@ export default function WorkspaceSettingsPage() {
         error.message === "last_owner_cannot_be_demoted"
           ? "Cannot remove the last owner."
           : error.code === "42501"
-          ? "Only the owner can change roles."
+          ? "Only the workspace owner can change roles."
           : error.message;
       setRoleError(msg);
     } else {
-      setMembers((prev) =>
-        prev.map((m) => m.user_id === targetUserId ? { ...m, role: newRole } : m)
-      );
+      await loadWorkspace();
     }
     setRoleChanging(null);
   }
@@ -197,7 +226,7 @@ export default function WorkspaceSettingsPage() {
     const { data: invite, error } = await (supabase as any).rpc("create_invite", {
       p_workspace_id: workspaceId,
       p_email: email,
-      p_role: inviteRole,
+      p_role: "member",
       p_expires_in_days: 7,
     });
 
@@ -206,7 +235,7 @@ export default function WorkspaceSettingsPage() {
       return;
     }
 
-    // 메일 발송 Route Handler 호출
+    // Notify send-invite Route Handler (optional)
     await fetch("/api/workspace/send-invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -257,11 +286,11 @@ export default function WorkspaceSettingsPage() {
                 type="text"
                 value={workspaceName}
                 onChange={(e) => setWorkspaceName(e.target.value)}
-                disabled={!isAdmin}
+                disabled={!isElevated}
                 className="h-11 w-full rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[13px] text-[#0a2540] outline-none focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10 transition-all disabled:bg-[#f8fafc] disabled:cursor-default"
               />
             </div>
-            {isAdmin && (
+            {isElevated && (
               <div className="flex items-center justify-end gap-3">
                 <button
                   onClick={() => setWorkspaceName(savedName)}
@@ -290,13 +319,16 @@ export default function WorkspaceSettingsPage() {
                   {ROLE_STYLE[currentRole].label}
                 </span>
               </p>
+              <p className="mt-1 text-[12px] text-[#94a3b8]">
+                Members have read-only access here; Owners manage workspace settings and invitations.
+              </p>
             </div>
 
             <div className="mb-5 flex flex-col gap-2">
               {members.map((m) => {
                 const style = ROLE_STYLE[m.role];
                 const isSelf = m.user_id === currentUserId;
-                const canChangeRole = isOwner && !isSelf && m.role !== "owner";
+                const canChangeRole = isDbOwner && !isSelf && m.dbRole !== "owner";
 
                 return (
                   <div key={m.user_id} className="flex items-center gap-3 rounded-lg bg-[#f8fafc] p-3">
@@ -322,11 +354,12 @@ export default function WorkspaceSettingsPage() {
                       <div className="relative">
                         <select
                           value={m.role}
-                          onChange={(e) => handleRoleChange(m.user_id, e.target.value as Role)}
+                          onChange={(e) =>
+                            handleRoleChange(m.user_id, e.target.value as UiRole)
+                          }
                           disabled={roleChanging === m.user_id}
                           className={`appearance-none cursor-pointer rounded-lg border px-3 py-1 pr-7 text-[12px] font-bold outline-none transition-colors ${style.bg} ${style.text} border-current/20 hover:opacity-80`}
                         >
-                          <option value="admin">Admin</option>
                           <option value="member">Member</option>
                           <option value="owner">Owner</option>
                         </select>
@@ -342,8 +375,8 @@ export default function WorkspaceSettingsPage() {
                       </span>
                     )}
 
-                    {/* Remove button (admin can remove non-owner members, not self) */}
-                    {isAdmin && !isSelf && m.role !== "owner" && (
+                    {/* Remove button (owner only; cannot remove owner) */}
+                    {isElevated && !isSelf && m.dbRole !== "owner" && (
                       <button
                         onClick={() => handleRemoveMember(m.user_id)}
                         disabled={removing === m.user_id}
@@ -361,8 +394,8 @@ export default function WorkspaceSettingsPage() {
               })}
             </div>
 
-            {/* Invite by email (admin+) */}
-            {isAdmin && (
+            {/* Invite by email (elevated: DB owner or admin); invites join as Member */}
+            {isElevated && (
               <div className="flex flex-col gap-2">
                 <label className="text-[13px] font-bold text-[#0a2540]">Invite by Email</label>
                 <div className="flex gap-2">
@@ -374,15 +407,6 @@ export default function WorkspaceSettingsPage() {
                     placeholder="Enter email to invite"
                     className="h-11 flex-1 rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[13px] text-[#0a2540] placeholder-[#94a3b8] outline-none focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10 transition-all"
                   />
-                  {/* Role select for invite */}
-                  <select
-                    value={inviteRole}
-                    onChange={(e) => setInviteRole(e.target.value as "admin" | "member")}
-                    className="h-11 rounded-lg border-2 border-[#e2e8f0] bg-white px-3 text-[13px] text-[#0a2540] outline-none focus:border-[#2e5c8a] transition-all"
-                  >
-                    <option value="member">Member</option>
-                    <option value="admin">Admin</option>
-                  </select>
                   <button
                     onClick={handleInvite}
                     className="h-11 rounded-lg px-6 text-[14px] font-bold text-white hover:opacity-90 transition-opacity"
@@ -400,8 +424,8 @@ export default function WorkspaceSettingsPage() {
             )}
           </section>
 
-          {/* Invite Link (admin+) */}
-          {isAdmin && (
+          {/* Invite Link (elevated) */}
+          {isElevated && (
             <section className="rounded-xl border border-[#e2e8f0] bg-white p-8">
               <div className="mb-5">
                 <h2 className="text-[17px] font-bold text-[#0a2540]">Invite Link</h2>
@@ -435,7 +459,7 @@ export default function WorkspaceSettingsPage() {
               </div>
               <button
                 onClick={handleToggleOptOut}
-                disabled={!isAdmin}
+                disabled={!isElevated}
                 className={`relative mt-1 inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border-2 transition-colors duration-200 focus:outline-none disabled:opacity-40 disabled:cursor-default ${
                   optOut ? "border-[#ff6b35] bg-[#ff6b35]" : "border-[#e2e8f0] bg-[#e2e8f0]"
                 }`}
@@ -453,8 +477,8 @@ export default function WorkspaceSettingsPage() {
             </div>
           </section>
 
-          {/* Danger Zone (owner only) */}
-          {isOwner && (
+          {/* Danger zone — DB workspace owner only */}
+          {isDbOwner && (
             <section className="rounded-xl border-2 border-[#fee2e2] bg-[#fef2f2] p-8">
               <div className="mb-4">
                 <h2 className="text-[17px] font-bold text-[#0a2540]">Delete Workspace</h2>

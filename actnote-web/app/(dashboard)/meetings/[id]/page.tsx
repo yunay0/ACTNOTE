@@ -222,7 +222,9 @@ export default function MeetingDetailPage() {
 
     if (error) {
       const msg =
-        error.code === "42501" ? "You need admin or owner role to publish." : error.message;
+        error.code === "42501"
+          ? "You don’t have permission to publish. Ask an Owner."
+          : error.message;
       alert(`Failed to publish: ${msg}`);
       setPublishing(false);
       return;
