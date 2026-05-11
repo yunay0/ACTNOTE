@@ -17,19 +17,28 @@ export default function SignupPage() {
     setError(null);
 
     const supabase = createClient();
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/email-verified`,
+      },
     });
 
     if (error) {
       setError(error.message);
       setLoading(false);
-    } else {
-      setDone(true);
-      setLoading(false);
+      return;
     }
+
+    // Confirm email 이 꺼져 있으면 세션이 바로 생김 → 바로 온보딩으로
+    if (data.session) {
+      window.location.assign("/onboarding");
+      return;
+    }
+
+    setDone(true);
+    setLoading(false);
   }
 
   return (
@@ -76,13 +85,16 @@ export default function SignupPage() {
             {done ? (
               <div className="text-center">
                 <div className="mb-4 text-5xl">📬</div>
-                <h2 className="mb-2 text-2xl font-bold text-[#0a2540]">Check your email</h2>
-                <p className="text-[15px] text-[#64748b]">
-                  We sent a confirmation link to <strong>{email}</strong>.<br />
-                  Click it to activate your account.
+                <h2 className="mb-2 text-2xl font-bold text-[#0a2540]">Verify your email</h2>
+                <p className="text-[15px] leading-relaxed text-[#64748b]">
+                  We sent a link to <strong>{email}</strong>. Open it to confirm you own this inbox.
+                  <br />
+                  <br />
+                  That step only verifies email—it does not sign you in. After verifying, come back here and{" "}
+                  <strong>sign in with your password</strong>.
                 </p>
                 <Link href="/login" className="mt-6 inline-block text-sm font-semibold text-[#ff6b35] hover:underline">
-                  Back to Sign In
+                  Go to Sign In
                 </Link>
               </div>
             ) : (

@@ -8,6 +8,7 @@ import {
   AlertCircle, ExternalLink,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
 import { StatusBadge } from "@/components/meetings/StatusBadge";
 import { ProcessingProgress } from "@/components/meetings/ProcessingProgress";
 import type { MeetingStatus } from "@/lib/types/meeting";
@@ -64,6 +65,7 @@ export default function MeetingDetailPage() {
   // 삭제 (STATUS-002)
   const [deleteModal, setDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // 발행 검증 (PUB-001)
   const [pubValidModal, setPubValidModal] = useState(false);
@@ -243,12 +245,18 @@ export default function MeetingDetailPage() {
   }
 
   async function handleDelete() {
+    if (!meeting) return;
+    setDeleteError(null);
     setDeleting(true);
     const supabase = createClient();
-    await (supabase as any)
-      .from("meetings")
-      .update({ deleted_at: new Date().toISOString() })
-      .eq("id", id);
+    const result = await softDeleteMeetingRow(supabase, meeting.id, meeting.workspace_id);
+    if (!result.ok) {
+      setDeleteError(result.message);
+      setDeleting(false);
+      return;
+    }
+    setDeleteModal(false);
+    setDeleting(false);
     router.push("/meetings");
   }
 
@@ -297,11 +305,28 @@ export default function MeetingDetailPage() {
                 <p className="text-[13px] text-[#64748b]">This action cannot be undone.</p>
               </div>
             </div>
+            {deleteError && (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
+                {deleteError}
+              </div>
+            )}
             <div className="flex gap-3 mt-5">
-              <button onClick={() => setDeleteModal(false)} className="flex-1 h-11 rounded-xl border-2 border-[#e2e8f0] text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc]">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteError(null);
+                  setDeleteModal(false);
+                }}
+                className="flex-1 h-11 rounded-xl border-2 border-[#e2e8f0] text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc]"
+              >
                 Cancel
               </button>
-              <button onClick={handleDelete} disabled={deleting} className="flex-1 h-11 rounded-xl bg-red-500 text-[14px] font-bold text-white hover:opacity-90 disabled:opacity-60">
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 h-11 rounded-xl bg-red-500 text-[14px] font-bold text-white hover:opacity-90 disabled:opacity-60"
+              >
                 {deleting ? "Deleting..." : "Delete"}
               </button>
             </div>
@@ -407,7 +432,14 @@ export default function MeetingDetailPage() {
                 {meeting.approval_status === "published" && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-1.5 text-sm font-bold text-green-700">✅ Published</span>
                 )}
-                <button onClick={() => setDeleteModal(true)} className="flex items-center justify-center h-8 w-8 rounded-lg text-[#94a3b8] hover:bg-red-50 hover:text-red-500 transition-colors">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteError(null);
+                    setDeleteModal(true);
+                  }}
+                  className="flex items-center justify-center h-8 w-8 rounded-lg text-[#94a3b8] hover:bg-red-50 hover:text-red-500 transition-colors"
+                >
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>

@@ -1,14 +1,37 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-export default function LoginPage() {
+function LoginForm() {
+  const searchParams = useSearchParams();
+  const verified = searchParams.get("verified") === "1";
+  const urlError = searchParams.get("error");
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  let queryBanner: { kind: "success" | "error"; text: string } | null = null;
+  if (verified) {
+    queryBanner = {
+      kind: "success",
+      text: "Email verified. Sign in with your password to continue.",
+    };
+  } else if (urlError === "email_verify_failed") {
+    queryBanner = {
+      kind: "error",
+      text: "This verification link is invalid or has expired. Try signing up again or contact support.",
+    };
+  } else if (urlError === "auth_failed") {
+    queryBanner = {
+      kind: "error",
+      text: "Something went wrong during sign-in. Please try again.",
+    };
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,13 +52,11 @@ export default function LoginPage() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
-
       {/* Left — Branding */}
       <div
         className="hidden flex-1 flex-col justify-center p-[80px] md:flex"
         style={{ background: "linear-gradient(135deg, #0a2540 0%, #1e3a5f 100%)" }}
       >
-        {/* Logo */}
         <div className="mb-[39px] flex items-center gap-4">
           <div className="flex h-16 w-16 items-center justify-center rounded-[12px] bg-[#ff6b35]">
             <span className="text-4xl font-bold leading-none text-[#1e3a5f]">✓</span>
@@ -43,14 +64,12 @@ export default function LoginPage() {
           <span className="text-[36px] font-bold tracking-[-1px] text-white">ACTNOTE</span>
         </div>
 
-        {/* Tagline */}
         <p className="mb-[47px] text-[22.5px] leading-[1.5] text-white/90">
           Transform your meetings
           <br />
           into actionable insights
         </p>
 
-        {/* Features */}
         <div className="flex flex-col gap-6">
           {FEATURES.map(({ emoji, text }) => (
             <div key={text} className="flex items-center gap-4">
@@ -65,13 +84,23 @@ export default function LoginPage() {
 
       {/* Right — Login Form */}
       <div className="flex flex-1 flex-col items-center justify-center bg-white p-[80px]">
-        <div className="w-full max-w-[400px] flex flex-col gap-8">
-
-          {/* Header */}
+        <div className="flex w-full max-w-[400px] flex-col gap-8">
           <div className="text-center">
             <h1 className="text-[31px] font-bold text-[#0a2540]">Welcome 👋</h1>
             <p className="mt-3 text-[15px] text-[#64748b]">Sign in to continue to ACTNOTE</p>
           </div>
+
+          {queryBanner && (
+            <p
+              className={`rounded-xl border px-4 py-3 text-center text-sm ${
+                queryBanner.kind === "success"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                  : "border-red-200 bg-red-50 text-red-600"
+              }`}
+            >
+              {queryBanner.text}
+            </p>
+          )}
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1.5">
@@ -108,7 +137,7 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <p className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-600 text-center">
+              <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-center text-sm text-red-600">
                 {error}
               </p>
             )}
@@ -134,16 +163,33 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          {/* Terms */}
-          <p className="text-center text-[12px] text-[#64748b] leading-relaxed">
+          <p className="text-center text-[12px] leading-relaxed text-[#64748b]">
             By continuing, you agree to our{" "}
-            <span className="font-medium text-[#ff6b35] cursor-pointer hover:underline">Terms of Service</span>
-            {" "}and{" "}
-            <span className="font-medium text-[#ff6b35] cursor-pointer hover:underline">Privacy Policy</span>
+            <span className="cursor-pointer font-medium text-[#ff6b35] hover:underline">
+              Terms of Service
+            </span>{" "}
+            and{" "}
+            <span className="cursor-pointer font-medium text-[#ff6b35] hover:underline">
+              Privacy Policy
+            </span>
           </p>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-screen items-center justify-center bg-white text-[#64748b]">
+          Loading…
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }
 

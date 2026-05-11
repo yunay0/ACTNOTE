@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { Inngest } from "inngest";
 import { createClient } from "@/lib/supabase/server";
+import { ensureRepoRootEnvMerged } from "@/lib/server/repo-env";
+
+export const runtime = "nodejs";
 
 // 워커 src/worker.py 의 app_id="actnote" 와 동일해야 이벤트가 같은 앱의 함수로 라우팅됨.
-const inngest = new Inngest({ id: "actnote" });
 
 export async function POST(request: Request) {
+  ensureRepoRootEnvMerged();
   const supabase = await createClient();
 
   const {
@@ -29,6 +32,19 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+
+  const eventKey = process.env.INNGEST_EVENT_KEY?.trim();
+  if (!eventKey) {
+    return NextResponse.json(
+      {
+        error:
+          "INNGEST_EVENT_KEY is missing or empty. Set it in actnote-web/.env.local or the repo-root env file (no blank INNGEST_EVENT_KEY= line). Restart next dev.",
+      },
+      { status: 503 }
+    );
+  }
+
+  const inngest = new Inngest({ id: "actnote", eventKey });
 
   try {
     await inngest.send({

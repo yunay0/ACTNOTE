@@ -30,8 +30,14 @@ pyannote/torch 는 step 3 내부에서 지연 import — 서버 시작 시 로�
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from dotenv import load_dotenv
-load_dotenv()
+
+# load_dotenv() only reads `.env` by default; teams sometimes use a root `env` file without the dot.
+_repo_root = Path(__file__).resolve().parents[1]
+for _env_name in (".env", "env"):
+    load_dotenv(_repo_root / _env_name)
 
 import logging
 import os

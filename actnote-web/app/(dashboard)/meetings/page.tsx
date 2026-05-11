@@ -46,6 +46,15 @@ export default function MeetingsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [page, setPage] = useState(1);
+  const [deleteBanner, setDeleteBanner] = useState<string | null>(null);
+
+  async function handleDeleteMeeting(id: string) {
+    setDeleteBanner(null);
+    const r = await deleteMeeting(id);
+    if (!r.ok) {
+      setDeleteBanner(r.error);
+    }
+  }
 
   // 탭 변경 시 페이지 리셋
   function handleTabChange(tab: Tab) {
@@ -80,6 +89,18 @@ export default function MeetingsPage() {
       <DashboardHeader title="Home" />
 
       <div className="flex-1 overflow-auto p-10">
+        {deleteBanner && (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex justify-between gap-4 items-start">
+            <span>{deleteBanner}</span>
+            <button
+              type="button"
+              onClick={() => setDeleteBanner(null)}
+              className="shrink-0 font-semibold text-red-900 hover:underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         {/* Toolbar */}
         <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
           {/* 필터 탭 */}
@@ -159,7 +180,7 @@ export default function MeetingsPage() {
                 <MeetingCard
                   key={meeting.id}
                   meeting={meeting}
-                  onDelete={deleteMeeting}
+                  onDelete={handleDeleteMeeting}
                   onClick={() => router.push(`/meetings/${meeting.id}`)}
                 />
               ))}

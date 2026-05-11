@@ -76,7 +76,13 @@ export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
         {menuOpen && (
           <div className="absolute right-0 top-full z-20 mt-1 w-28 overflow-hidden rounded-lg border border-[#e2e8f0] bg-white shadow-lg">
             <button
-              onClick={() => { setMenuOpen(false); onDelete?.(meeting.id); }}
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMenuOpen(false);
+                onDelete?.(meeting.id);
+              }}
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
             >
               <Trash2 className="h-3.5 w-3.5" /> Delete
