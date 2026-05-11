@@ -23,6 +23,7 @@ import inngest.fast_api
 from fastapi import FastAPI
 
 from src.worker import (
+    cleanup_orphan_meetings_scheduled,
     client,
     process_meeting,
     publish_meeting_handler,
@@ -39,7 +40,12 @@ app = FastAPI(title="Actnote Inngest Worker", version="0.1.0")
 inngest.fast_api.serve(
     app,
     client,
-    [process_meeting, publish_meeting_handler, send_email_handler],
+    [
+        process_meeting,
+        publish_meeting_handler,
+        send_email_handler,
+        cleanup_orphan_meetings_scheduled,
+    ],
 )
 
 if __name__ == "__main__":

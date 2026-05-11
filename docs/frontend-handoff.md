@@ -9,7 +9,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ 1. Supabase SQL Editor 에서 마이그레이션 014~017 순서대로 실행       │
+│ 1. Supabase SQL Editor 에서 마이그레이션 014~018 순서대로 실행       │
 │ 2. .env / Vercel 환경변수 추가 (§ 7)                                │
 │ 3. 워커 띄우기 — uv run python scripts/serve_worker.py              │
 │ 4. 업로드 → meeting/process 이벤트 발송 (§ 1)                       │
@@ -46,6 +46,26 @@
 - 같은 `meeting_id` 로 재발송 가능 → `_cleanup_for_reanalysis()` 가 자동으로 transcripts/embeddings DELETE + decisions/actions bi-temporal 만료 처리. 별도 재분석 이벤트 불필요.
 
 **상태 폴링:** `meetings.status` 컬럼을 Realtime subscribe (`uploaded → transcribing → ready | error`).
+
+**에러 시 사용자 안내 — 코드 매핑 (case 1/2/3/6):**
+워커가 실패하면 `meetings.error_message` 는 항상 `[code:CODE] <raw>` 형태로 저장된다.
+프론트는 `code` 만 보고 **기획팀이 합의한 문구**로 치환하여 노출한다 (백엔드가 카피를 결정하지 않음).
+
+| code | 의미 (case) | 권장 사용자 카피 방향 |
+|------|-----------|-----------------------|
+| `FILE_RETRIEVAL_FAILED` | 분석 시작 전·진행 중 **파일을 서버에서 가져올 수 없음** (저장 공간·쿼터·프로젝트 한도 등, 재시도로 해결 어려움) — **와이어 case 6 / 고객센터** | 팝업 **Title:** Contact Support to Continue / **Body:** We can't retrieve the file needed to start analysis. Please contact support at `{SUPPORT_EMAIL}`. 버튼: Back / Contact Support. 인앱 알림 **Title:** Support Needed - `{MEETING_NAME}` / **Body:** We can't access the file needed to start analysis. Contact support at `{SUPPORT_EMAIL}`. |
+| `DOWNLOAD_FAILED`  | 일반 오디오 다운로드·경로·손상 (case 1 일부) | 네트워크 확인·재시도 유도 문구 |
+| `MODEL_API_FAILED` | 외부 모델 API 실패 (case 2) | "서버에 일시적인 문제" / Try again in a moment |
+| `DB_PUSH_FAILED`   | DB 저장 실패 (case 3) | 네트워크 확인·재시도 |
+| `PIPELINE_INTERNAL`| 분류 보강 전 폴백 | 잠시 후 재시도 |
+
+`{SUPPORT_EMAIL}` 은 **고객센터 메일 확정 후** `NEXT_PUBLIC_SUPPORT_EMAIL`(또는 제품 정책에 맞는 단일 소스)로 주입. 기획 초안 도메인 `support@yourdomain.com` 은 플레이스홀더.
+
+파싱 예시:
+```ts
+const m = (meeting.error_message ?? "").match(/^\[code:([A-Z_]+)\]/);
+const code = (m?.[1] ?? "PIPELINE_INTERNAL") as ErrorCode;
+```
 
 [상세](./events.md#1-meetingprocess--분석-파이프라인-시작)
 
@@ -196,6 +216,8 @@ await supabase.rpc("set_member_role", {                          // owner only
 
 **메일 (Resend):** 워커가 같은 트리거에 동시에 `notification/email_send` Inngest 이벤트 발송 → Resend API 호출. `RESEND_API_KEY` 가 비어있으면 자동 dry-run.
 
+**데모 영상:** 메일 발송 장면까지 넣으려면 워커 `.env`에 `RESEND_API_KEY` 설정(또는 dry-run 시 콘솔 출력만이라도 확인) 후, 초대 발송(`notification/email_send`) 또는 분석 완료/액션 할당 같은 NOTI 플로우 중 하나를 실제 또는 스테이징에서 재현하면 된다.
+
 [상세](./events.md#4-notificationemail_send--외부-이메일-발송-resend)
 
 ---
@@ -209,6 +231,7 @@ await supabase.rpc("set_member_role", {                          // owner only
 | `NEXT_PUBLIC_SUPABASE_URL` | ✅ | Supabase 프로젝트 URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | anon 키 (RLS 통과용) |
 | `NEXT_PUBLIC_APP_URL` | ✅ | OAuth 콜백 / 메일 푸터 (`https://actnote.app`) |
+| `NEXT_PUBLIC_SUPPORT_EMAIL` | ✅ | 에러(case 6) 팝업·알림·문의 링크에 표시할 고객센터 메일 (미확정 시 플레이스홀더) |
 | `INNGEST_EVENT_KEY` | ⛔ | Inngest 이벤트 발송 (Route Handler 전용) |
 | `INNGEST_SIGNING_KEY` | ⛔ | Inngest 서명 검증 |
 | `NOTION_CLIENT_ID` | ⛔ | Notion OAuth (§ 9) |
@@ -262,6 +285,7 @@ Supabase SQL Editor 에서 **한 파일씩 순서대로** 실행:
 | `migrations/015_publication_rpc.sql` | 발행 RPC 4개 + helper | ✅ 실행 |
 | `migrations/016_workspace_invites.sql` | 초대 테이블 + RPC 3개 | ✅ 실행 |
 | `migrations/017_member_role_rpc.sql` | role CHECK + 002 트리거 정합성 + `set_member_role` | ✅ 실행 |
+| `migrations/018_remove_member_rpc.sql` | 워크스페이스 멤버 강퇴 `remove_workspace_member` | ✅ 실행 |
 
 각 마이그레이션은 **`BEGIN/COMMIT` 트랜잭션 + `IF NOT EXISTS`/`CREATE OR REPLACE`** 로 재실행 안전.
 
@@ -278,6 +302,7 @@ Supabase SQL Editor 에서 **한 파일씩 순서대로** 실행:
 - [ ] 발행 직전 Notion 미연동 → `validate_meeting_for_publication.missing` 에 `'notion_integration'` 포함
 - [ ] `set_member_role` 마지막 owner demote 시도 → `last_owner_cannot_be_demoted` 에러
 - [ ] 초대 메일 → `RESEND_API_KEY` 설정 시 실제 발송, 미설정 시 콘솔 dry-run
+- [ ] `remove_workspace_member` 호출 → 대상 멤버 제거·pending 초대 revoke
 
 ---
 

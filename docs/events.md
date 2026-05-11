@@ -195,6 +195,21 @@ await inngest.send({
 
 ---
 
+## 스케줄드 함수 — `cleanup-orphan-meetings` (이벤트 없음)
+
+Inngest **`TriggerCron`** 으로 등록. 클라이언트가 이벤트를 보내지 않는다.
+
+| 항목 | 값 |
+|------|-----|
+| **`fn_id`** | `cleanup-orphan-meetings` |
+| **주기** | 기본 `0 */6 * * *` (매 6시간, 정시). 12시간이면 워커의 cron 문자열을 `0 */12 * * *` 로 변경. |
+| **동작** | `meetings.workspace_id IS NULL` 인 행을 조회 후, 각 행의 `audio_file_url` 로부터 객체 키를 추출해 Storage **best-effort** 삭제 후 `meetings` **hard DELETE** (FK CASCADE 로 transcripts 등 제거). |
+| **비활성화** | `ACTNOTE_ORPHAN_MEETING_CLEANUP_DISABLED=true` (로컬·스테이징 테스트 시). |
+
+워크스페이스가 정상 참조되는 회의는 `workspaces` 삭제 시 DB FK `ON DELETE CASCADE` 로 이미 같이 삭제된다. 본 작업은 **워크스페이스 ID가 비어 있는 이탈 데이터** 만 대상이다.
+
+---
+
 ## 호환성 정책
 
 - 필드 추가는 OK (워커는 알 수 없는 필드는 무시).

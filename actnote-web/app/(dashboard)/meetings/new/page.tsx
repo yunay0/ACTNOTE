@@ -5,9 +5,13 @@ import { useRouter } from "next/navigation";
 import { X, AlertTriangle } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
+import {
+  allowedRecordingExtensionsLabel,
+  fileAcceptAttribute,
+  validateRecordingFileName,
+} from "@/lib/meeting/recordingFilename";
 
 const MAX_SIZE_MB = 50;
-const ACCEPTED = ".mp3,.m4a,.wav,.mp4,.mov";
 
 interface Participant { id: string; value: string; }
 
@@ -73,6 +77,12 @@ export default function NewMeetingPage() {
   }
 
   function handleFileSelect(f: File) {
+    const nameErr = validateRecordingFileName(f.name);
+    if (nameErr) {
+      setAlertMsg(nameErr);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
     if (f.size > MAX_SIZE_MB * 1024 * 1024) {
       setAlertMsg(`File size exceeds ${MAX_SIZE_MB}MB limit. Please choose a smaller file.`);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -93,6 +103,11 @@ export default function NewMeetingPage() {
   async function handleSubmit() {
     if (!title.trim() || !datetime || !file) {
       setAlertMsg("Please fill in all required fields: Meeting Title, Date & Time, and Recording.");
+      return;
+    }
+    const nameErrSubmit = validateRecordingFileName(file.name);
+    if (nameErrSubmit) {
+      setAlertMsg(nameErrSubmit);
       return;
     }
     setLoading(true);
@@ -394,7 +409,7 @@ export default function NewMeetingPage() {
                   isDragging ? "border-[#ff6b35] bg-[#fff4f0]" : "border-[#e2e8f0] bg-[#f8fafc] hover:border-[#2e5c8a]/40"
                 }`}
               >
-                <input ref={fileInputRef} type="file" accept={ACCEPTED} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }} />
+                <input ref={fileInputRef} type="file" accept={fileAcceptAttribute()} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }} />
 
                 {uploading ? (
                   <div className="flex flex-col items-center gap-2">
@@ -421,7 +436,7 @@ export default function NewMeetingPage() {
                     >
                       Choose File
                     </button>
-                    <p className="text-xs text-[#94a3b8]">Supported: MP3, M4A, WAV, MP4, MOV (max 50MB)</p>
+                    <p className="text-xs text-[#94a3b8]">Supported: {allowedRecordingExtensionsLabel()} (max {MAX_SIZE_MB}MB)</p>
                   </>
                 )}
               </div>
