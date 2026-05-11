@@ -19,7 +19,10 @@ export async function middleware(request: NextRequest) {
 
   const isAuthPage =
     pathname.startsWith("/login") || pathname.startsWith("/signup");
-  const isPublicPage = pathname === "/" || pathname.startsWith("/onboarding");
+  const isPublicPage =
+    pathname === "/" ||
+    pathname.startsWith("/onboarding") ||
+    pathname.startsWith("/invite/");
 
   // Supabase 미설정 시 인증 체크 없이 통과 (개발/MVP 단계)
   if (!isSupabaseConfigured()) {

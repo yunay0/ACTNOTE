@@ -32,6 +32,7 @@ export default function NewMeetingPage() {
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [alertMsg, setAlertMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [processingModal, setProcessingModal] = useState(false);
@@ -131,46 +132,92 @@ export default function NewMeetingPage() {
         return;
       }
 
-      // 미팅 ID 생성 후 Storage에 파일 업로드
-      const meetingId = crypto.randomUUID();
-      const filePath = `${ws.id}/${meetingId}/${file.name}`;
-      setUploading(true);
-
-      const { error: uploadError } = await supabase.storage
-        .from("meetings")
-        .upload(filePath, file, { upsert: false });
-
-      setUploading(false);
-
-      if (uploadError) {
-        setAlertMsg(`Upload failed: ${uploadError.message}`);
-        setLoading(false);
-        return;
-      }
-
-      // 파일 경로 저장 (공개 URL 또는 경로)
-      const { data: urlData } = supabase.storage.from("meetings").getPublicUrl(filePath);
-      const audioFileUrl = urlData?.publicUrl ?? filePath;
-
-      // meetings 테이블에 row 삽입
-      const { error: insertError } = await (supabase as any)
+      // 1. meetings 테이블에 row 먼저 삽입 (ID 확보)
+      const { data: meetingRow, error: insertError } = await (supabase as any)
         .from("meetings")
         .insert({
-          id: meetingId,
           title: title.trim(),
           status: "uploaded",
           workspace_id: ws.id,
           created_by: user.id,
           meeting_date: new Date(datetime).toISOString(),
-          audio_file_url: audioFileUrl,
           audio_file_size_bytes: file.size,
-        });
+          meeting_type: meetingType || null,
+          participants: participants.map((p) => p.value),
+        })
+        .select("id")
+        .single();
 
-      if (insertError) {
-        setAlertMsg(`Failed to create meeting: ${insertError.message}`);
+      if (insertError || !meetingRow) {
+        setAlertMsg(`Failed to create meeting: ${insertError?.message}`);
         setLoading(false);
         return;
       }
+
+      const meetingId = meetingRow.id as string;
+
+      // 2. Storage에 파일 업로드 (경로: {meeting_id}/audio.{ext})
+      const ext = file.name.split(".").pop() ?? "wav";
+      const audioPath = `${meetingId}/audio.${ext}`;
+      setUploading(true);
+      setUploadProgress(0);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token ?? "";
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+
+      const uploadError = await new Promise<string | null>((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${supabaseUrl}/storage/v1/object/meetings/${audioPath}`);
+        xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        xhr.setRequestHeader("x-upsert", "false");
+
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            setUploadProgress(Math.round((e.loaded / e.total) * 100));
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve(null);
+          else {
+            try {
+              const body = JSON.parse(xhr.responseText);
+              resolve(body.message ?? xhr.statusText);
+            } catch {
+              resolve(xhr.statusText);
+            }
+          }
+        };
+        xhr.onerror = () => resolve("Network error during upload");
+        xhr.send(file);
+      });
+
+      setUploading(false);
+
+      if (uploadError) {
+        setAlertMsg(`Upload failed: ${uploadError}`);
+        setLoading(false);
+        return;
+      }
+
+      // 3. audio_file_url 업데이트
+      const { data: urlData } = supabase.storage.from("meetings").getPublicUrl(audioPath);
+      await (supabase as any)
+        .from("meetings")
+        .update({ audio_file_url: urlData?.publicUrl ?? audioPath })
+        .eq("id", meetingId);
+
+      // 4. Inngest 이벤트 발송 → 백엔드 파이프라인 트리거
+      await fetch("/api/trigger-pipeline", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          meeting_id: meetingId,
+          workspace_id: ws.id,
+          audio_path: audioPath,
+        }),
+      });
 
       setLoading(false);
       setProcessingModal(true);
@@ -328,13 +375,22 @@ export default function NewMeetingPage() {
                 </Field>
 
                 <Field label="Meeting Type" required>
-                  <input
-                    type="text"
+                  <select
                     value={meetingType}
                     onChange={(e) => setMeetingType(e.target.value)}
-                    placeholder="e.g. Team Sync, Planning, Review"
-                    className={inputCls}
-                  />
+                    className={`${inputCls} cursor-pointer`}
+                  >
+                    <option value="">Select meeting type...</option>
+                    {MEETING_TYPES.map(({ value, label }) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                  {meetingType && MEETING_TYPE_HINTS[meetingType] && (
+                    <p className="text-[12px] text-[#64748b] mt-1 flex items-start gap-1">
+                      <span className="text-[#ff6b35] mt-px">✦</span>
+                      {MEETING_TYPE_HINTS[meetingType]}
+                    </p>
+                  )}
                 </Field>
 
                 <Field label="Date & Time" required>
@@ -412,9 +468,25 @@ export default function NewMeetingPage() {
                 <input ref={fileInputRef} type="file" accept={fileAcceptAttribute()} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }} />
 
                 {uploading ? (
-                  <div className="flex flex-col items-center gap-2">
-                    <span className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
-                    <p className="text-sm font-medium text-[#64748b]">Uploading to cloud...</p>
+                  <div className="flex flex-col items-center gap-3 w-full max-w-xs">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-[#0a2540]">
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
+                      Uploading... {uploadProgress}%
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-[#e2e8f0] overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-200"
+                        style={{
+                          width: `${uploadProgress}%`,
+                          background: "linear-gradient(90deg, #ff6b35 0%, #ff8555 100%)",
+                        }}
+                      />
+                    </div>
+                    <p className="text-xs text-[#94a3b8]">
+                      {uploadProgress < 100
+                        ? `${(file!.size * uploadProgress / 100 / 1024 / 1024).toFixed(1)} MB / ${(file!.size / 1024 / 1024).toFixed(1)} MB`
+                        : "Processing..."}
+                    </p>
                   </div>
                 ) : file ? (
                   <div className="flex flex-col items-center gap-2">
@@ -513,6 +585,24 @@ const TIPS = [
 
 const inputCls =
   "h-11 w-full rounded-xl border border-[#e2e8f0] bg-white px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10";
+
+// MTG-004: 회의 유형 템플릿
+// 백엔드 스펙: 'default' | 'sprint' | 'planning' | 'retro' | '1on1'
+const MEETING_TYPES = [
+  { value: "default",  label: "General Meeting" },
+  { value: "sprint",   label: "Sprint" },
+  { value: "planning", label: "Planning" },
+  { value: "retro",    label: "Retrospective" },
+  { value: "1on1",     label: "1:1" },
+];
+
+const MEETING_TYPE_HINTS: Record<string, string> = {
+  default:  "AI will extract general action items, decisions, and key discussion points.",
+  sprint:   "AI will focus on task assignments, story points, sprint goals, and blockers.",
+  planning: "AI will extract goals, timelines, owners, milestones, and key decisions.",
+  retro:    "AI will identify what went well, what didn't, and action items for improvement.",
+  "1on1":   "AI will focus on personal goals, blockers, feedback, and follow-up actions.",
+};
 
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (

@@ -70,6 +70,45 @@ export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardH
     loadNotifications();
   }, [loadNotifications]);
 
+  // Realtime 구독 — 새 알림 INSERT 시 뱃지 자동 업데이트
+  useEffect(() => {
+    const supabase = createClient();
+    let userId: string | null = null;
+
+    async function subscribe() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      userId = user.id;
+
+      const channel = supabase
+        .channel("notifications-realtime")
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "notifications",
+            filter: `user_id=eq.${userId}`,
+          },
+          (payload) => {
+            const newNotif = payload.new as Notification;
+            setNotifications((prev) => [newNotif, ...prev]);
+          }
+        )
+        .subscribe();
+
+      return channel;
+    }
+
+    const channelPromise = subscribe();
+
+    return () => {
+      channelPromise.then((channel) => {
+        if (channel) supabase.removeChannel(channel);
+      });
+    };
+  }, []);
+
   // 외부 클릭 시 드롭다운 닫기
   useEffect(() => {
     function handler(e: MouseEvent) {

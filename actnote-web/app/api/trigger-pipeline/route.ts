@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import { Inngest } from "inngest";
 import { createClient } from "@/lib/supabase/server";
+
+const inngest = new Inngest({ id: "actnote-web" });
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -13,14 +16,28 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { meeting_id } = body as { meeting_id: string };
+  const { meeting_id, workspace_id, audio_path } = body as {
+    meeting_id: string;
+    workspace_id: string;
+    audio_path: string;
+  };
 
-  if (!meeting_id) {
-    return NextResponse.json({ error: "meeting_id is required" }, { status: 400 });
+  if (!meeting_id || !workspace_id || !audio_path) {
+    return NextResponse.json(
+      { error: "meeting_id, workspace_id, audio_path are required" },
+      { status: 400 }
+    );
   }
 
-  // TODO: Inngest 이벤트 발송
-  // await inngest.send({ name: "meeting/process", data: { meeting_id } });
+  await inngest.send({
+    name: "meeting/process",
+    data: {
+      meeting_id,
+      user_id: user.id,
+      workspace_id,
+      audio_path,
+    },
+  });
 
   return NextResponse.json({ ok: true, meeting_id });
 }

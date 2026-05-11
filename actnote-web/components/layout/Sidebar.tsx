@@ -19,6 +19,7 @@ export function Sidebar() {
   const isHome = pathname.startsWith("/meetings");
   const isWorkspace = pathname.startsWith("/settings/workspace");
   const isPersonal = pathname.startsWith("/settings/personal");
+  const isIntegrations = pathname.startsWith("/settings/integrations");
 
   return (
     <aside className="flex h-screen w-[240px] shrink-0 flex-col border-r border-[#e2e8f0] bg-white">
@@ -78,6 +79,18 @@ export function Sidebar() {
           >
             <span>⚙️</span>
             Personal
+          </Link>
+          <Link
+            href="/settings/integrations"
+            className={cn(
+              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors",
+              isIntegrations
+                ? "bg-[#fff4f0] font-bold text-[#ff6b35]"
+                : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
+            )}
+          >
+            <span>🔗</span>
+            Integrations
           </Link>
         </div>
       </nav>
