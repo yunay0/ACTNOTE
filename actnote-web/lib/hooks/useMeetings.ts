@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
 import { createClient } from "@/lib/supabase/client";
 import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
@@ -26,6 +27,8 @@ function rowToMeeting(m: Record<string, unknown>): Meeting {
     action_items_count,
   };
 }
+
+export type DeleteMeetingResult = { ok: true } | { ok: false; error: string };
 
 export function useMeetings() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -81,14 +84,21 @@ export function useMeetings() {
     return () => clearInterval(interval);
   }, [workspaceId, hydrated, meetings, loadMeetings]);
 
-  const deleteMeeting = useCallback(async (id: string) => {
-    const supabase = createClient();
-    await (supabase as any)
-      .from("meetings")
-      .update({ deleted_at: new Date().toISOString() })
-      .eq("id", id);
-    setMeetings((prev) => prev.filter((m) => m.id !== id));
-  }, []);
+  const deleteMeeting = useCallback(
+    async (id: string): Promise<DeleteMeetingResult> => {
+      if (!workspaceId) {
+        return { ok: false, error: "Workspace not loaded yet." };
+      }
+      const supabase = createClient();
+      const result = await softDeleteMeetingRow(supabase, id, workspaceId);
+      if (!result.ok) {
+        return { ok: false, error: result.message };
+      }
+      setMeetings((prev) => prev.filter((m) => m.id !== id));
+      return { ok: true };
+    },
+    [workspaceId]
+  );
 
   const getMeeting = useCallback(
     (id: string): Meeting | undefined => meetings.find((m) => m.id === id),

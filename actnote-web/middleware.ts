@@ -19,10 +19,12 @@ export async function middleware(request: NextRequest) {
 
   const isAuthPage =
     pathname.startsWith("/login") || pathname.startsWith("/signup");
+  const isApiRoute = pathname.startsWith("/api/");
   const isPublicPage =
     pathname === "/" ||
     pathname.startsWith("/onboarding") ||
-    pathname.startsWith("/invite/");
+    pathname.startsWith("/invite/") ||
+    pathname.startsWith("/auth/");
 
   // Supabase 미설정 시 인증 체크 없이 통과 (개발/MVP 단계)
   if (!isSupabaseConfigured()) {
@@ -54,7 +56,7 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user && !isAuthPage && !isPublicPage) {
+  if (!user && !isAuthPage && !isPublicPage && !isApiRoute) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
