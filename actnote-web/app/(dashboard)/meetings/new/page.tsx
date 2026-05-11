@@ -209,7 +209,7 @@ export default function NewMeetingPage() {
         .eq("id", meetingId);
 
       // 4. Inngest 이벤트 발송 → 백엔드 파이프라인 트리거
-      await fetch("/api/trigger-pipeline", {
+      const triggerRes = await fetch("/api/trigger-pipeline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -218,6 +218,15 @@ export default function NewMeetingPage() {
           audio_path: audioPath,
         }),
       });
+      const triggerBody = (await triggerRes.json().catch(() => ({}))) as { error?: string };
+      if (!triggerRes.ok) {
+        setAlertMsg(
+          triggerBody.error ??
+            `Pipeline trigger failed (${triggerRes.status}). Check INNGEST_EVENT_KEY and Inngest app id.`
+        );
+        setLoading(false);
+        return;
+      }
 
       setLoading(false);
       setProcessingModal(true);
