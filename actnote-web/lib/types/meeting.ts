@@ -11,15 +11,22 @@ export type ChangeType = "ADD" | "UPDATE" | "DELETE" | "NOOP";
 
 export type ActionItemStatus = "open" | "done" | "cancelled";
 
+export type ApprovalStatus = "draft" | "ready" | "published";
+
 export interface Meeting {
   id: string;
   title: string;
   status: MeetingStatus;
+  approval_status: ApprovalStatus;
   created_at: string;
+  meeting_date?: string | null;
   summary?: string | null;
   audio_url?: string | null;
   filename?: string | null;
   workspace_id: string;
+  participants?: string[];
+  meeting_type?: string | null;
+  action_items_count?: number;
 }
 
 export interface Decision {

@@ -11,35 +11,43 @@ interface MeetingCardProps {
   onClick?: () => void;
 }
 
-const STATUS_STYLE: Record<string, { bg: string; text: string; label: string }> = {
-  analyzing: { bg: "bg-[#fff4f0]", text: "text-[#ff6b35]", label: "Analyzing" },
-  draft:     { bg: "bg-[#fff4f0]", text: "text-[#ff6b35]", label: "Draft" },
-  published: { bg: "bg-[#e3f2fd]", text: "text-[#2e5c8a]", label: "Published" },
-  error:     { bg: "bg-red-50",    text: "text-red-600",   label: "Error" },
+const STATUS_STYLE: Record<string, { bg: string; dot: string; text: string; label: string }> = {
+  analyzing: { bg: "bg-[#fff4f0]", dot: "bg-[#ff6b35] animate-pulse", text: "text-[#ff6b35]", label: "Analyzing" },
+  draft:     { bg: "bg-[#f0f4ff]", dot: "bg-[#2e5c8a]",               text: "text-[#2e5c8a]", label: "Draft" },
+  published: { bg: "bg-[#f0fdf4]", dot: "bg-green-500",               text: "text-green-700", label: "Published" },
+  error:     { bg: "bg-red-50",    dot: "bg-red-500",                  text: "text-red-600",   label: "Error" },
 };
 
-function getStatusKey(status: MeetingStatus): string {
-  if (isProcessing(status)) return "analyzing";
-  if (status === "ready") return "draft";
-  if (status === "published") return "published";
-  if (status === "error") return "error";
+function getStatusKey(meeting: Meeting): string {
+  if (isProcessing(meeting.status)) return "analyzing";
+  if (meeting.approval_status === "published") return "published";
+  if (meeting.status === "error") return "error";
   return "draft";
 }
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
+    month: "short", day: "numeric", year: "numeric",
   });
 }
+
+const MEETING_TYPE_LABELS: Record<string, string> = {
+  sprint_planning: "Sprint Planning",
+  sprint_review:   "Sprint Review",
+  retrospective:   "Retrospective",
+  design_review:   "Design Review",
+  planning:        "Planning",
+  one_on_one:      "1:1",
+  team_sync:       "Team Sync",
+  kickoff:         "Kickoff",
+  client_meeting:  "Client Meeting",
+  other:           "Other",
+};
 
 export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const statusKey = getStatusKey(meeting.status);
+  const statusKey = getStatusKey(meeting);
   const style = STATUS_STYLE[statusKey];
 
   useEffect(() => {
@@ -51,17 +59,19 @@ export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  const participants = meeting.participants ?? [];
+  const visibleParticipants = participants.slice(0, 3);
+  const extraCount = Math.max(0, participants.length - 3);
+  const actionCount = meeting.action_items_count ?? 0;
+  const dateStr = formatDate(meeting.meeting_date ?? meeting.created_at);
+
   return (
     <div
-      className="group relative flex cursor-pointer flex-col gap-2 rounded-xl border border-[#e2e8f0] bg-white p-[25px] transition-all hover:border-[#2e5c8a]/30 hover:shadow-md"
+      className="group relative flex cursor-pointer flex-col rounded-xl border border-[#e2e8f0] bg-white p-5 transition-all hover:border-[#2e5c8a]/30 hover:shadow-md"
       onClick={onClick}
     >
       {/* 3-dot menu */}
-      <div
-        ref={menuRef}
-        className="absolute right-3 top-3"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div ref={menuRef} className="absolute right-3 top-3" onClick={(e) => e.stopPropagation()}>
         <button
           onClick={() => setMenuOpen((v) => !v)}
           className="flex h-7 w-7 items-center justify-center rounded-md text-[#94a3b8] opacity-0 group-hover:opacity-100 hover:bg-[#f8fafc] hover:text-[#64748b] transition-all"
@@ -74,38 +84,65 @@ export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
               onClick={() => { setMenuOpen(false); onDelete?.(meeting.id); }}
               className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
             >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
+              <Trash2 className="h-3.5 w-3.5" /> Delete
             </button>
           </div>
         )}
       </div>
 
-      {/* Status badge */}
-      <div className="flex items-start">
-        <span className={`rounded-[6px] px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.5px] ${style.bg} ${style.text}`}>
+      {/* 상단: 상태 배지 + 회의 유형 */}
+      <div className="flex items-center gap-2 mb-3">
+        <span className={`flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.5px] ${style.bg} ${style.text}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
           {style.label}
         </span>
+        {meeting.meeting_type && MEETING_TYPE_LABELS[meeting.meeting_type] && (
+          <span className="rounded-[6px] bg-[#f8fafc] border border-[#e2e8f0] px-2 py-0.5 text-[11px] text-[#64748b] font-medium">
+            {MEETING_TYPE_LABELS[meeting.meeting_type]}
+          </span>
+        )}
       </div>
 
-      {/* Title */}
-      <p className="pt-2 text-[16px] font-bold leading-snug text-[#0a2540] line-clamp-2">
+      {/* 제목 */}
+      <p className="text-[15px] font-bold leading-snug text-[#0a2540] line-clamp-2 mb-1">
         {meeting.title}
       </p>
 
-      {/* Date */}
-      <p className="pb-2 text-[12px] text-[#64748b]">
-        {formatDate(meeting.created_at)}
-      </p>
+      {/* 날짜 */}
+      <p className="text-[12px] text-[#94a3b8] mb-4">{dateStr}</p>
 
-      {/* Divider + meta */}
-      <div className="border-t border-[#f1f5f9] pt-4 flex items-center gap-4">
-        <span className="flex items-center gap-1.5 text-[12px] text-[#64748b]">
-          ✅ <span>0 items</span>
+      {/* 구분선 + 메타 */}
+      <div className="border-t border-[#f1f5f9] pt-3 flex items-center gap-3">
+        {/* 액션 아이템 개수 */}
+        <span className="flex items-center gap-1 text-[12px] text-[#64748b]">
+          <span className="text-[11px]">✅</span>
+          <span>{actionCount} item{actionCount !== 1 ? "s" : ""}</span>
         </span>
-        <span className="flex items-center gap-1.5 text-[12px] text-[#64748b]">
-          👥 <span>0 people</span>
-        </span>
+
+        {/* 참여자 */}
+        {participants.length > 0 ? (
+          <div className="flex items-center gap-1 ml-1">
+            {visibleParticipants.map((p, i) => (
+              <div
+                key={i}
+                title={p}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#e3f2fd] text-[10px] font-bold text-[#2e5c8a] border border-white -ml-1 first:ml-0"
+              >
+                {p[0]?.toUpperCase() ?? "?"}
+              </div>
+            ))}
+            {extraCount > 0 && (
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#f1f5f9] text-[10px] font-bold text-[#64748b] border border-white -ml-1">
+                +{extraCount}
+              </div>
+            )}
+          </div>
+        ) : (
+          <span className="flex items-center gap-1 text-[12px] text-[#94a3b8]">
+            <span className="text-[11px]">👥</span>
+            <span>No participants</span>
+          </span>
+        )}
       </div>
     </div>
   );

@@ -6,15 +6,24 @@ import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 
 function rowToMeeting(m: Record<string, unknown>): Meeting {
+  // action_items는 Supabase nested select count: [{ count: N }] 형태로 반환됨
+  const countArr = m.action_items as { count: number }[] | null;
+  const action_items_count = countArr?.[0]?.count ?? 0;
+
   return {
     id: m.id as string,
     title: (m.title as string) || "Untitled Meeting",
     status: m.status as Meeting["status"],
+    approval_status: (m.approval_status as Meeting["approval_status"]) ?? "draft",
     created_at: m.created_at as string,
+    meeting_date: (m.meeting_date as string | null) ?? null,
     summary: (m.summary as string | null) ?? null,
     audio_url: (m.audio_file_url as string | null) ?? null,
     filename: (m.audio_file_url as string | null)?.split("/").pop() ?? null,
     workspace_id: m.workspace_id as string,
+    participants: (m.participants as string[] | null) ?? [],
+    meeting_type: (m.meeting_type as string | null) ?? null,
+    action_items_count,
   };
 }
 
@@ -27,7 +36,9 @@ export function useMeetings() {
     const supabase = createClient();
     const { data } = await (supabase as any)
       .from("meetings")
-      .select("id, title, status, created_at, summary, audio_file_url, workspace_id")
+      .select(
+        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, action_items(count)"
+      )
       .eq("workspace_id", wsId)
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
@@ -42,15 +53,19 @@ export function useMeetings() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data: ws } = await (supabase as any)
-        .from("workspaces")
-        .select("id")
-        .eq("owner_id", user.id)
+      // owner이거나 멤버인 워크스페이스 가져오기
+      const { data: memRow } = await (supabase as any)
+        .from("workspace_members")
+        .select("workspace_id")
+        .eq("user_id", user.id)
+        .limit(1)
         .single();
 
-      if (!ws) return;
-      setWorkspaceId(ws.id as string);
-      await loadMeetings(ws.id as string);
+      const wsId = (memRow?.workspace_id as string) ?? null;
+      if (!wsId) return;
+
+      setWorkspaceId(wsId);
+      await loadMeetings(wsId);
       setHydrated(true);
     }
 
