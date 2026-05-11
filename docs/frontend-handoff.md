@@ -59,7 +59,7 @@
 | `DB_PUSH_FAILED`   | DB 저장 실패 (case 3) | 네트워크 확인·재시도 |
 | `PIPELINE_INTERNAL`| 분류 보강 전 폴백 | 잠시 후 재시도 |
 
-`{SUPPORT_EMAIL}` 은 **고객센터 메일 확정 후** `NEXT_PUBLIC_SUPPORT_EMAIL`(또는 제품 정책에 맞는 단일 소스)로 주입. 기획 초안 도메인 `support@yourdomain.com` 은 플레이스홀더.
+`{SUPPORT_EMAIL}` 은 `NEXT_PUBLIC_SUPPORT_EMAIL`(또는 제품 정책에 맞는 단일 소스)로 주입한다. **기획 확정 주소:** `actnote.support@gmail.com` (로컬/배포 `.env`에 동일 값 설정 권장).
 
 파싱 예시:
 ```ts
@@ -231,7 +231,7 @@ await supabase.rpc("set_member_role", {                          // owner only
 | `NEXT_PUBLIC_SUPABASE_URL` | ✅ | Supabase 프로젝트 URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | anon 키 (RLS 통과용) |
 | `NEXT_PUBLIC_APP_URL` | ✅ | OAuth 콜백 / 메일 푸터 (`https://actnote.app`) |
-| `NEXT_PUBLIC_SUPPORT_EMAIL` | ✅ | 에러(case 6) 팝업·알림·문의 링크에 표시할 고객센터 메일 (미확정 시 플레이스홀더) |
+| `NEXT_PUBLIC_SUPPORT_EMAIL` | ✅ | 에러(case 6) 팝업·알림·문의 링크 — 기획 확정: `actnote.support@gmail.com` |
 | `INNGEST_EVENT_KEY` | ⛔ | Inngest 이벤트 발송 (Route Handler 전용) |
 | `INNGEST_SIGNING_KEY` | ⛔ | Inngest 서명 검증 |
 | `NOTION_CLIENT_ID` | ⛔ | Notion OAuth (§ 9) |
