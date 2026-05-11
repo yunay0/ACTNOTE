@@ -258,7 +258,11 @@ async def process_meeting(ctx: inngest.Context) -> dict:
             meeting_id,
         )
     except Exception as e:
-        err_msg = str(e)
+        from src.error_classifier import format_error_message
+        err_msg = format_error_message(e)
+        ctx.logger.error(
+            "meeting/process 실패: meeting_id=%s error=%s", meeting_id, err_msg,
+        )
         await ctx.step.run(
             "update-status-error",
             _update_meeting_error,
@@ -487,4 +491,28 @@ async def send_email_handler(ctx: inngest.Context) -> dict:
         "notification/email_send 완료: id=%s to=%s subject=%r",
         result.get("id"), to_list, subject,
     )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 주기 작업: workspace_id NULL orphan meetings 정리 (기획 2026-05)
+# ---------------------------------------------------------------------------
+
+@client.create_function(
+    fn_id="cleanup-orphan-meetings",
+    trigger=inngest.TriggerCron(cron="0 */6 * * *"),
+    retries=2,
+)
+async def cleanup_orphan_meetings_scheduled(ctx: inngest.Context) -> dict:
+    """6시간마다 meetings.workspace_id IS NULL 행 및 Storage 녹음(best-effort) 제거.
+
+    12시간으로 바꾸려면 cron 을 ``0 */12 * * *`` 로 변경.
+    """
+    from src.workspace_cleanup import purge_meetings_without_workspace
+
+    result: dict = await ctx.step.run(
+        "purge-meetings-null-workspace",
+        purge_meetings_without_workspace,
+    )
+    ctx.logger.info("cleanup-orphan-meetings 완료: %s", result)
     return result

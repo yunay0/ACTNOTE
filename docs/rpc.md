@@ -291,6 +291,34 @@ if (error) {
 
 ---
 
+## 9. `remove_workspace_member(p_workspace_id, p_target_user_id)` *(WS-004, 메인2)*
+
+기존 멤버를 워크스페이스에서 삭제(강퇴). **owner만**. 마이그레이션 `018_remove_member_rpc.sql` 후 사용 가능.
+
+```ts
+const { error } = await supabase.rpc("remove_workspace_member", {
+  p_workspace_id: workspaceId,
+  p_target_user_id: targetUserId,
+});
+if (error) {
+  if (error.code === "42501") /* owner 아님 또는 비로그인 */;
+  switch (error.message) {
+    case "cannot_remove_self":            /* 자기 자신 — 별도 leave 흐름 사용 */ break;
+    case "last_owner_cannot_be_removed":  /* 마지막 owner */                      break;
+    case "member_not_found":              /* 이미 삭제됨 등 */                    break;
+  }
+}
+```
+
+**규칙:**
+- 호출자는 워크스페이스 owner 여야 함.
+- 자기 자신은 이 RPC 로 삭제 불가 (`cannot_remove_self`, `P0001`). "워크스페이스 떠나기" 플로우는 별 과제.
+- 마지막 owner 는 삭제 불가 (`last_owner_cannot_be_removed`, `P0001`).
+- 대상 사용자에게 같은 워크스페이스로 발급된 **pending 초대도 함께 `revoked`** 처리 — 다시 초대하려면 새 토큰을 발급.
+- 회의(`meetings`) 등은 `workspace_id` 로 직접 묶여 있어 멤버 삭제만으로는 제거되지 않습니다. 본인 작성 회의의 처리 정책은 별 합의 사항.
+
+---
+
 ## 워크스페이스 초대 — 프론트 흐름 요약
 
 ```

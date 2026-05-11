@@ -28,6 +28,10 @@
 3. 마이그레이션 파일 직접 수정 (A가 작성). 새 변경은 새 번호 파일로.
 4. 실제 회의 transcript를 디자인 mockup에 그대로 사용 (개인정보)
 5. 새 Inngest 이벤트/RPC 추가 시 docs/events.md / docs/rpc.md 갱신 누락
+6. **사용자에게 노출되는 에러/안내 문구는 백엔드가 임의 확정 금지**.
+   - 워커·API 가 반환하는 `error_message` 는 분류 코드(`[code:...]`)와 디버그 원문 위주.
+   - 사용자 화면 카피(예: "서버에 일시적인 문제가 있어요" / "네트워크 확인 후 다시 시도")는
+     기획팀과 합의된 문구만 프론트에 노출. 매핑 표가 갱신되면 docs/frontend-handoff.md 도 함께 갱신.
 
 ## 코드 작성 시 우선순위
 
@@ -100,8 +104,11 @@ actnote-web/                 ← 프론트엔드 (Next.js, 동일 레포 내 신
 | NOTI-001          | `notify_action_assigned` + `email_notifier.py` + `send-email` 워커 | —      |
 | SEC-006 (초대)      | RPC 3종 (`create_invite/accept_invite/revoke_invite`)             | `016`  |
 | SEC-006 (역할)      | `set_member_role` RPC + 002 트리거 정합성 보정                           | `017`  |
+| WS-004 (강퇴)       | `remove_workspace_member` RPC                                    | `018`  |
 | 재분석 멱등성           | `_cleanup_for_reanalysis()` in `pipeline.py`                     | —      |
 | 워커 에러 상태          | `_run_pipeline_full` try/except + analysis_failed 알림             | —      |
+| 워커 에러 분류          | `src/error_classifier.py` → `meetings.error_message` `[code:...]` prefix | —      |
+| 고아 회의 정리          | `cleanup-orphan-meetings` Inngest cron (6h) + `src/workspace_cleanup.py` | —      |
 
 
 새 모듈 import 위치 한 줄 요약 (메인2 작업자용):
