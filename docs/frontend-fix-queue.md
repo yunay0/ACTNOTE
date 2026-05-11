@@ -1,4 +1,4 @@
-# 프론트 수정 큐 (Cursor / 구현자용)
+# 프론트 수정 큐 (Cursor 구현용)
 
 **목적:** 기획 문서(역할 단순화·owner 전용 페이지 등)는 **제외**. 아래는 현재 코드와 도메인/핸드오프 불일치로 **바로 고칠 수 있는 작업**만 정리한다.
 
@@ -18,17 +18,17 @@
 ### 2. 파이프라인 트리거 응답 무시 (`meetings/new/page.tsx`)
 
 - **문제:** `fetch("/api/trigger-pipeline", …)` 후 **HTTP 상태·body를 검사하지 않음**. 실패해도 Processing/Done 모달·타이머만 진행된다.
-- **조치:** `res.ok` 확인, 실패 시 `response.json().error` 등 사용자 메시지(토스트). 성공 시 **`/meetings/{meetingId}`로 이동**하고 실제 `status` 폴링에 맡긴다. 고정 15초 모달은 제거하거나 “분석이 시작되었습니다” 정도로만 축소.
+- **조치:** `res.ok` 확인, 실패 시 `response.json().error` 등 사용자 메시지(토스트). 성공 시 `**/meetings/{meetingId}`로 이동**하고 실제 `status` 폴링에 맡긴다. 고정 15초 모달은 제거하거나 “분석이 시작되었습니다” 정도로만 축소.
 
 ### 3. 멤버 제거 (`actnote-web/app/(dashboard)/settings/workspace/page.tsx`)
 
 - **문제:** `workspace_members`에 대해 클라이언트 `.delete()` 직접 호출.
-- **조치:** `docs/rpc.md`의 **`remove_workspace_member`** RPC로 교체. 에러 메시지는 RPC 반환값에 맞게 표시.
+- **조치:** `docs/rpc.md`의 `**remove_workspace_member`** RPC로 교체. 에러 메시지는 RPC 반환값에 맞게 표시.
 
 ### 4. 트리거 API 서버 검증 (`actnote-web/app/api/trigger-pipeline/route.ts`)
 
 - **문제:** body의 `meeting_id` / `workspace_id`가 요청자와 일치하는지 DB에서 확인하지 않음.
-- **조치:** `createServerClient`로 `meetings` row를 `id`(+ 필요 시 `workspace_id`)로 조회한 뒤, **`created_by === user.id`**(또는 RLS와 합의된 규칙)일 때만 `inngest.send`. 불일치 시 403/404.
+- **조치:** `createServerClient`로 `meetings` row를 `id`(+ 필요 시 `workspace_id`)로 조회한 뒤, `**created_by === user.id`**(또는 RLS와 합의된 규칙)일 때만 `inngest.send`. 불일치 시 403/404.
 
 ---
 
@@ -36,7 +36,7 @@
 
 ### 5. 분석 실패 + case 6 (`FILE_RETRIEVAL_FAILED`)
 
-- **문제:** 회의 상세 `meetings` select에 **`error_message` 없음**. `ProcessingProgress`는 `error`일 때 한국어 고정 문구만 표시하고 **`[code:…]` 파싱·기획 카피·지원 메일** 없음.
+- **문제:** 회의 상세 `meetings` select에 `**error_message` 없음**. `ProcessingProgress`는 `error`일 때 한국어 고정 문구만 표시하고 `**[code:…]` 파싱·기획 카피·지원 메일** 없음.
 - **조치:**
   - 상세 fetch에 `error_message` 포함.
   - `frontend-handoff.md` 표에 맞춰 `error_message`에서 `^\[code:([A-Z_]+)\]` 파싱.
@@ -45,7 +45,7 @@
 
 ### 6. 액션 아이템 현재 유효분만 (`meetings/[id]/page.tsx`)
 
-- **문제:** `action_items` 조회 시 **`valid_until IS NULL`** 필터 없음 → bi-temporal 이력이 같이 나올 수 있음.
+- **문제:** `action_items` 조회 시 `**valid_until IS NULL`** 필터 없음 → bi-temporal 이력이 같이 나올 수 있음.
 - **조치:** `.is("valid_until", null)` (Supabase JS 문법에 맞게) 추가.
 
 ### 7. `alert()` 제거 (`meetings/[id]/page.tsx` 등)
@@ -55,7 +55,7 @@
 
 ### 8. Notion 연결 링크 (`meetings/[id]/page.tsx` — INTEG-005 모달)
 
-- **문제:** “Connect”가 `window.open("/settings/workspace", …)` 일 수 있음. Notion 연동 화면은 **`/settings/integrations`**.
+- **문제:** “Connect”가 `window.open("/settings/workspace", …)` 일 수 있음. Notion 연동 화면은 `**/settings/integrations`**.
 - **조치:** 실제 라우트 확인 후 올바른 경로로 수정.
 
 ---
@@ -76,12 +76,12 @@
 
 ## 완료 체크리스트 (PR 전)
 
-- [ ] 비-owner 멤버로 로그인 → 새 회의 생성·업로드·트리거까지 성공
-- [ ] `INNGEST_EVENT_KEY` 없을 때 트리거 실패가 UI에 드러남
-- [ ] 멤버 제거가 RPC로 동작하고 RLS와 충돌 없음
-- [ ] 의도적으로 `FILE_RETRIEVAL_FAILED` 저장 시 지원 메일 안내 표시
-- [ ] 액션 리스트에 만료된 row가 섞이지 않음
-- [ ] 발행 실패 시 `alert` 없음
+- 비-owner 멤버로 로그인 → 새 회의 생성·업로드·트리거까지 성공
+- `INNGEST_EVENT_KEY` 없을 때 트리거 실패가 UI에 드러남
+- 멤버 제거가 RPC로 동작하고 RLS와 충돌 없음
+- 의도적으로 `FILE_RETRIEVAL_FAILED` 저장 시 지원 메일 안내 표시
+- 액션 리스트에 만료된 row가 섞이지 않음
+- 발행 실패 시 `alert` 없음
 
 ---
 
