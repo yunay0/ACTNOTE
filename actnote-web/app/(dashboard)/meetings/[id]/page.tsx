@@ -43,6 +43,38 @@ interface Member {
   email: string;
 }
 
+/** referenced_documents JSONB 는 배열이 아닌 문자열(JSON 문자열)·객체 등으로 올 수 있음 */
+function normalizeReferencedDocuments(raw: unknown): string[] | null {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) {
+    const out = raw.filter((x): x is string => typeof x === "string");
+    return out.length ? out : null;
+  }
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return null;
+    if (s.startsWith("[")) {
+      try {
+        const p = JSON.parse(s) as unknown;
+        if (Array.isArray(p)) {
+          const out = p.filter((x): x is string => typeof x === "string");
+          return out.length ? out : null;
+        }
+      } catch {
+        /* leave as single-line label */
+      }
+    }
+    return [s];
+  }
+  if (typeof raw === "object") {
+    const vals = Object.values(raw as Record<string, unknown>).filter(
+      (x): x is string => typeof x === "string"
+    );
+    return vals.length ? vals : null;
+  }
+  return null;
+}
+
 export default function MeetingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -85,7 +117,11 @@ export default function MeetingDetailPage() {
       .single();
 
     if (error || !m) { setNotFound(true); setLoading(false); return; }
-    setMeeting(m as MeetingRow);
+    const row = m as Record<string, unknown>;
+    setMeeting({
+      ...(m as MeetingRow),
+      referenced_documents: normalizeReferencedDocuments(row.referenced_documents),
+    });
 
     const { data: items } = await (supabase as any)
       .from("action_items")
@@ -217,6 +253,26 @@ export default function MeetingDetailPage() {
     setNotionWarningModal(false);
 
     const supabase = createClient();
+
+    // PUB-001: publish_meeting 은 approval_status === 'ready' 일 때만 허용됨.
+    // draft → ready 전환은 set_meeting_ready RPC 가 담당한다.
+    if (meeting.approval_status === "draft") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: readyErr } = await (supabase as any).rpc("set_meeting_ready", {
+        p_meeting_id: meeting.id,
+      });
+      if (readyErr) {
+        const msg =
+          readyErr.code === "42501"
+            ? "You don't have permission to publish. Ask an Owner."
+            : readyErr.message;
+        alert(`Failed to prepare publish: ${msg}`);
+        setPublishing(false);
+        return;
+      }
+      setMeeting((prev) => (prev ? { ...prev, approval_status: "ready" } : prev));
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any).rpc("publish_meeting", {
       p_meeting_id: meeting.id,
@@ -598,7 +654,8 @@ export default function MeetingDetailPage() {
               </Section>
 
               {/* 관련 문서 (DRAFT-006) */}
-              {meeting.referenced_documents && meeting.referenced_documents.length > 0 && (
+              {Array.isArray(meeting.referenced_documents) &&
+                meeting.referenced_documents.length > 0 && (
                 <Section icon={<FileText className="h-4 w-4 text-[#2e5c8a]" />} title="Referenced Documents">
                   <div className="flex flex-wrap gap-2">
                     {meeting.referenced_documents.map((doc, i) => (
