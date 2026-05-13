@@ -5,6 +5,9 @@ import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 
+/** 다음 버전에서 연동 설정 노출 시 true 로 변경 */
+const SHOW_INTEGRATIONS_IN_SIDEBAR = false;
+
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
@@ -19,7 +22,6 @@ export function Sidebar() {
   const isHome = pathname.startsWith("/meetings");
   const isWorkspace = pathname.startsWith("/settings/workspace");
   const isPersonal = pathname.startsWith("/settings/personal");
-  const isIntegrations = pathname.startsWith("/settings/integrations");
 
   return (
     <aside className="flex h-screen w-[240px] shrink-0 flex-col border-r border-[#e2e8f0] bg-white">
@@ -80,11 +82,12 @@ export function Sidebar() {
             <span>⚙️</span>
             Personal
           </Link>
+          {SHOW_INTEGRATIONS_IN_SIDEBAR && (
           <Link
             href="/settings/integrations"
             className={cn(
               "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors",
-              isIntegrations
+              pathname.startsWith("/settings/integrations")
                 ? "bg-[#fff4f0] font-bold text-[#ff6b35]"
                 : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
             )}
@@ -92,6 +95,7 @@ export function Sidebar() {
             <span>🔗</span>
             Integrations
           </Link>
+          )}
         </div>
       </nav>
 
