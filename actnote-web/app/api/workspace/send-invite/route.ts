@@ -1,15 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Inngest } from "inngest";
 import { createClient } from "@/lib/supabase/server";
+import { ensureRepoRootEnvMerged } from "@/lib/server/repo-env";
+import {
+  buildInviteEmailParts,
+  resolvePublicAppUrl,
+  sendViaResend,
+} from "@/lib/server/invite-email";
 
-const inngest = new Inngest({ id: "actnote" });
+export const runtime = "nodejs";
+
+type InviteRow = {
+  id: string;
+  workspace_id: string;
+  token: string;
+  invited_email: string;
+};
 
 export async function POST(req: NextRequest) {
-  const { invite } = await req.json();
-  if (!invite) return NextResponse.json({ error: "invite required" }, { status: 400 });
+  ensureRepoRootEnvMerged();
+
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const invite = (body as { invite?: InviteRow }).invite;
+  if (!invite?.token || !invite.workspace_id || !invite.invited_email) {
+    return NextResponse.json({ error: "invite with token, workspace_id, invited_email required" }, { status: 400 });
+  }
 
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -20,22 +46,69 @@ export async function POST(req: NextRequest) {
 
   const inviterName: string = inviter?.name || (inviter?.email?.split("@")[0] ?? "A teammate");
   const workspaceName: string = ws?.name ?? "workspace";
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  const inviteLink = `${appUrl}/invite/${invite.token}`;
-  const subject = `${inviterName} invited you to ${workspaceName} on ACTNOTE`;
 
-  await inngest.send({
-    name: "notification/email_send",
-    data: {
-      to: invite.invited_email,
-      subject,
-      body_html: `<p>You've been invited to join <b>${workspaceName}</b> on ACTNOTE.</p>
-                  <p><a href="${inviteLink}">Accept Invitation</a></p>
-                  <p style="color:#94a3b8;font-size:12px">Invited by ${inviterName}. This link expires in 7 days.</p>`,
-      body_text: `${subject}\n\nAccept here:\n${inviteLink}\n\nInvited by ${inviterName}. This link expires in 7 days.`,
-      ref: { kind: "workspace_invite", workspace_id: invite.workspace_id, invite_id: invite.id },
-    },
+  const appUrl = resolvePublicAppUrl(req);
+  if (!appUrl) {
+    return NextResponse.json(
+      {
+        error:
+          "Invite link host is unknown: set NEXT_PUBLIC_APP_URL in env or ensure Host / X-Forwarded-Host headers are present.",
+      },
+      { status: 503 }
+    );
+  }
+
+  const inviteLink = `${appUrl}/invite/${invite.token}`;
+  const mail = buildInviteEmailParts({
+    inviteLink,
+    workspaceName,
+    inviterName,
   });
 
-  return NextResponse.json({ ok: true });
+  const resendKey = process.env.RESEND_API_KEY?.trim();
+  if (resendKey) {
+    const out = await sendViaResend(invite.invited_email, mail);
+    if (!out.ok) {
+      return NextResponse.json(
+        { error: `Email delivery failed (Resend): ${out.message}` },
+        { status: out.status >= 400 && out.status < 600 ? out.status : 502 }
+      );
+    }
+    return NextResponse.json({ ok: true, channel: "resend", id: out.id });
+  }
+
+  const eventKey = process.env.INNGEST_EVENT_KEY?.trim();
+  if (!eventKey) {
+    return NextResponse.json(
+      {
+        error:
+          "Neither RESEND_API_KEY nor INNGEST_EVENT_KEY is configured. Add RESEND_API_KEY (and EMAIL_FROM) to send mail from Next.js, or INNGEST_EVENT_KEY plus worker RESEND_API_KEY.",
+      },
+      { status: 503 }
+    );
+  }
+
+  const inngest = new Inngest({ id: "actnote", eventKey });
+
+  try {
+    await inngest.send({
+      name: "notification/email_send",
+      data: {
+        to: invite.invited_email,
+        subject: mail.subject,
+        body_html: mail.html,
+        body_text: mail.text,
+        ref: {
+          kind: "workspace_invite",
+          workspace_id: invite.workspace_id,
+          invite_id: invite.id,
+        },
+      },
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ error: `Inngest send failed: ${message}` }, { status: 502 });
+  }
+
+  return NextResponse.json({ ok: true, channel: "inngest" });
 }

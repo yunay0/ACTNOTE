@@ -80,7 +80,9 @@ def _notify_complete(meeting_id: str, workspace_id: str) -> dict:
         from src.storage import create_supabase_client_from_env
         from src.notifications import notify_action_assigned, notify_analysis_complete
         sb = create_supabase_client_from_env()
-        out["complete"] = notify_analysis_complete(meeting_id, workspace_id, sb)
+        out["complete"] = notify_analysis_complete(
+            meeting_id, workspace_id, sb, inngest_client=client,
+        )
         # B-3-2: 담당자 매칭된 액션은 별도 알림 + 메일
         out["assigned"] = notify_action_assigned(
             meeting_id, workspace_id, sb, inngest_client=client,
@@ -96,7 +98,7 @@ def _notify_failed(meeting_id: str, workspace_id: str, error_message: str) -> in
         from src.storage import create_supabase_client_from_env
         from src.notifications import notify_analysis_failed
         sb = create_supabase_client_from_env()
-        return notify_analysis_failed(meeting_id, workspace_id, error_message, sb)
+        return notify_analysis_failed(meeting_id, workspace_id, error_message, sb, inngest_client=client)
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("실패 알림 생성 실패 (무시): %s", e)

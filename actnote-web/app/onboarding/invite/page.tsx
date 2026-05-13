@@ -109,14 +109,24 @@ export default function OnboardingInvitePage() {
           return;
         }
 
-        await fetch("/api/workspace/send-invite", {
+        const sendRes = await fetch("/api/workspace/send-invite", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ invite }),
-        }).catch(() => null);
+        });
+        const sendBody = (await sendRes.json().catch(() => ({}))) as { error?: string };
+        if (!sendRes.ok) {
+          setError(
+            sendBody.error ??
+              `Failed to send invitation email to ${email} (${sendRes.status}).`
+          );
+          setLoading(false);
+          return;
+        }
       }
 
       router.push("/meetings");
+      setLoading(false);
     } catch {
       setError("Something went wrong. Please try again.");
       setLoading(false);

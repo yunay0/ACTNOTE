@@ -20,6 +20,7 @@ CODE_FILE_RETRIEVAL_FAILED: Final = "FILE_RETRIEVAL_FAILED"
 CODE_DOWNLOAD_FAILED: Final = "DOWNLOAD_FAILED"
 CODE_MODEL_API_FAILED: Final = "MODEL_API_FAILED"
 CODE_DB_PUSH_FAILED: Final = "DB_PUSH_FAILED"
+CODE_NO_AUDIO_OR_SILENT: Final = "NO_AUDIO_OR_SILENT"
 CODE_PIPELINE_INTERNAL: Final = "PIPELINE_INTERNAL"
 
 
@@ -89,7 +90,6 @@ _DOWNLOAD_HINTS = (
     "could not decode",
     "decoder",
     "ffmpeg",
-    "audio",
     "wav",
     "mp3",
     "m4a",
@@ -102,11 +102,17 @@ _DOWNLOAD_HINTS = (
     "download",
 )
 
+_NO_AUDIO_HINTS = (
+    "no discernible audio",
+)
+
 
 def classify_pipeline_error(exc: BaseException) -> str:
     """예외 메시지 키워드로 카테고리 코드 추정. 모르면 ``PIPELINE_INTERNAL``."""
     msg = (str(exc) or exc.__class__.__name__).lower()
 
+    if any(h in msg for h in _NO_AUDIO_HINTS):
+        return CODE_NO_AUDIO_OR_SILENT
     if any(h in msg for h in _FILE_RETRIEVAL_HINTS):
         return CODE_FILE_RETRIEVAL_FAILED
     if any(h in msg for h in _MODEL_API_HINTS):

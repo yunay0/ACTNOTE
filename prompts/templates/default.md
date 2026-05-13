@@ -16,6 +16,12 @@ Confidence (0.0-1.0): how certain this is a real action item.
 Title: max 50 chars, English only
 Summary: 3-5 sentences
 
+[Decisions — required JSON array]
+Fill "decisions" with every explicit group agreement, approved choice, or resolved question (one short English sentence each).
+Examples: agreed deadlines, chosen approach, scope approval.
+If the transcript contains no clear decisions, output [].
+Never omit the "decisions" key; never use null.
+
 [Atomic Decomposition 원칙]
 액션 아이템 추출 시 반드시 다음 5가지 원자 사실로 분해하세요:
 - content: 무엇을 할 것인지 (동사+목적어 형태로 명확하게)

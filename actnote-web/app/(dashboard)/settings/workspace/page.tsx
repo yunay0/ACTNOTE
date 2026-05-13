@@ -235,12 +235,18 @@ export default function WorkspaceSettingsPage() {
       return;
     }
 
-    // Notify send-invite Route Handler (optional)
-    await fetch("/api/workspace/send-invite", {
+    const sendRes = await fetch("/api/workspace/send-invite", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ invite }),
-    }).catch(() => null);
+    });
+    const sendBody = (await sendRes.json().catch(() => ({}))) as { error?: string };
+    if (!sendRes.ok) {
+      setRoleError(
+        sendBody.error ?? `Failed to send invite email (${sendRes.status}).`
+      );
+      return;
+    }
 
     setInviteSent(true);
     setInviteEmail("");

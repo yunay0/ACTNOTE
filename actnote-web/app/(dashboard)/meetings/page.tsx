@@ -24,7 +24,8 @@ const PAGE_SIZE = 10;
 
 function filterMeetings(meetings: Meeting[], tab: Tab): Meeting[] {
   switch (tab) {
-    case "analyzing": return meetings.filter((m) => isProcessing(m.status));
+    case "analyzing":
+      return meetings.filter((m) => isProcessing(m.status) || m.status === "error");
     case "drafts":    return meetings.filter((m) => m.status === "ready" && m.approval_status !== "published");
     case "published": return meetings.filter((m) => m.approval_status === "published");
     default:          return meetings;
@@ -41,12 +42,14 @@ function sortMeetings(meetings: Meeting[], order: SortOrder): Meeting[] {
 
 export default function MeetingsPage() {
   const router = useRouter();
-  const { meetings, deleteMeeting, hydrated } = useMeetings();
+  const { meetings, deleteMeeting, hydrated, reloadMeetings } = useMeetings();
 
   const [activeTab, setActiveTab] = useState<Tab>("all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [page, setPage] = useState(1);
   const [deleteBanner, setDeleteBanner] = useState<string | null>(null);
+  const [retryBanner, setRetryBanner] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
 
   async function handleDeleteMeeting(id: string) {
     setDeleteBanner(null);
@@ -54,6 +57,25 @@ export default function MeetingsPage() {
     if (!r.ok) {
       setDeleteBanner(r.error);
     }
+  }
+
+  async function handleRetryMeeting(id: string) {
+    const m = meetings.find((x) => x.id === id);
+    if (!m) return;
+    setRetryBanner(null);
+    setRetryingId(id);
+    const { retryMeetingPipeline } = await import("@/lib/meetings/retry-pipeline");
+    const r = await retryMeetingPipeline({
+      id: m.id,
+      workspace_id: m.workspace_id,
+      audio_url: m.audio_url,
+    });
+    setRetryingId(null);
+    if (!r.ok) {
+      setRetryBanner(r.error);
+      return;
+    }
+    await reloadMeetings();
   }
 
   // 탭 변경 시 페이지 리셋
@@ -79,7 +101,7 @@ export default function MeetingsPage() {
   // 탭별 카운트
   const counts: Record<Tab, number> = useMemo(() => ({
     all:       meetings.length,
-    analyzing: meetings.filter((m) => isProcessing(m.status)).length,
+    analyzing: meetings.filter((m) => isProcessing(m.status) || m.status === "error").length,
     drafts:    meetings.filter((m) => m.status === "ready" && m.approval_status !== "published").length,
     published: meetings.filter((m) => m.approval_status === "published").length,
   }), [meetings]);
@@ -96,6 +118,18 @@ export default function MeetingsPage() {
               type="button"
               onClick={() => setDeleteBanner(null)}
               className="shrink-0 font-semibold text-red-900 hover:underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+        {retryBanner && (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex justify-between gap-4 items-start">
+            <span>{retryBanner}</span>
+            <button
+              type="button"
+              onClick={() => setRetryBanner(null)}
+              className="shrink-0 font-semibold text-amber-950 hover:underline"
             >
               Dismiss
             </button>
@@ -181,6 +215,8 @@ export default function MeetingsPage() {
                   key={meeting.id}
                   meeting={meeting}
                   onDelete={handleDeleteMeeting}
+                  onRetry={handleRetryMeeting}
+                  retrying={retryingId === meeting.id}
                   onClick={() => router.push(`/meetings/${meeting.id}`)}
                 />
               ))}

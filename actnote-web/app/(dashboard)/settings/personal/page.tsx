@@ -9,6 +9,8 @@ export default function PersonalSettingsPage() {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [initials, setInitials] = useState("?");
+  const [notifyEmailAnalysisComplete, setNotifyEmailAnalysisComplete] = useState(true);
+  const [notifyEmailAnalysisFailed, setNotifyEmailAnalysisFailed] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -26,7 +28,7 @@ export default function PersonalSettingsPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data } = await (supabase as any)
         .from("users")
-        .select("name")
+        .select("name, notify_email_analysis_complete, notify_email_analysis_failed")
         .eq("id", user.id)
         .single();
 
@@ -41,6 +43,12 @@ export default function PersonalSettingsPage() {
         .map((p: string) => p[0]?.toUpperCase() ?? "")
         .join("");
       setInitials(letters || fullName[0]?.toUpperCase() || "?");
+      if (typeof data?.notify_email_analysis_complete === "boolean") {
+        setNotifyEmailAnalysisComplete(data.notify_email_analysis_complete);
+      }
+      if (typeof data?.notify_email_analysis_failed === "boolean") {
+        setNotifyEmailAnalysisFailed(data.notify_email_analysis_failed);
+      }
       setLoading(false);
     }
     load();
@@ -58,7 +66,12 @@ export default function PersonalSettingsPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: err } = await (supabase as any)
       .from("users")
-      .update({ name: fullName, updated_at: new Date().toISOString() })
+      .update({
+        name: fullName,
+        notify_email_analysis_complete: notifyEmailAnalysisComplete,
+        notify_email_analysis_failed: notifyEmailAnalysisFailed,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", user.id);
 
     if (err) {
@@ -186,6 +199,40 @@ export default function PersonalSettingsPage() {
                   </span>
                 ) : saved ? "Saved ✓" : "Save Changes"}
               </button>
+            </div>
+          </section>
+
+          {/* Pipeline email preferences (migration 022) */}
+          <section className="rounded-xl border border-[#e2e8f0] bg-white p-8">
+            <div className="mb-6">
+              <h2 className="text-[17px] font-bold text-[#0a2540]">Meeting analysis emails</h2>
+              <p className="text-[13px] text-[#64748b]">
+                Choose whether to receive email when AI finishes or fails on your uploads.
+              </p>
+            </div>
+            <div className="flex flex-col gap-4">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={notifyEmailAnalysisComplete}
+                  onChange={(e) => setNotifyEmailAnalysisComplete(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#e2e8f0] text-[#ff6b35] focus:ring-[#ff6b35]"
+                />
+                <span className="text-[13px] text-[#0a2540]">
+                  Email me when analysis completes and notes are ready to review
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={notifyEmailAnalysisFailed}
+                  onChange={(e) => setNotifyEmailAnalysisFailed(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 rounded border-[#e2e8f0] text-[#ff6b35] focus:ring-[#ff6b35]"
+                />
+                <span className="text-[13px] text-[#0a2540]">
+                  Email me when analysis fails (e.g. unusable audio)
+                </span>
+              </label>
             </div>
           </section>
 

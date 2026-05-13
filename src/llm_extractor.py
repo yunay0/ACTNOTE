@@ -109,6 +109,11 @@ _SYSTEM_PROMPT_BASE_FALLBACK = (
     "<0.5: Don't include\n\n"
     "Title: max 50 chars, English only\n"
     "Summary: 3-5 sentences\n\n"
+    "[Decisions — required JSON array]\n"
+    "Fill \"decisions\" with every explicit group agreement, approved choice, or resolved question "
+    "(one short English sentence each).\n"
+    "If the transcript contains no clear decisions, output [].\n"
+    "Never omit the \"decisions\" key; never use null.\n\n"
     "[Atomic Decomposition 원칙]\n"
     "액션 아이템 추출 시 반드시 다음 5가지 원자 사실로 분해하세요:\n"
     "- content: 무엇을 할 것인지 (동사+목적어 형태로 명확하게)\n"
@@ -301,6 +306,7 @@ def _call_messages(
             msg = client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=MAX_TOKENS,
+                temperature=0,
                 system=system,
                 messages=[{"role": "user", "content": user}],
                 **({"metadata": metadata} if metadata else {}),

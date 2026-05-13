@@ -25,6 +25,7 @@ function rowToMeeting(m: Record<string, unknown>): Meeting {
     participants: (m.participants as string[] | null) ?? [],
     meeting_type: (m.meeting_type as string | null) ?? null,
     action_items_count,
+    error_message: (m.error_message as string | null) ?? null,
   };
 }
 
@@ -40,7 +41,7 @@ export function useMeetings() {
     const { data } = await (supabase as any)
       .from("meetings")
       .select(
-        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, action_items(count)"
+        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, error_message, action_items(count)"
       )
       .eq("workspace_id", wsId)
       .is("deleted_at", null)
@@ -105,5 +106,17 @@ export function useMeetings() {
     [meetings]
   );
 
-  return { meetings, deleteMeeting, getMeeting, hydrated, workspaceId, reloadMeetings: loadMeetings };
+  const reloadMeetings = useCallback(async () => {
+    if (!workspaceId) return;
+    await loadMeetings(workspaceId);
+  }, [workspaceId, loadMeetings]);
+
+  return {
+    meetings,
+    deleteMeeting,
+    getMeeting,
+    hydrated,
+    workspaceId,
+    reloadMeetings,
+  };
 }

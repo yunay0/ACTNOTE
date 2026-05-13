@@ -265,19 +265,19 @@ def render_analysis_complete_email(
     app_url: str | None = None,
 ) -> dict[str, str]:
     """분석 완료 알림 메일."""
-    title = f'"{meeting_title}" 분석이 완료되었습니다'
+    title = f'Analysis ready: "{meeting_title}"'
     body = (
         f'<p style="margin:0 0 24px 0;line-height:1.6">'
-        f'요약, 결정사항, 액션 아이템이 모두 준비되었어요. 회의록을 확인해 주세요.'
-        f'</p>'
+        f"Summary, decisions, and action items are ready. Open your draft to review and publish."
+        f"</p>"
         f'<a href="{escape(meeting_url)}" '
         f'style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;'
         f'padding:12px 24px;border-radius:8px;font-weight:600">'
-        f'회의록 열기</a>'
+        f"Open meeting</a>"
     )
     text = (
-        f'"{meeting_title}" 분석이 완료되었습니다.\n\n'
-        f'회의록 열기:\n{meeting_url}\n'
+        f'Analysis finished for "{meeting_title}".\n\n'
+        f"Open draft:\n{meeting_url}\n"
     )
     return {
         "subject": title,
@@ -293,21 +293,22 @@ def render_analysis_failed_email(
     app_url: str | None = None,
 ) -> dict[str, str]:
     """분석 실패 알림 메일."""
-    title = f'"{meeting_title}" 분석에 실패했습니다'
+    title = f'Analysis failed: "{meeting_title}"'
     body = (
         f'<p style="margin:0 0 16px 0;line-height:1.6">'
-        f'아래 사유로 분석을 마치지 못했습니다. 파일을 다시 업로드하거나 운영팀에 문의해 주세요.'
-        f'</p>'
+        f"We could not finish analyzing this recording. Try again with a different file, "
+        f"or contact support if you need help."
+        f"</p>"
         f'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;'
         f'padding:16px;color:#991b1b;font-family:monospace;font-size:13px;line-height:1.5;'
         f'white-space:pre-wrap;word-break:break-word">'
         f'{escape(error_message)}'
-        f'</div>'
+        f"</div>"
     )
     text = (
-        f'"{meeting_title}" 분석에 실패했습니다.\n\n'
-        f'사유:\n{error_message}\n\n'
-        f'문의: support@actnote.app\n'
+        f'Analysis failed for "{meeting_title}".\n\n'
+        f"Reason:\n{error_message}\n\n"
+        f"Support: support@actnote.app\n"
     )
     return {
         "subject": title,

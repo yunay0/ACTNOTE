@@ -1,3 +1,5 @@
+"use client";
+
 import {
   PROCESSING_STEPS,
   STEP_LABELS,
@@ -5,22 +7,52 @@ import {
   type MeetingStatus,
 } from "@/lib/types/meeting";
 import { cn } from "@/lib/utils";
+import { userFacingPipelineError, supportMailtoHref } from "@/lib/meetings/pipeline-error-copy";
 
 interface ProcessingProgressProps {
   status: MeetingStatus;
+  errorMessage?: string | null;
+  onRetry?: () => void;
+  retryLoading?: boolean;
 }
 
-export function ProcessingProgress({ status }: ProcessingProgressProps) {
+export function ProcessingProgress({
+  status,
+  errorMessage,
+  onRetry,
+  retryLoading,
+}: ProcessingProgressProps) {
   const progress = getProcessingProgress(status);
   const currentIdx = PROCESSING_STEPS.indexOf(status);
+  const supportHref = supportMailtoHref();
 
   if (status === "error") {
+    const hint = userFacingPipelineError(errorMessage);
     return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-5">
-        <p className="font-medium text-red-600">처리 중 오류가 발생했습니다.</p>
-        <p className="mt-1 text-sm text-red-500">
-          파일을 다시 업로드하거나 고객센터에 문의해 주세요.
-        </p>
+      <div className="rounded-xl border border-red-200 bg-red-50 p-5 space-y-3">
+        <p className="font-medium text-red-700">Analysis failed</p>
+        <p className="text-sm text-red-600">{hint}</p>
+        <div className="flex flex-wrap gap-2 pt-1">
+          {onRetry && (
+            <button
+              type="button"
+              disabled={retryLoading}
+              onClick={onRetry}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#0a2540] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            >
+              {retryLoading ? (
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : null}
+              Try again
+            </button>
+          )}
+          <a
+            href={supportHref}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-100/60"
+          >
+            Contact support
+          </a>
+        </div>
       </div>
     );
   }
@@ -29,12 +61,11 @@ export function ProcessingProgress({ status }: ProcessingProgressProps) {
     <div className="rounded-xl border border-border bg-card p-5 space-y-4">
       <div className="flex items-center justify-between text-sm">
         <span className="font-medium">
-          {status === "ready" ? "처리 완료" : "처리 중..."}
+          {status === "ready" ? "Processing complete" : "Processing…"}
         </span>
         <span className="text-muted-foreground">{progress}%</span>
       </div>
 
-      {/* 프로그레스 바 */}
       <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
         <div
           className="h-full rounded-full bg-primary transition-all duration-500"
@@ -42,7 +73,6 @@ export function ProcessingProgress({ status }: ProcessingProgressProps) {
         />
       </div>
 
-      {/* 단계 표시 */}
       <ol className="flex items-start justify-between gap-1">
         {PROCESSING_STEPS.map((step, idx) => {
           const isDone = idx < currentIdx || status === "ready";
