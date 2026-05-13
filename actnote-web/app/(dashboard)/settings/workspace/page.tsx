@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { X, Copy, Check, Link2, ChevronDown } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
+import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 
 /** Supabase `workspace_members.role` */
 type DbRole = "owner" | "admin" | "member";
@@ -63,6 +64,7 @@ function getInitials(name: string, email: string): string {
 }
 
 export default function WorkspaceSettingsPage() {
+  const { workspaceId: activeWorkspaceId } = useWorkspaceContext();
   const [workspaceName, setWorkspaceName] = useState("");
   const [savedName, setSavedName] = useState("");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -87,6 +89,8 @@ export default function WorkspaceSettingsPage() {
   const isDbOwner = currentDbRole === "owner";
 
   const loadWorkspace = useCallback(async () => {
+    if (!activeWorkspaceId) return;
+
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -97,9 +101,13 @@ export default function WorkspaceSettingsPage() {
       .from("workspace_members")
       .select("workspace_id, role, workspaces(id, name, slug, opt_out_training)")
       .eq("user_id", user.id)
-      .single();
+      .eq("workspace_id", activeWorkspaceId)
+      .maybeSingle();
 
-    if (!memRow?.workspaces) { setLoading(false); return; }
+    if (!memRow?.workspaces) {
+      setLoading(false);
+      return;
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ws: any = Array.isArray(memRow.workspaces) ? memRow.workspaces[0] : memRow.workspaces;
@@ -140,9 +148,12 @@ export default function WorkspaceSettingsPage() {
     }
 
     setLoading(false);
-  }, []);
+  }, [activeWorkspaceId]);
 
-  useEffect(() => { loadWorkspace(); }, [loadWorkspace]);
+  useEffect(() => {
+    setLoading(true);
+    loadWorkspace();
+  }, [loadWorkspace]);
 
   async function handleSaveName() {
     if (!workspaceId) return;

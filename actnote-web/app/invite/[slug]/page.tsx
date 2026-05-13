@@ -163,7 +163,7 @@ export default function InvitePage() {
               </div>
               <h2 className="text-[18px] font-bold text-[#0a2540]">Invalid invite link</h2>
               <p className="text-sm text-[#64748b]">This invite link doesn&apos;t exist or has expired.</p>
-              <button onClick={() => router.push("/meetings")} className="mt-2 text-sm font-semibold text-[#ff6b35] hover:underline">
+              <button onClick={() => router.push("/workspace/select")} className="mt-2 text-sm font-semibold text-[#ff6b35] hover:underline">
                 Go to dashboard →
               </button>
             </div>
@@ -176,7 +176,7 @@ export default function InvitePage() {
               </div>
               <h2 className="text-[18px] font-bold text-[#0a2540]">Already a member!</h2>
               <p className="text-sm text-[#64748b]">You&apos;re already in <strong>{workspace.name}</strong>.</p>
-              <button onClick={() => router.push("/meetings")} className="mt-3 flex items-center gap-2 mx-auto rounded-xl px-6 py-2.5 text-sm font-bold text-white" style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}>
+              <button onClick={() => router.push("/workspace/select")} className="mt-3 flex items-center gap-2 mx-auto rounded-xl px-6 py-2.5 text-sm font-bold text-white" style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}>
                 Go to dashboard <ArrowRight className="h-4 w-4" />
               </button>
             </div>
@@ -217,7 +217,7 @@ export default function InvitePage() {
               </div>
               <h2 className="text-[18px] font-bold text-[#0a2540]">Welcome to {workspace.name}!</h2>
               <p className="text-sm text-[#64748b]">You&apos;ve successfully joined the workspace.</p>
-              <button onClick={() => router.push("/meetings")} className="mt-3 flex items-center gap-2 mx-auto rounded-xl px-6 py-2.5 text-sm font-bold text-white" style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}>
+              <button onClick={() => router.push("/workspace/select")} className="mt-3 flex items-center gap-2 mx-auto rounded-xl px-6 py-2.5 text-sm font-bold text-white" style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}>
                 Go to dashboard <ArrowRight className="h-4 w-4" />
               </button>
             </div>

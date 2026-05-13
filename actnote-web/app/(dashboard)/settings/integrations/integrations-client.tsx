@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
+import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 
 type Props = {
   bannerError?: string;
@@ -48,6 +49,8 @@ export default function IntegrationsSettingsClient({
   bannerMessage,
   connected: connectedQuery,
 }: Props) {
+  const { workspaceId: activeWorkspaceId, workspaceName: ctxWorkspaceName } =
+    useWorkspaceContext();
   const [loading, setLoading] = useState(true);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
@@ -55,43 +58,33 @@ export default function IntegrationsSettingsClient({
   const [disconnecting, setDisconnecting] = useState(false);
 
   const load = useCallback(async () => {
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data: memRow } = await (supabase as any)
-      .from("workspace_members")
-      .select("workspace_id, workspaces(id, name)")
-      .eq("user_id", user.id)
-      .limit(1)
-      .maybeSingle();
-
-    const ws = memRow?.workspaces
-      ? Array.isArray(memRow.workspaces)
-        ? memRow.workspaces[0]
-        : memRow.workspaces
-      : null;
-
-    if (!ws?.id) {
+    if (!activeWorkspaceId) {
       setLoading(false);
       return;
     }
 
-    setWorkspaceId(ws.id);
-    setWorkspaceName(ws.name ?? "Workspace");
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+
+    setWorkspaceId(activeWorkspaceId);
+    setWorkspaceName(ctxWorkspaceName ?? "Workspace");
 
     const { data: intRow } = await (supabase as any)
       .from("integrations")
       .select("id")
-      .eq("workspace_id", ws.id)
+      .eq("workspace_id", activeWorkspaceId)
       .eq("platform", "notion")
       .maybeSingle();
 
     setNotionConnected(!!intRow);
     setLoading(false);
-  }, []);
+  }, [activeWorkspaceId, ctxWorkspaceName]);
 
   useEffect(() => {
     load();

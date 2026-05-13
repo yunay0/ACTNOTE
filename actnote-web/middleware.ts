@@ -23,6 +23,7 @@ export async function middleware(request: NextRequest) {
   const isPublicPage =
     pathname === "/" ||
     pathname.startsWith("/onboarding") ||
+    pathname.startsWith("/workspace/") ||
     pathname.startsWith("/invite/") ||
     pathname.startsWith("/auth/");
 
@@ -64,7 +65,7 @@ export async function middleware(request: NextRequest) {
 
   if (user && isAuthPage) {
     const url = request.nextUrl.clone();
-    url.pathname = "/onboarding";
+    url.pathname = "/workspace/select";
     return NextResponse.redirect(url);
   }
 

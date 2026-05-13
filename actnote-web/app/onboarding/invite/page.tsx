@@ -36,7 +36,7 @@ export default function OnboardingInvitePage() {
         return;
       }
 
-      const { data: rows, error: selErr } = await supabase
+      const { data: rows, error: selErr } = await (supabase as any)
         .from("workspaces")
         .select("id, name")
         .eq("owner_id", data.user.id)
@@ -125,7 +125,7 @@ export default function OnboardingInvitePage() {
         }
       }
 
-      router.push("/meetings");
+      router.push("/workspace/select");
       setLoading(false);
     } catch {
       setError("Something went wrong. Please try again.");
@@ -134,7 +134,7 @@ export default function OnboardingInvitePage() {
   }
 
   function handleSkip() {
-    router.push("/meetings");
+    router.push("/workspace/select");
   }
 
   if (checkingAuth) {

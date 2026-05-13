@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { X, AlertTriangle } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
+import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import {
   allowedRecordingExtensionsLabel,
   fileAcceptAttribute,
@@ -17,6 +18,7 @@ interface Participant { id: string; value: string; }
 
 export default function NewMeetingPage() {
   const router = useRouter();
+  const { workspaceId } = useWorkspaceContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [title, setTitle] = useState("");
@@ -120,14 +122,8 @@ export default function NewMeetingPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push("/login"); return; }
 
-      // 워크스페이스 조회
-      const { data: ws, error: wsError } = await (supabase as any)
-        .from("workspaces")
-        .select("id")
-        .eq("owner_id", user.id)
-        .single();
-      if (wsError || !ws) {
-        setAlertMsg("Workspace not found. Please refresh and try again.");
+      if (!workspaceId) {
+        setAlertMsg("No workspace selected. Please pick a workspace and try again.");
         setLoading(false);
         return;
       }
@@ -138,7 +134,7 @@ export default function NewMeetingPage() {
         .insert({
           title: title.trim(),
           status: "uploaded",
-          workspace_id: ws.id,
+          workspace_id: workspaceId,
           created_by: user.id,
           meeting_date: new Date(datetime).toISOString(),
           audio_file_size_bytes: file.size,
@@ -214,7 +210,7 @@ export default function NewMeetingPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           meeting_id: meetingId,
-          workspace_id: ws.id,
+          workspace_id: workspaceId,
           audio_path: audioPath,
         }),
       });

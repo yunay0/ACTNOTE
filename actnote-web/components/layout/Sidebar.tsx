@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
+import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
+import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
 
 /** 다음 버전에서 연동 설정 노출 시 true 로 변경 */
 const SHOW_INTEGRATIONS_IN_SIDEBAR = false;
@@ -11,9 +13,11 @@ const SHOW_INTEGRATIONS_IN_SIDEBAR = false;
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const { workspaceName, memberships } = useWorkspaceContext();
 
   async function handleLogout() {
     const supabase = createClient();
+    clearStoredWorkspaceId();
     await supabase.auth.signOut();
     router.push("/");
     router.refresh();
@@ -101,23 +105,34 @@ export function Sidebar() {
 
       {/* Footer — workspace + logout */}
       <div className="shrink-0 border-t border-[#e2e8f0] p-4">
-        <div className="flex items-center gap-2.5 rounded-lg bg-[#f8fafc] px-3 py-2.5">
-          <div
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-[14px] font-bold text-white"
-            style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-          >
-            A
+        <div className="flex flex-col gap-2 rounded-lg bg-[#f8fafc] px-3 py-2.5">
+          <div className="flex items-center gap-2.5">
+            <div
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-[14px] font-bold text-white"
+              style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+            >
+              {(workspaceName || "?")[0]?.toUpperCase() ?? "?"}
+            </div>
+            <span className="flex-1 truncate text-[13px] font-bold text-[#0a2540]" title={workspaceName}>
+              {workspaceName || "Workspace"}
+            </span>
+            <button
+              onClick={handleLogout}
+              title="Log out"
+              type="button"
+              className="text-[11px] text-[#94a3b8] hover:text-[#ff6b35] transition-colors"
+            >
+              ▼
+            </button>
           </div>
-          <span className="flex-1 truncate text-[13px] font-bold text-[#0a2540]">
-            ACTNOTE Corp
-          </span>
-          <button
-            onClick={handleLogout}
-            title="Log out"
-            className="text-[11px] text-[#94a3b8] hover:text-[#ff6b35] transition-colors"
-          >
-            ▼
-          </button>
+          {memberships.length > 1 && (
+            <Link
+              href="/workspace/select?switch=1"
+              className="text-center text-[11px] font-semibold text-[#ff6b35] hover:underline"
+            >
+              Switch workspace
+            </Link>
+          )}
         </div>
       </div>
     </aside>
