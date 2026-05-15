@@ -1,0 +1,194 @@
+"use client";
+
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import {
+  getStoredWorkspaceId,
+  setStoredWorkspaceId,
+} from "@/lib/workspace/storage";
+
+export type WorkspaceMembership = {
+  workspace_id: string;
+  role: string;
+  workspace: { id: string; name: string; slug: string | null };
+};
+
+type WorkspaceContextValue = {
+  hydrated: boolean;
+  memberships: WorkspaceMembership[];
+  workspaceId: string | null;
+  workspaceName: string;
+  setCurrentWorkspace: (id: string) => void;
+  refreshWorkspaces: () => Promise<void>;
+};
+
+const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
+
+export function useWorkspaceContext(): WorkspaceContextValue {
+  const ctx = useContext(WorkspaceContext);
+  if (!ctx) {
+    throw new Error("useWorkspaceContext must be used within WorkspaceProvider");
+  }
+  return ctx;
+}
+
+export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const [hydrated, setHydrated] = useState(false);
+  const [memberships, setMemberships] = useState<WorkspaceMembership[]>([]);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setMemberships([]);
+      setWorkspaceId(null);
+      setHydrated(true);
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: rows, error } = await (supabase as any)
+      .from("workspace_members")
+      .select("workspace_id, role, workspaces(id, name, slug)")
+      .eq("user_id", user.id);
+
+    if (error) {
+      setMemberships([]);
+      setWorkspaceId(null);
+      setHydrated(true);
+      return;
+    }
+
+    const list: WorkspaceMembership[] = [];
+    for (const row of rows ?? []) {
+      const wid = row.workspace_id as string;
+      const rawWs = row.workspaces;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ws: any = Array.isArray(rawWs) ? rawWs[0] : rawWs;
+      if (!ws?.id) continue;
+      list.push({
+        workspace_id: wid,
+        role: (row.role as string) ?? "member",
+        workspace: {
+          id: ws.id as string,
+          name: (ws.name as string) ?? "",
+          slug: (ws.slug as string | null) ?? null,
+        },
+      });
+    }
+
+    setMemberships(list);
+
+    const ids = list.map((m) => m.workspace_id);
+    const stored = getStoredWorkspaceId();
+    let chosen: string | null = null;
+    if (stored && ids.includes(stored)) {
+      chosen = stored;
+    } else if (ids.length === 1) {
+      chosen = ids[0];
+      setStoredWorkspaceId(chosen);
+    }
+
+    setWorkspaceId(chosen);
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const needsWorkspacePick = hydrated && memberships.length > 1 && !workspaceId;
+
+  useEffect(() => {
+    if (!needsWorkspacePick) return;
+    router.replace("/workspace/select");
+  }, [needsWorkspacePick, router]);
+
+  const setCurrentWorkspace = useCallback(
+    (id: string) => {
+      const ok = memberships.some((m) => m.workspace_id === id);
+      if (!ok) return;
+      setStoredWorkspaceId(id);
+      setWorkspaceId(id);
+    },
+    [memberships],
+  );
+
+  const workspaceName = useMemo(() => {
+    if (!workspaceId) return "";
+    const m = memberships.find((x) => x.workspace_id === workspaceId);
+    return m?.workspace.name ?? "";
+  }, [memberships, workspaceId]);
+
+  const value = useMemo(
+    () => ({
+      hydrated,
+      memberships,
+      workspaceId,
+      workspaceName,
+      setCurrentWorkspace,
+      refreshWorkspaces: load,
+    }),
+    [hydrated, memberships, workspaceId, workspaceName, setCurrentWorkspace, load],
+  );
+
+  if (!hydrated) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-[#f8fafc]">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (memberships.length === 0) {
+    return (
+      <WorkspaceContext.Provider value={value}>
+        <RedirectTo path="/workspace/select" />
+      </WorkspaceContext.Provider>
+    );
+  }
+
+  if (needsWorkspacePick) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-[#f8fafc]">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (!workspaceId) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-[#f8fafc]">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
+      </div>
+    );
+  }
+
+  return (
+    <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
+  );
+}
+
+function RedirectTo({ path }: { path: string }) {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace(path);
+  }, [path, router]);
+  return (
+    <div className="flex h-screen w-screen items-center justify-center bg-[#f8fafc]">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
+    </div>
+  );
+}

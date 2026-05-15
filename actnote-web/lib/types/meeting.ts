@@ -27,6 +27,7 @@ export interface Meeting {
   participants?: string[];
   meeting_type?: string | null;
   action_items_count?: number;
+  error_message?: string | null;
 }
 
 export interface Decision {
@@ -71,24 +72,24 @@ export const PROCESSING_STEPS: MeetingStatus[] = [
 ];
 
 export const STEP_LABELS: Record<MeetingStatus, string> = {
-  uploaded: "업로드 완료",
-  transcribing: "분석 중...",
-  diarizing: "분석 중...",
-  summarizing: "분석 중...",
-  ready: "임시 저장",
-  published: "발행 완료",
-  error: "오류 발생",
+  uploaded: "Uploaded",
+  transcribing: "Transcribing…",
+  diarizing: "Diarizing…",
+  summarizing: "Summarizing…",
+  ready: "Draft",
+  published: "Published",
+  error: "Error",
 };
 
 /** 목록 표시용 간략 라벨 */
 export const STATUS_DISPLAY: Record<MeetingStatus, string> = {
-  uploaded: "업로드됨",
-  transcribing: "분석 중...",
-  diarizing: "분석 중...",
-  summarizing: "분석 중...",
-  ready: "임시 저장",
-  published: "발행 완료",
-  error: "오류",
+  uploaded: "Uploaded",
+  transcribing: "Analyzing…",
+  diarizing: "Analyzing…",
+  summarizing: "Analyzing…",
+  ready: "Draft",
+  published: "Published",
+  error: "Error",
 };
 
 export function isProcessing(status: MeetingStatus): boolean {

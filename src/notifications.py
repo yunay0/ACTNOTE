@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 _log = logging.getLogger(__name__)
@@ -20,6 +21,44 @@ VALID_TYPES = {"analysis_complete", "analysis_failed", "action_assigned"}
 def _app_url() -> str:
     """본문 링크 호스트. NEXT_PUBLIC_APP_URL 우선."""
     return os.getenv("NEXT_PUBLIC_APP_URL") or "https://app.actnote.com"
+
+
+_VISIBLE_ANALYSIS_ERROR_MAP: dict[str, str] = {
+    "NO_AUDIO_OR_SILENT": (
+        "No usable speech was detected. The file may be silent or the audio track missing."
+    ),
+    "FILE_RETRIEVAL_FAILED": (
+        "We could not retrieve the file from storage. Check your workspace quota or contact support."
+    ),
+    "DOWNLOAD_FAILED": (
+        "The recording could not be decoded or read. Try another format or re-export the file."
+    ),
+    "MODEL_API_FAILED": (
+        "An AI service failed temporarily. Try again in a few minutes."
+    ),
+    "DB_PUSH_FAILED": (
+        "Could not save results. Check your connection and try again."
+    ),
+    "PIPELINE_INTERNAL": (
+        "Analysis stopped unexpectedly. Try again or contact support."
+    ),
+}
+
+_CODE_PREFIX_RE = re.compile(r"^\[code:([A-Z0-9_]+)\]\s*", re.I)
+
+
+def user_visible_analysis_error(error_message: str) -> str:
+    """Strip ``[code:...]`` prefix and return English UX copy for notifications/email."""
+    t = (error_message or "").strip()
+    m = _CODE_PREFIX_RE.match(t)
+    if not m:
+        if not t:
+            return _VISIBLE_ANALYSIS_ERROR_MAP["PIPELINE_INTERNAL"]
+        return (t[:280] + "…") if len(t) > 280 else t
+    code = m.group(1).upper()
+    return _VISIBLE_ANALYSIS_ERROR_MAP.get(
+        code, _VISIBLE_ANALYSIS_ERROR_MAP["PIPELINE_INTERNAL"]
+    )
 
 
 def create_notification(
@@ -57,10 +96,96 @@ def create_notification(
     return resp.data[0] if resp.data else {}
 
 
+def _user_wants_pipeline_email(sb_client, user_id: str, *, kind: str) -> bool:
+    """kind: 'complete' | 'failed' — 컬럼 없거나 오류 시 True (기존 동작 유지)."""
+    col = (
+        "notify_email_analysis_complete"
+        if kind == "complete"
+        else "notify_email_analysis_failed"
+    )
+    try:
+        resp = (
+            sb_client.table("users")
+            .select(col)
+            .eq("id", user_id)
+            .single()
+            .execute()
+        )
+        row = resp.data or {}
+        val = row.get(col)
+        if val is None:
+            return True
+        return bool(val)
+    except Exception:
+        return True
+
+
+def _dispatch_pipeline_email(
+    *,
+    to: str,
+    rendered: dict[str, str],
+    ref_kind: str,
+    meeting_id: str | None,
+    workspace_id: str | None,
+    inngest_client: Any | None,
+) -> None:
+    """워커에서 분석 관련 메일: RESEND_API_KEY 있으면 즉시 발송, 없으면 Inngest fan-out."""
+    key = os.getenv("RESEND_API_KEY", "").strip()
+    if key:
+        try:
+            from src.email_notifier import send_email
+
+            send_email(
+                to,
+                rendered["subject"],
+                rendered["html"],
+                rendered["text"],
+            )
+            _log.info(
+                "pipeline email sent via Resend (kind=%s meeting_id=%s to=%s)",
+                ref_kind,
+                meeting_id,
+                to,
+            )
+            return
+        except Exception as e:
+            _log.warning(
+                "pipeline email Resend failed (kind=%s): %s — trying Inngest",
+                ref_kind,
+                e,
+            )
+    if inngest_client is None:
+        _log.warning(
+            "pipeline email skipped (kind=%s): no RESEND_API_KEY and no Inngest client",
+            ref_kind,
+        )
+        return
+    try:
+        inngest_client.send_sync(
+            _email_send_event(
+                to=to,
+                rendered=rendered,
+                ref_kind=ref_kind,
+                meeting_id=meeting_id,
+                workspace_id=workspace_id,
+            )
+        )
+        _log.info(
+            "pipeline email queued via Inngest (kind=%s meeting_id=%s to=%s)",
+            ref_kind,
+            meeting_id,
+            to,
+        )
+    except Exception as e:
+        _log.warning("pipeline email Inngest failed (kind=%s): %s", ref_kind, e)
+
+
 def notify_analysis_complete(
     meeting_id: str,
     workspace_id: str,
     sb_client,
+    *,
+    inngest_client: Any | None = None,
 ) -> int:
     """분석 완료 알림 생성.
 
@@ -68,6 +193,8 @@ def notify_analysis_complete(
     1. 회의 작성자 (meetings.created_by)
     2. 액션 아이템 담당자 (action_items.assignee_user_id, not null)
     중복 user_id는 1건만 생성.
+
+    작성자에게는 설정 허용 시 분석 완료 메일을 추가 발송한다.
 
     Returns:
         생성된 알림 개수.
@@ -81,9 +208,17 @@ def notify_analysis_complete(
     )
     meeting = meeting_resp.data or {}
     creator_id: str | None = meeting.get("created_by")
-    meeting_title = (meeting.get("title") or "").strip() or "회의"
+    meeting_title = (meeting.get("title") or "").strip() or "Meeting"
 
-    # 액션 아이템 담당자 (assignee_user_id가 매핑된 것만)
+    active_resp = (
+        sb_client.table("action_items")
+        .select("id")
+        .eq("meeting_id", meeting_id)
+        .is_("valid_until", "null")
+        .execute()
+    )
+    action_count = len(active_resp.data or [])
+
     actions_resp = (
         sb_client.table("action_items")
         .select("assignee_user_id")
@@ -92,7 +227,6 @@ def notify_analysis_complete(
         .execute()
     )
     action_rows = actions_resp.data or []
-    action_count = len(action_rows)
     assignee_ids = {
         row["assignee_user_id"]
         for row in action_rows
@@ -108,8 +242,11 @@ def notify_analysis_complete(
         _log.warning("notify_analysis_complete: 수신자 없음 (meeting_id=%s)", meeting_id)
         return 0
 
-    notif_title = f"회의 분석 완료: {meeting_title}"
-    notif_message = f"분석이 완료됐습니다. 액션 아이템 {action_count}개가 생성됐습니다."
+    notif_title = f"Analysis complete: {meeting_title}"
+    notif_message = (
+        f"Your meeting notes are ready to review. "
+        f"{action_count} action item(s) on this meeting."
+    )
 
     rows = [
         {
@@ -126,6 +263,39 @@ def notify_analysis_complete(
     _log.info(
         "notify_analysis_complete: %d건 생성 (meeting_id=%s)", len(rows), meeting_id
     )
+
+    if creator_id and _user_wants_pipeline_email(sb_client, creator_id, kind="complete"):
+        to_email = ""
+        try:
+            ur = (
+                sb_client.table("users")
+                .select("email")
+                .eq("id", creator_id)
+                .single()
+                .execute()
+            )
+            to_email = ((ur.data or {}).get("email") or "").strip()
+        except Exception as e:
+            _log.warning("notify_analysis_complete: creator email lookup failed: %s", e)
+
+        if to_email:
+            from src.email_notifier import render_analysis_complete_email
+
+            meeting_url = f"{_app_url().rstrip('/')}/meetings/{meeting_id}"
+            rendered = render_analysis_complete_email(
+                meeting_title=meeting_title,
+                meeting_url=meeting_url,
+                app_url=_app_url(),
+            )
+            _dispatch_pipeline_email(
+                to=to_email,
+                rendered=rendered,
+                ref_kind="analysis_complete",
+                meeting_id=meeting_id,
+                workspace_id=workspace_id,
+                inngest_client=inngest_client,
+            )
+
     return len(rows)
 
 
@@ -286,14 +456,14 @@ def _enqueue_action_assigned_emails(
             due_date=action.get("due_date"),
         )
         try:
-            # 워커 step 내부 (동기 컨텍스트) 에서 호출되므로 send_sync 사용
-            inngest_client.send_sync(_email_send_event(
+            _dispatch_pipeline_email(
                 to=email,
                 rendered=rendered,
                 ref_kind="action_assigned",
                 meeting_id=meeting_id,
                 workspace_id=workspace_id,
-            ))
+                inngest_client=inngest_client,
+            )
             sent += 1
         except Exception as e:
             _log.warning(
@@ -448,10 +618,12 @@ def notify_analysis_failed(
     workspace_id: str,
     error_message: str,
     sb_client,
+    *,
+    inngest_client: Any = None,
 ) -> int:
-    """분석 실패 알림 생성.
+    """분석 실패 알림 (인앱 + 선택 메일).
 
-    수신자: 회의 작성자만 (재업로드 안내).
+    수신자: 회의 작성자만.
 
     Returns:
         생성된 알림 개수 (0 또는 1).
@@ -465,25 +637,72 @@ def notify_analysis_failed(
     )
     meeting = meeting_resp.data or {}
     creator_id: str | None = meeting.get("created_by")
-    meeting_title = (meeting.get("title") or "").strip() or "회의"
+    meeting_title = (meeting.get("title") or "").strip() or "Meeting"
 
     if not creator_id:
         _log.warning("notify_analysis_failed: creator_id 없음 (meeting_id=%s)", meeting_id)
         return 0
 
-    # 에러 메시지는 100자로 잘라 사용자에게 보여줌
-    short_error = error_message[:100] + ("..." if len(error_message) > 100 else "")
+    visible = user_visible_analysis_error(error_message)
+    details = visible[:220] + ("..." if len(visible) > 220 else "")
 
     create_notification(
         user_id=creator_id,
         workspace_id=workspace_id,
         type="analysis_failed",
-        title=f"회의 분석 실패: {meeting_title}",
-        message=f"분석 중 오류가 발생했습니다. 파일을 확인 후 재업로드해주세요.\n오류: {short_error}",
+        title=f"Analysis failed: {meeting_title}",
+        message=(
+            "Something went wrong while analyzing your recording. "
+            "Try again or upload a different file.\n"
+            f"Details: {details}"
+        ),
         meeting_id=meeting_id,
         sb_client=sb_client,
     )
-    _log.info("notify_analysis_failed: 1건 생성 (meeting_id=%s)", meeting_id)
+
+    to_email = ""
+    try:
+        ur = (
+            sb_client.table("users")
+            .select("email")
+            .eq("id", creator_id)
+            .single()
+            .execute()
+        )
+        to_email = ((ur.data or {}).get("email") or "").strip()
+    except Exception as e:
+        _log.warning("notify_analysis_failed: user email lookup failed: %s", e)
+
+    if to_email and _user_wants_pipeline_email(sb_client, creator_id, kind="failed"):
+        try:
+            from src.email_notifier import render_analysis_failed_email
+
+            rendered = render_analysis_failed_email(
+                meeting_title=meeting_title,
+                error_message=visible,
+                app_url=_app_url(),
+            )
+            _dispatch_pipeline_email(
+                to=to_email,
+                rendered=rendered,
+                ref_kind="analysis_failed",
+                meeting_id=meeting_id,
+                workspace_id=workspace_id,
+                inngest_client=inngest_client,
+            )
+            _log.info(
+                "notify_analysis_failed: email dispatched for %s (meeting_id=%s)",
+                to_email,
+                meeting_id,
+            )
+        except Exception as e:
+            _log.warning(
+                "notify_analysis_failed: email dispatch failed (meeting_id=%s): %s",
+                meeting_id,
+                e,
+            )
+
+    _log.info("notify_analysis_failed: in-app notification created (meeting_id=%s)", meeting_id)
     return 1
 
 

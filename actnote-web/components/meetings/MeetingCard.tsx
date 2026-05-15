@@ -1,14 +1,17 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { MoreVertical, Trash2 } from "lucide-react";
-import type { Meeting, MeetingStatus } from "@/lib/types/meeting";
+import { MoreVertical, Trash2, RefreshCw, Mail } from "lucide-react";
+import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
+import { userFacingPipelineError, supportMailtoHref } from "@/lib/meetings/pipeline-error-copy";
 
 interface MeetingCardProps {
   meeting: Meeting;
   onDelete?: (id: string) => void;
   onClick?: () => void;
+  onRetry?: (id: string) => void;
+  retrying?: boolean;
 }
 
 const STATUS_STYLE: Record<string, { bg: string; dot: string; text: string; label: string }> = {
@@ -39,11 +42,14 @@ const MEETING_TYPE_LABELS: Record<string, string> = {
   "1on1":   "1:1",
 };
 
-export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
+export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: MeetingCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const statusKey = getStatusKey(meeting);
   const style = STATUS_STYLE[statusKey];
+  const supportHref = supportMailtoHref();
+  const errorHint =
+    meeting.status === "error" ? userFacingPipelineError(meeting.error_message) : null;
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -59,6 +65,7 @@ export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
   const extraCount = Math.max(0, participants.length - 3);
   const actionCount = meeting.action_items_count ?? 0;
   const dateStr = formatDate(meeting.meeting_date ?? meeting.created_at);
+  const isErr = meeting.status === "error";
 
   return (
     <div
@@ -68,13 +75,40 @@ export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
       {/* 3-dot menu */}
       <div ref={menuRef} className="absolute right-3 top-3" onClick={(e) => e.stopPropagation()}>
         <button
+          type="button"
           onClick={() => setMenuOpen((v) => !v)}
           className="flex h-7 w-7 items-center justify-center rounded-md text-[#94a3b8] opacity-0 group-hover:opacity-100 hover:bg-[#f8fafc] hover:text-[#64748b] transition-all"
         >
           <MoreVertical className="h-4 w-4" />
         </button>
         {menuOpen && (
-          <div className="absolute right-0 top-full z-20 mt-1 w-28 overflow-hidden rounded-lg border border-[#e2e8f0] bg-white shadow-lg">
+          <div className={`absolute right-0 top-full z-20 mt-1 overflow-hidden rounded-lg border border-[#e2e8f0] bg-white shadow-lg ${isErr ? "w-44" : "w-28"}`}>
+            {isErr && onRetry && (
+              <button
+                type="button"
+                disabled={retrying}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  onRetry(meeting.id);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#0a2540] hover:bg-[#f8fafc] transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${retrying ? "animate-spin" : ""}`} />
+                Try again
+              </button>
+            )}
+            {isErr && (
+              <a
+                href={supportHref}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#0a2540] hover:bg-[#f8fafc] transition-colors"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Mail className="h-3.5 w-3.5 shrink-0" />
+                Contact support
+              </a>
+            )}
             <button
               type="button"
               onClick={(e) => {
@@ -110,7 +144,11 @@ export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
       </p>
 
       {/* 날짜 */}
-      <p className="text-[12px] text-[#94a3b8] mb-4">{dateStr}</p>
+      <p className="text-[12px] text-[#94a3b8] mb-2">{dateStr}</p>
+
+      {errorHint && (
+        <p className="mb-3 line-clamp-2 text-[12px] leading-snug text-red-600">{errorHint}</p>
+      )}
 
       {/* 구분선 + 메타 */}
       <div className="border-t border-[#f1f5f9] pt-3 flex items-center gap-3">

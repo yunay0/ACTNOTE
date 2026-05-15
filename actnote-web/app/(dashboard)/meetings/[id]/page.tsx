@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/client";
 import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
 import { StatusBadge } from "@/components/meetings/StatusBadge";
 import { ProcessingProgress } from "@/components/meetings/ProcessingProgress";
+import { retryMeetingPipeline } from "@/lib/meetings/retry-pipeline";
 import type { MeetingStatus } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 
@@ -26,21 +27,87 @@ interface MeetingRow {
   referenced_documents: string[] | null;
   audio_file_url: string | null;
   workspace_id: string;
+  error_message?: string | null;
 }
 
 interface ActionItem {
   id: string;
   content: string;
   assignee: string | null;
+  assignee_user_id: string | null;
   due_date: string | null;
   confidence: number | null;
   status: "open" | "done" | "cancelled";
+}
+
+const NEW_ACTION_ITEM_PREFIX = "new:";
+
+function emptyDraftActionItem(): ActionItem {
+  return {
+    id: `${NEW_ACTION_ITEM_PREFIX}${crypto.randomUUID()}`,
+    content: "",
+    assignee: null,
+    assignee_user_id: null,
+    due_date: null,
+    confidence: null,
+    status: "open",
+  };
 }
 
 interface Member {
   user_id: string;
   name: string | null;
   email: string;
+}
+
+/** referenced_documents JSONB 는 배열이 아닌 문자열(JSON 문자열)·객체 등으로 올 수 있음 */
+function normalizeReferencedDocuments(raw: unknown): string[] | null {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) {
+    const out = raw.filter((x): x is string => typeof x === "string");
+    return out.length ? out : null;
+  }
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return null;
+    if (s.startsWith("[")) {
+      try {
+        const p = JSON.parse(s) as unknown;
+        if (Array.isArray(p)) {
+          const out = p.filter((x): x is string => typeof x === "string");
+          return out.length ? out : null;
+        }
+      } catch {
+        /* leave as single-line label */
+      }
+    }
+    return [s];
+  }
+  if (typeof raw === "object") {
+    const vals = Object.values(raw as Record<string, unknown>).filter(
+      (x): x is string => typeof x === "string"
+    );
+    return vals.length ? vals : null;
+  }
+  return null;
+}
+
+/** meetings.decisions JSONB 폴백 파싱 */
+function decisionsFromMeetingJson(raw: unknown): { content: string }[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) return [];
+  const out: { content: string }[] = [];
+  for (const x of raw) {
+    if (typeof x === "string" && x.trim()) {
+      out.push({ content: x.trim() });
+      continue;
+    }
+    if (x && typeof x === "object" && "content" in x) {
+      const c = (x as { content: unknown }).content;
+      if (typeof c === "string" && c.trim()) out.push({ content: c.trim() });
+    }
+  }
+  return out;
 }
 
 export default function MeetingDetailPage() {
@@ -56,6 +123,7 @@ export default function MeetingDetailPage() {
 
   // 편집 모드 (DRAFT-001 / DRAFT-005)
   const [editMode, setEditMode] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
   const [editSummary, setEditSummary] = useState("");
   const [editDecisions, setEditDecisions] = useState<string[]>([]);
   const [editActionItems, setEditActionItems] = useState<ActionItem[]>([]);
@@ -74,36 +142,91 @@ export default function MeetingDetailPage() {
   // Notion 미연동 경고 (INTEG-005)
   const [notionWarningModal, setNotionWarningModal] = useState(false);
   const [notionConnected, setNotionConnected] = useState<boolean | null>(null);
+  const [retryAnalysisLoading, setRetryAnalysisLoading] = useState(false);
 
   const fetchMeeting = useCallback(async () => {
     const supabase = createClient();
-    const { data: m, error } = await (supabase as any)
-      .from("meetings")
-      .select("id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id")
-      .eq("id", id)
-      .is("deleted_at", null)
-      .single();
+    const [mRes, dRes] = await Promise.all([
+      (supabase as any)
+        .from("meetings")
+        .select(
+          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id, error_message"
+        )
+        .eq("id", id)
+        .is("deleted_at", null)
+        .single(),
+      (supabase as any)
+        .from("decisions")
+        .select("content")
+        .eq("meeting_id", id)
+        .is("valid_until", null)
+        .order("valid_from", { ascending: true }),
+    ]);
 
-    if (error || !m) { setNotFound(true); setLoading(false); return; }
-    setMeeting(m as MeetingRow);
+    const { data: m, error } = mRes;
+    if (error || !m) {
+      setNotFound(true);
+      setLoading(false);
+      return;
+    }
+    const row = m as Record<string, unknown>;
+    const tableDecisions = !dRes.error && Array.isArray(dRes.data)
+      ? ((dRes.data as { content: string }[]).filter(
+          (r) => typeof r.content === "string" && r.content.trim()
+        ))
+      : [];
+    const fallbackJson = decisionsFromMeetingJson(row.decisions);
+    const mergedDecisions =
+      tableDecisions.length > 0 ? tableDecisions : fallbackJson;
+
+    setMeeting({
+      ...(m as MeetingRow),
+      decisions: mergedDecisions.length ? mergedDecisions : null,
+      referenced_documents: normalizeReferencedDocuments(row.referenced_documents),
+    });
 
     const { data: items } = await (supabase as any)
       .from("action_items")
-      .select("id, content, assignee, due_date, confidence, status")
+      .select("id, content, assignee, assignee_user_id, due_date, confidence, status")
       .eq("meeting_id", id)
+      .is("valid_until", null)
       .order("created_at", { ascending: true });
 
-    setActionItems((items as ActionItem[]) ?? []);
+    const normalized = ((items as ActionItem[]) ?? []).map((row) => ({
+      ...row,
+      assignee_user_id: row.assignee_user_id ?? null,
+    }));
+    setActionItems(normalized);
     setLoading(false);
   }, [id]);
 
   useEffect(() => { fetchMeeting(); }, [fetchMeeting]);
 
   useEffect(() => {
+    if (meeting?.approval_status === "published") setEditMode(false);
+  }, [meeting?.approval_status]);
+
+  useEffect(() => {
     if (!meeting || !isProcessing(meeting.status)) return;
     const interval = setInterval(fetchMeeting, 5000);
     return () => clearInterval(interval);
   }, [meeting, fetchMeeting]);
+
+  async function handleRetryAnalysis() {
+    if (!meeting) return;
+    setRetryAnalysisLoading(true);
+    const r = await retryMeetingPipeline({
+      id: meeting.id,
+      workspace_id: meeting.workspace_id,
+      audio_url: meeting.audio_file_url,
+    });
+    setRetryAnalysisLoading(false);
+    if (!r.ok) {
+      alert(r.error);
+      return;
+    }
+    await fetchMeeting();
+  }
 
   // 워크스페이스 멤버 로드 (DRAFT-005)
   async function loadMembers(wsId: string) {
@@ -125,7 +248,8 @@ export default function MeetingDetailPage() {
   }
 
   function enterEditMode() {
-    if (!meeting) return;
+    if (!meeting || meeting.approval_status === "published") return;
+    setEditTitle(meeting.title ?? "");
     setEditSummary(meeting.summary ?? "");
     setEditDecisions((meeting.decisions ?? []).map((d) => d.content));
     setEditActionItems(actionItems.map((a) => ({ ...a })));
@@ -138,30 +262,82 @@ export default function MeetingDetailPage() {
   }
 
   async function saveEdits() {
-    if (!meeting) return;
+    if (!meeting || meeting.approval_status === "published") return;
     setSaving(true);
     const supabase = createClient();
+
+    const trimmedDecisions = editDecisions.map((d) => d.trim()).filter(Boolean);
 
     await (supabase as any)
       .from("meetings")
       .update({
+        title: editTitle.trim() || null,
         summary: editSummary || null,
-        decisions: editDecisions
-          .filter((d) => d.trim())
-          .map((d) => ({ content: d.trim() })),
+        decisions: trimmedDecisions.map((d) => ({ content: d })),
       })
       .eq("id", meeting.id);
 
+    const nowIso = new Date().toISOString();
+    const { error: decExpireErr } = await (supabase as any)
+      .from("decisions")
+      .update({ valid_until: nowIso })
+      .eq("meeting_id", meeting.id)
+      .is("valid_until", null);
+
+    if (decExpireErr) {
+      alert(`Failed to update decisions: ${decExpireErr.message}`);
+      setSaving(false);
+      return;
+    }
+
+    if (trimmedDecisions.length > 0) {
+      const rows = trimmedDecisions.map((content) => ({
+        meeting_id: meeting.id,
+        workspace_id: meeting.workspace_id,
+        content,
+        change_type: "ADD",
+      }));
+      const { error: decInsErr } = await (supabase as any).from("decisions").insert(rows);
+      if (decInsErr) {
+        alert(`Failed to save decisions: ${decInsErr.message}`);
+        setSaving(false);
+        return;
+      }
+    }
+
     for (const item of editActionItems) {
-      await (supabase as any)
-        .from("action_items")
-        .update({
-          content: item.content,
-          assignee: item.assignee,
-          due_date: item.due_date || null,
-          status: item.status,
-        })
-        .eq("id", item.id);
+      const content = item.content.trim() || "Action item";
+      const payload = {
+        content,
+        assignee: item.assignee,
+        assignee_user_id: item.assignee_user_id ?? null,
+        due_date: item.due_date || null,
+        status: item.status,
+      };
+      if (item.id.startsWith(NEW_ACTION_ITEM_PREFIX)) {
+        if (!item.content.trim()) continue;
+        const { error: insErr } = await (supabase as any).from("action_items").insert({
+          ...payload,
+          meeting_id: meeting.id,
+          workspace_id: meeting.workspace_id,
+          change_type: "ADD",
+        });
+        if (insErr) {
+          alert(`Failed to save action item: ${insErr.message}`);
+          setSaving(false);
+          return;
+        }
+      } else {
+        const { error: upErr } = await (supabase as any)
+          .from("action_items")
+          .update(payload)
+          .eq("id", item.id);
+        if (upErr) {
+          alert(`Failed to update action item: ${upErr.message}`);
+          setSaving(false);
+          return;
+        }
+      }
     }
 
     await fetchMeeting();
@@ -217,6 +393,26 @@ export default function MeetingDetailPage() {
     setNotionWarningModal(false);
 
     const supabase = createClient();
+
+    // PUB-001: publish_meeting 은 approval_status === 'ready' 일 때만 허용됨.
+    // draft → ready 전환은 set_meeting_ready RPC 가 담당한다.
+    if (meeting.approval_status === "draft") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: readyErr } = await (supabase as any).rpc("set_meeting_ready", {
+        p_meeting_id: meeting.id,
+      });
+      if (readyErr) {
+        const msg =
+          readyErr.code === "42501"
+            ? "You don't have permission to publish. Ask an Owner."
+            : readyErr.message;
+        alert(`Failed to prepare publish: ${msg}`);
+        setPublishing(false);
+        return;
+      }
+      setMeeting((prev) => (prev ? { ...prev, approval_status: "ready" } : prev));
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase as any).rpc("publish_meeting", {
       p_meeting_id: meeting.id,
@@ -286,6 +482,7 @@ export default function MeetingDetailPage() {
   if (!meeting) return null;
 
   const isReady = meeting.status === "ready" || meeting.status === "published";
+  const canEdit = isReady && meeting.approval_status !== "published";
   const dateStr = new Date(meeting.meeting_date ?? meeting.created_at).toLocaleDateString("en-US", {
     year: "numeric", month: "long", day: "numeric",
   });
@@ -413,13 +610,23 @@ export default function MeetingDetailPage() {
           {/* 헤더 카드 */}
           <div className="rounded-xl border border-[#e2e8f0] bg-white p-6 shadow-sm space-y-3">
             <div className="flex items-start justify-between gap-4">
-              <h1 className="text-xl font-bold leading-snug text-[#0a2540]">
-                {meeting.title || "Untitled Meeting"}
-              </h1>
+              {editMode && canEdit ? (
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  placeholder="Meeting title"
+                  className="flex-1 text-xl font-bold leading-snug text-[#0a2540] rounded-xl border border-[#e2e8f0] px-3 py-2 outline-none focus:border-[#ff6b35]"
+                />
+              ) : (
+                <h1 className="text-xl font-bold leading-snug text-[#0a2540]">
+                  {meeting.title || "Untitled Meeting"}
+                </h1>
+              )}
               <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                 <StatusBadge status={meeting.status} />
-                {isReady && !editMode && (
-                  <button onClick={enterEditMode} className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] px-3 py-1.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc] transition-colors">
+                {canEdit && !editMode && (
+                  <button onClick={enterEditMode} type="button" className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] px-3 py-1.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc] transition-colors">
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </button>
                 )}
@@ -447,7 +654,14 @@ export default function MeetingDetailPage() {
             <div className="flex items-center gap-1.5 text-sm text-[#64748b]">
               <CalendarDays className="h-4 w-4" />{dateStr}
             </div>
-            {!isReady && <ProcessingProgress status={meeting.status} />}
+            {!isReady && (
+              <ProcessingProgress
+                status={meeting.status}
+                errorMessage={meeting.status === "error" ? meeting.error_message : null}
+                onRetry={meeting.status === "error" ? handleRetryAnalysis : undefined}
+                retryLoading={retryAnalysisLoading}
+              />
+            )}
             {publishDone && (
               <div className="flex items-center gap-2 rounded-lg bg-green-50 border border-green-200 px-4 py-2.5">
                 <p className="text-sm font-medium text-green-700">✅ Meeting notes published successfully!</p>
@@ -456,7 +670,7 @@ export default function MeetingDetailPage() {
           </div>
 
           {/* 편집 모드 저장/취소 바 */}
-          {editMode && (
+          {editMode && canEdit && (
             <div className="flex items-center justify-between rounded-xl border border-[#ff6b35]/30 bg-[#fff4f0] px-5 py-3">
               <p className="text-sm font-semibold text-[#ff6b35]">✏️ Edit mode — changes not saved yet</p>
               <div className="flex gap-2">
@@ -475,7 +689,7 @@ export default function MeetingDetailPage() {
             <>
               {/* AI 요약 (DRAFT-001) */}
               <Section icon={<Sparkles className="h-4 w-4 text-[#ff6b35]" />} title="AI Summary">
-                {editMode ? (
+                {editMode && canEdit ? (
                   <textarea
                     value={editSummary}
                     onChange={(e) => setEditSummary(e.target.value)}
@@ -492,7 +706,7 @@ export default function MeetingDetailPage() {
 
               {/* 결정사항 (DRAFT-001) */}
               <Section icon={<CheckCircle2 className="h-4 w-4 text-[#2e5c8a]" />} title="Decisions">
-                {editMode ? (
+                {editMode && canEdit ? (
                   <div className="space-y-2">
                     {editDecisions.map((d, i) => (
                       <div key={i} className="flex items-center gap-2">
@@ -527,7 +741,7 @@ export default function MeetingDetailPage() {
 
               {/* 액션 아이템 (DRAFT-001 + DRAFT-005) */}
               <Section icon={<ListTodo className="h-4 w-4 text-[#2e5c8a]" />} title="Action Items">
-                {editMode ? (
+                {editMode && canEdit ? (
                   <div className="space-y-3">
                     {editActionItems.map((item, i) => (
                       <div key={item.id} className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-4 space-y-3">
@@ -538,15 +752,28 @@ export default function MeetingDetailPage() {
                           className="w-full h-10 rounded-xl border border-[#e2e8f0] bg-white px-4 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
                         />
                         <div className="flex gap-2 flex-wrap">
-                          {/* DRAFT-005: 담당자 드롭다운 */}
                           <select
-                            value={item.assignee ?? ""}
-                            onChange={(e) => setEditActionItems((prev) => prev.map((a, idx) => idx === i ? { ...a, assignee: e.target.value || null } : a))}
+                            value={item.assignee_user_id ?? ""}
+                            onChange={(e) => {
+                              const uid = e.target.value || null;
+                              const m = members.find((x) => x.user_id === uid);
+                              setEditActionItems((prev) =>
+                                prev.map((a, idx) =>
+                                  idx === i
+                                    ? {
+                                        ...a,
+                                        assignee_user_id: uid,
+                                        assignee: uid ? (m?.name ?? m?.email ?? null) : null,
+                                      }
+                                    : a
+                                )
+                              );
+                            }}
                             className="flex-1 min-w-[140px] h-9 rounded-xl border border-[#e2e8f0] bg-white px-3 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
                           >
                             <option value="">Unassigned</option>
                             {members.map((m) => (
-                              <option key={m.user_id} value={m.name ?? m.email}>
+                              <option key={m.user_id} value={m.user_id}>
                                 {m.name ?? m.email}
                               </option>
                             ))}
@@ -569,6 +796,13 @@ export default function MeetingDetailPage() {
                         </div>
                       </div>
                     ))}
+                    <button
+                      type="button"
+                      onClick={() => setEditActionItems((prev) => [...prev, emptyDraftActionItem()])}
+                      className="flex items-center gap-1.5 text-sm font-semibold text-[#ff6b35] hover:opacity-80"
+                    >
+                      <Plus className="h-4 w-4" /> Add action item
+                    </button>
                     {editActionItems.length === 0 && (
                       <p className="text-sm italic text-[#94a3b8]">No action items yet.</p>
                     )}
@@ -598,7 +832,8 @@ export default function MeetingDetailPage() {
               </Section>
 
               {/* 관련 문서 (DRAFT-006) */}
-              {meeting.referenced_documents && meeting.referenced_documents.length > 0 && (
+              {Array.isArray(meeting.referenced_documents) &&
+                meeting.referenced_documents.length > 0 && (
                 <Section icon={<FileText className="h-4 w-4 text-[#2e5c8a]" />} title="Referenced Documents">
                   <div className="flex flex-wrap gap-2">
                     {meeting.referenced_documents.map((doc, i) => (

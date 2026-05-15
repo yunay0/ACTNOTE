@@ -27,6 +27,9 @@ export default function OnboardingInvitePage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [deliveryWarnings, setDeliveryWarnings] = useState<
+    { email: string; link: string; notice_code?: string }[]
+  >([]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -36,7 +39,7 @@ export default function OnboardingInvitePage() {
         return;
       }
 
-      const { data: rows, error: selErr } = await supabase
+      const { data: rows, error: selErr } = await (supabase as any)
         .from("workspaces")
         .select("id, name")
         .eq("owner_id", data.user.id)
@@ -91,12 +94,15 @@ export default function OnboardingInvitePage() {
 
     setLoading(true);
     setError(null);
+    setDeliveryWarnings([]);
     const supabase = createClient();
 
     try {
+      const warnings: { email: string; link: string; notice_code?: string }[] = [];
+
       for (const email of valid) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: invite, error: invErr } = await (supabase as any).rpc("create_invite", {
+        const { data: rawInvite, error: invErr } = await (supabase as any).rpc("create_invite", {
           p_workspace_id: workspaceId,
           p_email: email,
           p_role: "member",
@@ -109,14 +115,59 @@ export default function OnboardingInvitePage() {
           return;
         }
 
-        await fetch("/api/workspace/send-invite", {
+        const inviteRow = Array.isArray(rawInvite) ? rawInvite[0] : rawInvite;
+        if (
+          !inviteRow ||
+          typeof inviteRow.token !== "string" ||
+          typeof inviteRow.workspace_id !== "string"
+        ) {
+          setError("Invite was created but the response format was unexpected.");
+          setLoading(false);
+          return;
+        }
+
+        const payload = {
+          id: inviteRow.id as string,
+          workspace_id: inviteRow.workspace_id as string,
+          token: inviteRow.token as string,
+          invited_email: (inviteRow.invited_email as string) ?? email,
+        };
+
+        const sendRes = await fetch("/api/workspace/send-invite", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ invite }),
-        }).catch(() => null);
+          body: JSON.stringify({ invite: payload }),
+        });
+        const sendBody = (await sendRes.json().catch(() => ({}))) as {
+          error?: string;
+          email_sent?: boolean;
+          invite_link?: string;
+          notice_code?: string;
+        };
+
+        if (!sendRes.ok) {
+          setError(sendBody.error ?? `Failed to send invitation email to ${email} (${sendRes.status}).`);
+          if (typeof sendBody.invite_link === "string") {
+            warnings.push({ email, link: sendBody.invite_link, notice_code: sendBody.notice_code });
+            setDeliveryWarnings(warnings);
+          }
+          setLoading(false);
+          return;
+        }
+
+        if (sendBody.email_sent === false && typeof sendBody.invite_link === "string") {
+          warnings.push({ email, link: sendBody.invite_link, notice_code: sendBody.notice_code });
+        }
       }
 
-      router.push("/meetings");
+      if (warnings.length > 0) {
+        setDeliveryWarnings(warnings);
+        setLoading(false);
+        return;
+      }
+
+      router.push("/workspace/select");
+      setLoading(false);
     } catch {
       setError("Something went wrong. Please try again.");
       setLoading(false);
@@ -124,7 +175,7 @@ export default function OnboardingInvitePage() {
   }
 
   function handleSkip() {
-    router.push("/meetings");
+    router.push("/workspace/select");
   }
 
   if (checkingAuth) {
@@ -197,6 +248,43 @@ export default function OnboardingInvitePage() {
 
             {error && (
               <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>
+            )}
+
+            {deliveryWarnings.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 space-y-3">
+                <p className="text-sm font-semibold text-amber-950">
+                  Invitations created — some emails were not delivered
+                </p>
+                <p className="text-[12px] leading-snug text-amber-900/90">
+                  {deliveryWarnings.some((w) => w.notice_code === "RESEND_RECIPIENT_RESTRICTED")
+                    ? "Resend test mode only delivers to your Resend account email. Verify a domain at resend.com/domains to email teammates directly, or copy each link below."
+                    : "Copy each link and send it manually. Teammates must sign in with the invited email."}
+                </p>
+                <ul className="space-y-2">
+                  {deliveryWarnings.map((w) => (
+                    <li key={w.email} className="rounded-md border border-amber-200/80 bg-white px-3 py-2 text-[12px]">
+                      <span className="font-semibold text-[#0a2540]">{w.email}</span>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#64748b]">{w.link}</span>
+                        <button
+                          type="button"
+                          onClick={() => navigator.clipboard.writeText(w.link)}
+                          className="shrink-0 rounded-md border border-amber-300 px-2 py-1 text-[11px] font-bold text-amber-950 hover:bg-amber-50"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  onClick={() => router.push("/workspace/select")}
+                  className="text-sm font-bold text-amber-950 underline hover:no-underline"
+                >
+                  Continue to workspace →
+                </button>
+              </div>
             )}
 
             <div className="flex gap-4 pt-8">

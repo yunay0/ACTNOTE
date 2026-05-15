@@ -5,6 +5,7 @@ import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
 import { createClient } from "@/lib/supabase/client";
 import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
+import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 
 function rowToMeeting(m: Record<string, unknown>): Meeting {
   // action_items는 Supabase nested select count: [{ count: N }] 형태로 반환됨
@@ -25,14 +26,16 @@ function rowToMeeting(m: Record<string, unknown>): Meeting {
     participants: (m.participants as string[] | null) ?? [],
     meeting_type: (m.meeting_type as string | null) ?? null,
     action_items_count,
+    error_message: (m.error_message as string | null) ?? null,
   };
 }
 
 export type DeleteMeetingResult = { ok: true } | { ok: false; error: string };
 
 export function useMeetings() {
+  const { workspaceId: ctxWorkspaceId, hydrated: ctxHydrated } =
+    useWorkspaceContext();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   const loadMeetings = useCallback(async (wsId: string) => {
@@ -40,7 +43,7 @@ export function useMeetings() {
     const { data } = await (supabase as any)
       .from("meetings")
       .select(
-        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, action_items(count)"
+        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, error_message, action_items(count)"
       )
       .eq("workspace_id", wsId)
       .is("deleted_at", null)
@@ -50,60 +53,58 @@ export function useMeetings() {
   }, []);
 
   useEffect(() => {
-    const supabase = createClient();
-
-    async function init() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      // owner이거나 멤버인 워크스페이스 가져오기
-      const { data: memRow } = await (supabase as any)
-        .from("workspace_members")
-        .select("workspace_id")
-        .eq("user_id", user.id)
-        .limit(1)
-        .single();
-
-      const wsId = (memRow?.workspace_id as string) ?? null;
-      if (!wsId) return;
-
-      setWorkspaceId(wsId);
-      await loadMeetings(wsId);
-      setHydrated(true);
-    }
-
-    init();
-  }, [loadMeetings]);
+    if (!ctxHydrated || !ctxWorkspaceId) return;
+    let cancelled = false;
+    setHydrated(false);
+    loadMeetings(ctxWorkspaceId).then(() => {
+      if (!cancelled) setHydrated(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [ctxHydrated, ctxWorkspaceId, loadMeetings]);
 
   // 처리 중인 미팅이 있으면 5초마다 상태 새로고침
   useEffect(() => {
-    if (!workspaceId || !hydrated) return;
+    if (!ctxWorkspaceId || !hydrated) return;
     if (!meetings.some((m) => isProcessing(m.status))) return;
 
-    const interval = setInterval(() => loadMeetings(workspaceId), 5000);
+    const interval = setInterval(() => loadMeetings(ctxWorkspaceId), 5000);
     return () => clearInterval(interval);
-  }, [workspaceId, hydrated, meetings, loadMeetings]);
+  }, [ctxWorkspaceId, hydrated, meetings, loadMeetings]);
 
   const deleteMeeting = useCallback(
     async (id: string): Promise<DeleteMeetingResult> => {
-      if (!workspaceId) {
+      if (!ctxWorkspaceId) {
         return { ok: false, error: "Workspace not loaded yet." };
       }
       const supabase = createClient();
-      const result = await softDeleteMeetingRow(supabase, id, workspaceId);
+      const result = await softDeleteMeetingRow(supabase, id, ctxWorkspaceId);
       if (!result.ok) {
         return { ok: false, error: result.message };
       }
       setMeetings((prev) => prev.filter((m) => m.id !== id));
       return { ok: true };
     },
-    [workspaceId]
+    [ctxWorkspaceId],
   );
 
   const getMeeting = useCallback(
     (id: string): Meeting | undefined => meetings.find((m) => m.id === id),
-    [meetings]
+    [meetings],
   );
 
-  return { meetings, deleteMeeting, getMeeting, hydrated, workspaceId, reloadMeetings: loadMeetings };
+  const reloadMeetings = useCallback(async () => {
+    if (!ctxWorkspaceId) return;
+    await loadMeetings(ctxWorkspaceId);
+  }, [ctxWorkspaceId, loadMeetings]);
+
+  return {
+    meetings,
+    deleteMeeting,
+    getMeeting,
+    hydrated,
+    workspaceId: ctxWorkspaceId,
+    reloadMeetings,
+  };
 }

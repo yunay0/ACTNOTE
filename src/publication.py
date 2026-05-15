@@ -184,12 +184,6 @@ def publish_meeting_db_only(
     if not is_valid:
         raise ValidationError(missing)
 
-    from src.notion_sync import check_notion_integration
-    if not check_notion_integration(workspace_id, sb_client):
-        raise ValidationError([
-            "notion_integration (Notion 미연동 — 워크스페이스 설정 > 외부 연동에서 연동 후 재시도)"
-        ])
-
     now = _now_iso()
     resp = (
         sb_client.table("meetings")
@@ -215,11 +209,13 @@ def push_published_to_notion(
     호출되면 ``notion_page_id`` 가 이미 있는 경우 업데이트로 동작 (notion_sync 가 처리).
 
     Returns:
-        ``{"notion_page_id": str, "action_ticket_count": int}``
+        ``{"notion_page_id": str | None, "action_ticket_count": int}``
 
     Raises:
-        ValueError: Notion 미연동.
         RuntimeError: Notion API 호출 실패 (Inngest 재시도가 처리).
+
+    Note:
+        Notion 미연동 시 외부 동기화 없이 성공으로 반환한다 (로컬 QA / 선택 연동).
     """
     from src.notion_sync import (
         check_notion_integration,
@@ -228,9 +224,12 @@ def push_published_to_notion(
     )
 
     if not check_notion_integration(workspace_id, sb_client):
-        raise ValueError(
-            f"push_published_to_notion: Notion 미연동 (workspace_id={workspace_id!r})"
+        _log.info(
+            "push_published_to_notion: skip (no Notion integration) workspace_id=%s meeting_id=%s",
+            workspace_id,
+            meeting_id,
         )
+        return {"notion_page_id": None, "action_ticket_count": 0}
 
     meeting_resp = (
         sb_client.table("meetings")
@@ -412,17 +411,13 @@ if __name__ == "__main__":
     assert row["approval_status"] == "ready", f"expected ready, got {row['approval_status']}"
     console.print(f"[green][OK][/] set_ready → approval_status=ready")
 
-    # --- INTEG-005: Notion 미연동 시 ValidationError 확인 ---
-    try:
-        publish_meeting(mid_full, user_id, workspace_id, sb)
-        assert False, "Notion 미연동 상태에서 ValidationError가 발생해야 합니다"
-    except ValidationError as e:
-        assert any("notion_integration" in m for m in e.missing), f"unexpected missing: {e.missing}"
-        console.print(f"[green][OK][/] INTEG-005 Notion 미연동 → ValidationError 정상 발생")
+    # --- publish: Notion 미연동이어도 DB 발행 + Notion 푸시 스킵 ---
+    pub_row = publish_meeting(mid_full, user_id, workspace_id, sb)
+    assert pub_row.get("approval_status") == "published", pub_row
+    assert pub_row.get("notion_page_id") is None
+    assert pub_row.get("action_ticket_count", 0) == 0
+    console.print("[green][OK][/] publish_meeting without Notion (push skipped)")
 
-    # --- revoke (set_ready 이후 draft로 되돌리는 경로가 없으므로 published 경유) ---
-    # INTEG-005 체크 이후 상태는 여전히 'ready' 이므로 정리만 수행
-    sb.table("meetings").update({"approval_status": "published", "published_at": _now_iso()}).eq("id", mid_full).execute()
     revoke_publication(mid_full, user_id, workspace_id, sb)
     row = sb.table("meetings").select("approval_status, published_at").eq("id", mid_full).single().execute().data
     assert row["approval_status"] == "draft"

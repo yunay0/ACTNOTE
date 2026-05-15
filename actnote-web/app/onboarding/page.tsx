@@ -21,7 +21,7 @@ export default function OnboardingPage() {
         return;
       }
 
-      const { data: rows, error: selErr } = await supabase
+      const { data: rows, error: selErr } = await (supabase as any)
         .from("workspaces")
         .select("name")
         .eq("owner_id", data.user.id)
@@ -36,7 +36,7 @@ export default function OnboardingPage() {
       const ws = rows?.[0];
       const displayName = ws?.name ?? "";
       if (ws && !displayName.endsWith("'s workspace")) {
-        router.replace("/meetings");
+        router.replace("/workspace/select");
         return;
       }
 

@@ -33,7 +33,7 @@ export default function SignupPage() {
 
     // Confirm email 이 꺼져 있으면 세션이 바로 생김 → 바로 온보딩으로
     if (data.session) {
-      window.location.assign("/onboarding");
+      window.location.assign("/workspace/select");
       return;
     }
 

@@ -14,7 +14,7 @@ Public API:
 
 환경변수:
     RESEND_API_KEY      : 필수 (없으면 dry_run 강제)
-    EMAIL_FROM          : 기본 발신자. 형식 "Actnote <noreply@actnote.app>".
+    EMAIL_FROM          : 기본 발신자. ``Display <email@domain>`` 형식. Resend 는 표시 이름·주소 모두 ASCII 만 허용 (한글 표시명 불가).
                           미설정 시 onboarding@resend.dev (개발 전용)
     NEXT_PUBLIC_APP_URL : 본문 안에 들어가는 호스트 (예: "https://app.actnote.com")
 
@@ -35,6 +35,37 @@ _log = logging.getLogger(__name__)
 _console = Console()
 
 DEFAULT_FROM = "Actnote <onboarding@resend.dev>"
+
+
+def _is_ascii_only(s: str) -> bool:
+    """Resend `from` rejects non-ASCII in display name or mailbox."""
+    return all(ord(c) < 128 for c in s)
+
+
+def _normalize_resend_from(raw: str | None) -> str:
+    """Normalize EMAIL_FROM for Resend (ASCII-only; fix fullwidth brackets)."""
+    if not raw or not raw.strip():
+        return DEFAULT_FROM
+    s = raw.strip().replace("\ufeff", "").replace("\u200b", "").replace("\u200c", "").replace("\u200d", "")
+    s = s.replace("\uff1c", "<").replace("\uff1e", ">")
+    if "<" in s and ">" in s:
+        try:
+            left, rest = s.split("<", 1)
+            addr, _ = rest.split(">", 1)
+        except ValueError:
+            return DEFAULT_FROM
+        display = left.strip().strip('"').strip("'")
+        addr = addr.strip()
+        if not display:
+            display = "Actnote"
+        if "@" not in addr or not _is_ascii_only(addr):
+            return DEFAULT_FROM
+        if not _is_ascii_only(display):
+            display = "Actnote"
+        return f"{display} <{addr}>"
+    if "@" not in s or not _is_ascii_only(s):
+        return DEFAULT_FROM
+    return s
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +112,7 @@ def send_email(
     if not recipients:
         raise ValueError("send_email: to 가 비어있습니다.")
 
-    sender = from_addr or os.getenv("EMAIL_FROM") or DEFAULT_FROM
+    sender = _normalize_resend_from(from_addr or os.getenv("EMAIL_FROM"))
     body_text = text if text is not None else _strip_html(html)
 
     if _is_dry_run(dry_run):
@@ -265,19 +296,19 @@ def render_analysis_complete_email(
     app_url: str | None = None,
 ) -> dict[str, str]:
     """분석 완료 알림 메일."""
-    title = f'"{meeting_title}" 분석이 완료되었습니다'
+    title = f'Analysis ready: "{meeting_title}"'
     body = (
         f'<p style="margin:0 0 24px 0;line-height:1.6">'
-        f'요약, 결정사항, 액션 아이템이 모두 준비되었어요. 회의록을 확인해 주세요.'
-        f'</p>'
+        f"Summary, decisions, and action items are ready. Open your draft to review and publish."
+        f"</p>"
         f'<a href="{escape(meeting_url)}" '
         f'style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;'
         f'padding:12px 24px;border-radius:8px;font-weight:600">'
-        f'회의록 열기</a>'
+        f"Open meeting</a>"
     )
     text = (
-        f'"{meeting_title}" 분석이 완료되었습니다.\n\n'
-        f'회의록 열기:\n{meeting_url}\n'
+        f'Analysis finished for "{meeting_title}".\n\n'
+        f"Open draft:\n{meeting_url}\n"
     )
     return {
         "subject": title,
@@ -293,21 +324,22 @@ def render_analysis_failed_email(
     app_url: str | None = None,
 ) -> dict[str, str]:
     """분석 실패 알림 메일."""
-    title = f'"{meeting_title}" 분석에 실패했습니다'
+    title = f'Analysis failed: "{meeting_title}"'
     body = (
         f'<p style="margin:0 0 16px 0;line-height:1.6">'
-        f'아래 사유로 분석을 마치지 못했습니다. 파일을 다시 업로드하거나 운영팀에 문의해 주세요.'
-        f'</p>'
+        f"We could not finish analyzing this recording. Try again with a different file, "
+        f"or contact support if you need help."
+        f"</p>"
         f'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;'
         f'padding:16px;color:#991b1b;font-family:monospace;font-size:13px;line-height:1.5;'
         f'white-space:pre-wrap;word-break:break-word">'
         f'{escape(error_message)}'
-        f'</div>'
+        f"</div>"
     )
     text = (
-        f'"{meeting_title}" 분석에 실패했습니다.\n\n'
-        f'사유:\n{error_message}\n\n'
-        f'문의: support@actnote.app\n'
+        f'Analysis failed for "{meeting_title}".\n\n'
+        f"Reason:\n{error_message}\n\n"
+        f"Support: support@actnote.app\n"
     )
     return {
         "subject": title,

@@ -29,6 +29,7 @@ WHISPER_MODEL: str = "whisper-1"
 MAX_FILE_SIZE_BYTES: int = 25 * 1024 * 1024  # Whisper API 업로드 제한
 CHUNK_DURATION_MS: int = 10 * 60 * 1000  # 10분 (128kbps MP3로 ~10MB, 안전)
 MAX_RETRIES: int = 2
+MIN_SPEECH_DURATION_SEC: float = 0.35  # below → likely silent / corrupt container
 
 _console = Console()
 
@@ -77,8 +78,7 @@ def transcribe(
     path = Path(audio_path)
     if not path.exists():
         raise FileNotFoundError(
-            f"오디오 파일을 찾을 수 없습니다: {audio_path}\n"
-            f"  test_data/ 폴더에 파일을 두고 다시 시도하세요."
+            f"Audio file not found: {audio_path}"
         )
     client = _get_client()
     tr = tracker if tracker is not None else cost_tracker.default_tracker
@@ -93,19 +93,23 @@ def transcribe(
     if file_size <= MAX_FILE_SIZE_BYTES:
         result = _transcribe_one(client, path, language=language)
         tr.track_whisper(duration_seconds)
-        return _normalize_result(result, language=language, duration=duration_seconds)
+        out = _normalize_result(result, language=language, duration=duration_seconds)
+        _ensure_transcription_has_speech(out, duration_seconds)
+        return out
 
     _console.print(
         f"[yellow]파일 크기 {file_size / 1024 / 1024:.1f}MB > 25MB. "
         f"청크 분할 처리합니다.[/]"
     )
-    return _transcribe_chunked(
+    out = _transcribe_chunked(
         client,
         audio,
         language=language,
         total_duration=duration_seconds,
         tracker=tr,
     )
+    _ensure_transcription_has_speech(out, duration_seconds)
+    return out
 
 
 def _transcribe_one(client: OpenAI, file_path: Path, language: str) -> Any:
@@ -178,6 +182,21 @@ def _transcribe_chunked(
         "language": language,
         "duration": total_duration,
     }
+
+
+def _ensure_transcription_has_speech(result: TranscriptionDict, duration_seconds: float) -> None:
+    """Raise if recording has no usable speech (silent video, empty track, etc.)."""
+    text = (result.get("text") or "").strip()
+    segments = result.get("segments") or []
+    nonempty_seg = any((str(s.get("text", "")).strip()) for s in segments if isinstance(s, dict))
+    if duration_seconds < MIN_SPEECH_DURATION_SEC:
+        raise RuntimeError(
+            "no discernible audio: recording is too short or silent (duration below threshold)"
+        )
+    if not text and not nonempty_seg:
+        raise RuntimeError(
+            "no discernible audio: transcription returned no speech (silent or missing audio track)"
+        )
 
 
 def _normalize_result(result: Any, language: str, duration: float) -> TranscriptionDict:

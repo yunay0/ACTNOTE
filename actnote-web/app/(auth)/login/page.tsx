@@ -47,7 +47,7 @@ function LoginForm() {
       setLoading(false);
       return;
     }
-    window.location.assign("/onboarding");
+    window.location.assign("/workspace/select");
   }
 
   return (

@@ -45,10 +45,7 @@ def diarize(audio_path: str) -> list[DiarizationSegment]:
     """
     path = Path(audio_path)
     if not path.exists():
-        raise FileNotFoundError(
-            f"오디오 파일을 찾을 수 없습니다: {audio_path}\n"
-            f"  test_data/ 폴더에 파일을 두고 다시 시도하세요."
-        )
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
     pipeline = _load_pipeline()
     device = _select_device()

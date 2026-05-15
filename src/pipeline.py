@@ -28,6 +28,7 @@ def _update_meeting(
     meeting_id: str,
     extracted: dict,
     aligned_segments: list[dict],
+    meeting_title: str | None = None,
 ) -> None:
     """meetings 테이블의 AI 추출 결과 컬럼을 UPDATE한다."""
     import json
@@ -42,9 +43,12 @@ def _update_meeting(
         "summary": extracted.get("summary"),
         "updated_at": "now()",
     }
-    title = extracted.get("title")
-    if title is not None:
-        payload["title"] = title
+    # 사용자가 업로드 시 제목을 적었으면 LLM title 로 덮어쓰지 않음 (QA: 제목 일관성)
+    user_title = (meeting_title or "").strip()
+    if not user_title:
+        llm_title = extracted.get("title")
+        if llm_title is not None:
+            payload["title"] = str(llm_title).strip()[:200] or "Meeting"
     if duration is not None:
         payload["duration_seconds"] = int(duration)
     payload["ai_draft_notes"] = json.dumps(extracted, ensure_ascii=False)
@@ -52,6 +56,15 @@ def _update_meeting(
     ref_docs = extracted.get("referenced_documents")
     if ref_docs is not None:
         payload["referenced_documents"] = json.dumps(ref_docs, ensure_ascii=False)
+
+    raw_decisions = extracted.get("decisions", [])
+    if isinstance(raw_decisions, list):
+        decision_objs = [
+            {"content": str(x).strip()}
+            for x in raw_decisions
+            if str(x).strip()
+        ]
+        payload["decisions"] = json.dumps(decision_objs, ensure_ascii=False)
 
     sb_client.table("meetings").update(payload).eq("id", meeting_id).execute()
 
@@ -376,7 +389,9 @@ def run_pipeline(
         sb = store.client
 
         try:
-            _update_meeting(sb, meeting_id, extracted, aligned)
+            _update_meeting(
+                sb, meeting_id, extracted, aligned, meeting_title=meeting_title
+            )
             _console.print("        [green][OK][/] meetings UPDATE 완료")
         except Exception as e:
             meeting_update_error = f"{type(e).__name__}: {e}"
@@ -679,7 +694,9 @@ def run_pipeline_from_transcript(
     if isinstance(store, SupabaseStorage):
         sb = store.client
         try:
-            _update_meeting(sb, meeting_id, extracted, aligned)
+            _update_meeting(
+                sb, meeting_id, extracted, aligned, meeting_title=meeting_title
+            )
         except Exception as e:
             _console.print(f"        [yellow][WARN] meetings UPDATE 실패: {e}[/]")
         try:
