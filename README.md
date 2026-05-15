@@ -23,6 +23,7 @@
 8. [폴더 구조](#8-폴더-구조)
 9. [비용 가드레일](#9-비용-가드레일)
 10. [메인 1단계 완료 기능 요약](#10-메인-1단계-완료-기능-요약)
+11. [Next.js 서버 라우트](#11-nextjs-서버-라우트)
 
 ---
 
@@ -41,8 +42,10 @@
 ```
 [Next.js actnote-web]
        │  업로드 → Storage → meetings INSERT → /api/trigger-pipeline
+       │  워크스페이스 초대: create_invite (RPC) → /api/workspace/send-invite → Resend (또는 Inngest 워커)
        ▼
 [Inngest] ── meeting/process ─┐
+       └── notification/email_send ─┐ (RESEND 없을 때 워커 경유 등)
                               ▼
 [Python Worker]
    ├─ STT (Whisper)
@@ -78,22 +81,38 @@
 | Supabase | DB / Auth / Storage | **service_role** 는 서버·워커만 |
 | Inngest | 이벤트 · 워커 오케스트레이션 | 로컬은 `inngest dev` + dev 모드 |
 
-### 프론트 (브라우저)
+### 프론트 (브라우저에 노출 가능한 변수만)
 
 | 변수 | 용도 |
 |------|------|
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase 프로젝트 URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon 키 (RLS) |
-| `NEXT_PUBLIC_APP_URL` | OAuth · 메일 링크 베이스 URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon 키 (RLS). **service_role 금지** |
+| `NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET` | Storage 버킷명 (워커 `SUPABASE_STORAGE_BUCKET` 과 동일 권장) |
+| `NEXT_PUBLIC_APP_URL` | OAuth 리다이렉트, 초대 링크, 메일 내 링크의 **절대 URL origin** |
+| `NEXT_PUBLIC_SUPPORT_EMAIL` | 분석 실패 등 사용자 안내용 (기획 확정 주소) |
+| `INNGEST_EVENT_KEY` | `/api/trigger-pipeline` 등에서 Inngest 로 이벤트 발송 시 필요 |
 
-### 선택
+### 서버 전용 (Next Route Handler — `actnote-web` 배포 환경)
 
-| 서비스 | 용도 |
-|--------|------|
-| Notion OAuth | 발행 시 Notion 동기화 |
-| Resend | 초대·분석 완료/실패 등 메일 (`RESEND_API_KEY`) |
+워커와 별도로, **브라우저에서 호출하는 Next API** 가 메일을 직접 보낼 때 Vercel 등에 아래가 필요합니다.
 
-전체 카탈로그: [`.env.example`](./.env.example) · 프론트는 `actnote-web/.env.local` 권장.
+| 변수 | 용도 |
+|------|------|
+| `RESEND_API_KEY` | 워크스페이스 초대 메일 등 (`/api/workspace/send-invite`) |
+| `EMAIL_FROM` | Resend `from` 필드. **ASCII만** (표시 이름에 한글·전각 문자 금지). 검증된 도메인 주소 권장 |
+
+**Resend 운영 참고**
+
+- 도메인 미검증(테스트 계정) 상태에서는 **수신 주소가 Resend 가입 메일 등으로 제한**되는 경우가 많습니다. 이 경우에도 초대 **레코드와 개인 초대 링크**는 생성되며, 설정 화면에서 링크를 복사해 공유할 수 있습니다.
+- 임의 수신자에게 메일까지 보내려면 [Resend Domains](https://resend.com/domains) 에서 발송 도메인을 검증하고, `EMAIL_FROM` 을 그 도메인 주소로 맞춘 뒤 재배포하세요.
+
+### 공개 URL (`NEXT_PUBLIC_APP_URL`)
+
+- **값에는 스킴만 포함된 URL 한 덩어리만** 두는 것을 권장합니다 (예: `https://app.example.com`).
+- 배포 플랫폼에서 같은 줄에 `# 주석` 을 붙이면, 값 전체가 깨져 초대 링크가 이상해질 수 있습니다. 주석은 **반드시 다음 줄**에 작성하세요.
+- 서버 코드에서는 `actnote-web/lib/server/public-app-url.ts` 의 `sanitizePublicAppOrigin` 로 공백+`#` 이후를 잘라 복구하지만, 환경 변수는 깨끗하게 유지하는 것이 안전합니다.
+
+전체 카탈로그: [`.env.example`](./.env.example) · 웹 전용 요약: [`actnote-web/.env.example`](./actnote-web/.env.example) · 로컬은 `actnote-web/.env.local` 권장.
 
 ---
 
@@ -112,9 +131,9 @@ cp .env.example .env    # PowerShell: Copy-Item .env.example .env
 uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
 # 5) Supabase 마이그레이션
-#    SQL Editor 에서 migrations/*.sql 을 파일명 번호 순으로 실행합니다.
-#    필수 순서·체크리스트: docs/frontend-handoff.md §9 및 팀 내부 가이드.
-#    예: 001 → … → 018_remove_member, 이후 019~022 등 누적분 (프로젝트의 migrations/ 목록 기준).
+#    SQL Editor 에서 migrations/*.sql 을 팀이 정한 순서로 실행합니다.
+#    파일명에 동일 번호(예: 014_*) 가 두 개 있을 수 있으므로, 순서는 docs/frontend-handoff.md 및 운영 DB 기준을 따르세요.
+#    현재 레포에는 001 … 022 등이 포함되어 있습니다 (목록은 migrations/ 디렉터리 참고).
 ```
 
 **Storage**: `meetings` 버킷(private) 생성.
@@ -126,16 +145,30 @@ uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_
 ```bash
 cd actnote-web
 npm install
-# actnote-web/.env.local 에 NEXT_PUBLIC_SUPABASE_* , NEXT_PUBLIC_APP_URL 등 설정
+cp .env.example .env.local   # 값 채우기
 npm run dev
 # → http://localhost:3000
 ```
+
+**로컬에서 파이프라인까지 보려면** 루트 `.env.example` 상단 주석의 Inngest Dev 워커 연결 절차를 따르고, 필요 시 `actnote-web/.env.local` 에 `INNGEST_DEV=1` 을 추가합니다.
 
 **동작 요약 (웹)**
 
 - 로그인/회원가입 후 **`/workspace/select`** 에서 소속 워크스페이스 수에 따라 홈으로 보내거나 선택 UI 표시
 - 현재 워크스페이스는 브라우저 **`localStorage`** (`actnote_current_workspace_id`)에 저장 (비밀값 아님)
 - 대시보드(`(dashboard)`)는 `WorkspaceProvider` 로 활성 워크스페이스를 공유
+
+**워크스페이스 초대 (SEC-006, 요약)**
+
+1. 관리자가 `create_invite` RPC 로 초대 행 생성 (`workspace_invites`, 이메일·역할·토큰).
+2. 클라이언트가 `POST /api/workspace/send-invite` 로 메일 발송을 요청합니다.
+3. 레포에 `RESEND_API_KEY` 가 있으면 Next 서버가 Resend 로 직접 발송합니다. 없으면 `INNGEST_EVENT_KEY` 로 `notification/email_send` 이벤트를 보내 워커가 처리할 수 있습니다.
+4. 수락 URL 형식은 `/invite/<token>` 입니다. 초대 토큰은 DB에서 hex 문자열로 발급되며, `/invite/[slug]` 페이지는 **토큰으로 `workspace_invites` 조회를 먼저** 시도한 뒤, 없으면 워크스페이스 **slug** 로 열린 초대를 처리합니다.
+5. 메일 발송이 제한되어도 초대는 유효합니다. 설정 UI에서 **개인 초대 링크를 복사**해 전달할 수 있습니다.
+
+**배포 (Vercel 등)**
+
+- `NEXT_PUBLIC_*`, `INNGEST_EVENT_KEY`, 초대 메일용 `RESEND_API_KEY` / `EMAIL_FROM` 을 프로젝트 환경 변수에 넣은 뒤 **재배포**해야 런타임에 반영됩니다.
 
 ---
 
@@ -186,7 +219,7 @@ uv run python scripts/benchmark_crag.py
 | [docs/notion-oauth.md](./docs/notion-oauth.md) | Notion OAuth |
 | [docs/features.md](./docs/features.md) | 기능 ID 카탈로그 |
 | [docs/local-qa-guidebook.md](./docs/local-qa-guidebook.md) | 로컬 QA 체크리스트 |
-| [CLAUDE.md](./CLAUDE.md) | 프로젝트 컨텍스트 · 백로그 |
+| [CLAUDE.md](./CLAUDE.md) | 프로젝트 컨텍스트 · 백로그 · 메인 2 진행 상황 |
 | [`.cursor/rules/*.mdc`](./.cursor/rules) | 코딩 룰 |
 
 ---
@@ -198,7 +231,7 @@ uv run python scripts/benchmark_crag.py
 ├── src/                           # 파이프라인 · 워커 · 알림 · Notion 등
 ├── scripts/                       # serve_worker, benchmark, CLI
 ├── prompts/templates/             # 회의 유형별 MD 템플릿
-├── migrations/                    # Supabase SQL (번호 순 실행)
+├── migrations/                    # Supabase SQL (팀 정한 순서 실행)
 ├── docs/
 ├── pyproject.toml                 # uv 단일 의존성
 └── .env.example
@@ -209,10 +242,15 @@ actnote-web/                       # Next.js 앱
 │   ├── (dashboard)/               # meetings, settings (WorkspaceProvider 하위)
 │   ├── workspace/select/          # 다중 워크스페이스 선택
 │   ├── onboarding/
-│   ├── invite/[slug]/
-│   └── api/                       # trigger-pipeline, trigger-publish, …
+│   ├── invite/[slug]/             # 토큰 초대 또는 slug 오픈 초대
+│   └── api/                       # §11 참고
 ├── components/
-├── lib/                           # supabase client, hooks, workspace/storage
+├── lib/
+│   ├── supabase/                  # browser / server 클라이언트
+│   └── server/
+│       ├── public-app-url.ts      # NEXT_PUBLIC_APP_URL 정규화
+│       ├── invite-email.ts        # 초대 메일 본문 · Resend 헬퍼
+│       └── …
 └── package.json
 ```
 
@@ -242,11 +280,24 @@ actnote-web/                       # Next.js 앱
 | SEC-006 / WS-004 | 초대 RPC · 멤버 역할 · 강퇴 등 |
 | 재분석 멱등성 | `pipeline.py` `_cleanup_for_reanalysis()` |
 
-**DB 확장 예시 (운영 시 마이그레이션 적용 여부는 프로젝트와 동기화)**
+**DB 확장 예시** (운영 적용 여부는 마이그레이션 실행 기준과 동기화)
 
 - 사용자별 분석 완료/실패 **이메일 수신 설정**: `migrations/022_user_notification_email_prefs.sql`
 
-자세한 표는 [CLAUDE.md](./CLAUDE.md)를 참고하세요.
+**현재 단계**: 백엔드 메인 1 완료 후 **메인 2 (프론트 통합·운영 폴리싱)** 진행 중이라면 상세 백로그는 [CLAUDE.md](./CLAUDE.md) 를 참고하세요.
+
+---
+
+## 11. Next.js 서버 라우트
+
+| 경로 | 역할 |
+|------|------|
+| `POST /api/trigger-pipeline` | `meeting/process` Inngest 이벤트 발송 |
+| `POST /api/trigger-publish` | `meeting/publish` Inngest 이벤트 발송 |
+| `POST /api/workspace/send-invite` | 초대 메일 발송 (Resend 또는 Inngest 폴백) |
+| `GET /api/integrations/notion/start` | Notion OAuth 시작 |
+| `GET /api/integrations/notion/callback` | Notion OAuth 콜백 |
+| `POST /api/onboarding/workspace` | 온보딩 워크스페이스 생성 등 |
 
 ---
 

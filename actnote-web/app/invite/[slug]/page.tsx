@@ -33,19 +33,21 @@ export default function InvitePage() {
         return;
       }
 
-      // 1) 먼저 accept_invite RPC로 token 방식 시도 (미리보기 only: 실제 수락은 버튼 클릭 시)
-      // token 형식인지 확인 (UUID 패턴)
-      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (uuidPattern.test(slug)) {
-        // token 방식 — 워크스페이스 정보를 workspace_invites 테이블에서 가져옴
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: inviteRow } = await (supabase as any)
-          .from("workspace_invites")
-          .select("workspace_id, status, workspaces(id, name, slug)")
-          .eq("token", slug)
-          .single();
+      // 1) Email-bound invite: DB token (`create_invite` uses 48-char hex; legacy UUID also matches row lookup)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: inviteRow } = await (supabase as any)
+        .from("workspace_invites")
+        .select("workspace_id, status, expires_at, workspaces(id, name, slug)")
+        .eq("token", slug)
+        .maybeSingle();
 
-        if (!inviteRow || inviteRow.status === "revoked") {
+      if (inviteRow) {
+        if (inviteRow.status !== "pending") {
+          setPageState("not_found");
+          return;
+        }
+        const exp = inviteRow.expires_at ? new Date(inviteRow.expires_at as string) : null;
+        if (exp && exp.getTime() < Date.now()) {
           setPageState("not_found");
           return;
         }
@@ -53,12 +55,14 @@ export default function InvitePage() {
         const ws: any = Array.isArray(inviteRow.workspaces)
           ? inviteRow.workspaces[0]
           : inviteRow.workspaces;
-        if (!ws) { setPageState("not_found"); return; }
+        if (!ws) {
+          setPageState("not_found");
+          return;
+        }
 
         setWorkspace(ws);
         setIsTokenMode(true);
 
-        // 이미 멤버인지 확인
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: existing } = await (supabase as any)
           .from("workspace_members")
@@ -70,7 +74,7 @@ export default function InvitePage() {
         return;
       }
 
-      // 2) 슬러그 방식 (기존 워크스페이스 초대 링크)
+      // 2) 슬러그 방식 (공개 워크스페이스 초대 링크 — 멤버 추가만)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: ws, error } = await (supabase as any)
         .from("workspaces")

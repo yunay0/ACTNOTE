@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ensureRepoRootEnvMerged } from "@/lib/server/repo-env";
 import {
   buildInviteEmailParts,
+  isResendRecipientRestrictedError,
   resolvePublicAppUrl,
   sendViaResend,
 } from "@/lib/server/invite-email";
@@ -69,12 +70,24 @@ export async function POST(req: NextRequest) {
   if (resendKey) {
     const out = await sendViaResend(invite.invited_email, mail);
     if (!out.ok) {
-      return NextResponse.json(
-        { error: `Email delivery failed (Resend): ${out.message}` },
-        { status: out.status >= 400 && out.status < 600 ? out.status : 502 }
-      );
+      const notice_code = isResendRecipientRestrictedError(out.message)
+        ? "RESEND_RECIPIENT_RESTRICTED"
+        : "EMAIL_DELIVERY_FAILED";
+      return NextResponse.json({
+        ok: true,
+        email_sent: false,
+        invite_link: inviteLink,
+        delivery_error: out.message,
+        notice_code,
+      });
     }
-    return NextResponse.json({ ok: true, channel: "resend", id: out.id });
+    return NextResponse.json({
+      ok: true,
+      email_sent: true,
+      invite_link: inviteLink,
+      channel: "resend",
+      id: out.id,
+    });
   }
 
   const eventKey = process.env.INNGEST_EVENT_KEY?.trim();
@@ -110,5 +123,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Inngest send failed: ${message}` }, { status: 502 });
   }
 
-  return NextResponse.json({ ok: true, channel: "inngest" });
+  return NextResponse.json({
+    ok: true,
+    email_sent: true,
+    invite_link: inviteLink,
+    channel: "inngest",
+  });
 }

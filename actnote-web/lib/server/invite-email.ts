@@ -1,4 +1,6 @@
-import type { NextRequest } from "next/server";
+import { resolvePublicAppUrl } from "@/lib/server/public-app-url";
+
+export { resolvePublicAppUrl };
 
 /** Escape HTML entities for safe interpolation into email bodies. */
 export function escapeHtml(s: string): string {
@@ -9,25 +11,51 @@ export function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/**
- * Absolute app origin for invite links.
- * Prefer NEXT_PUBLIC_APP_URL; fall back to request Host (local dev without env).
- */
-export function resolvePublicAppUrl(req: NextRequest): string {
-  const env = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (env) return env.replace(/\/$/, "");
-  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
-  const rawProto = req.headers.get("x-forwarded-proto") ?? "http";
-  const proto = rawProto.split(",")[0]?.trim() || "http";
-  if (host) return `${proto}://${host}`;
-  return "";
-}
-
 export type InviteMailBody = {
   subject: string;
   html: string;
   text: string;
 };
+
+const DEFAULT_RESEND_FROM = "Actnote <onboarding@resend.dev>";
+
+function isAsciiOnly(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) > 127) return false;
+  }
+  return true;
+}
+
+/** Strip BOM / zero-width spaces often pasted into .env by mistake. */
+function stripInvisible(s: string): string {
+  return s
+    .replace(/\uFEFF/g, "")
+    .replace(/[\u200B-\u200D]/g, "")
+    .trim();
+}
+
+/**
+ * Resend rejects `from` when the mailbox or display name contains non-ASCII
+ * (e.g. Korean in `회사 <noreply@...>`, or fullwidth brackets `＜＞`).
+ */
+export function normalizeResendFrom(raw: string | undefined): string {
+  let s = stripInvisible(raw ?? "");
+  if (!s) return DEFAULT_RESEND_FROM;
+  s = s.replace(/\uFF1C/g, "<").replace(/\uFF1E/g, ">");
+
+  const angle = /^(.+?)\s*<([^<>]+)>$/.exec(s);
+  if (angle) {
+    let display = angle[1].trim().replace(/^["']|["']$/g, "");
+    const addr = stripInvisible(angle[2].trim());
+    if (!display) display = "Actnote";
+    if (!addr.includes("@") || !isAsciiOnly(addr)) return DEFAULT_RESEND_FROM;
+    if (!isAsciiOnly(display)) display = "Actnote";
+    return `${display} <${addr}>`;
+  }
+
+  if (!s.includes("@") || !isAsciiOnly(s)) return DEFAULT_RESEND_FROM;
+  return s;
+}
 
 /** POST https://api.resend.com/emails — no extra npm dependency. */
 export async function sendViaResend(
@@ -41,8 +69,7 @@ export async function sendViaResend(
   if (!key) {
     return { ok: false, status: 503, message: "RESEND_API_KEY is not configured on this server." };
   }
-  const from =
-    process.env.EMAIL_FROM?.trim() || "Actnote <onboarding@resend.dev>";
+  const from = normalizeResendFrom(process.env.EMAIL_FROM);
 
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -73,6 +100,16 @@ export async function sendViaResend(
     return { ok: false, status: res.status, message: msg };
   }
   return { ok: true, id: body.id ?? "sent" };
+}
+
+/** Resend: without a verified domain, API refuses recipients other than the account owner. */
+export function isResendRecipientRestrictedError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("only send testing emails") ||
+    m.includes("testing emails to your own") ||
+    m.includes("verify a domain")
+  );
 }
 
 export function buildInviteEmailParts(opts: {

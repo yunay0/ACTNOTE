@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { encryptActnoteToken } from "@/lib/notion/encrypt-token";
+import { sanitizePublicAppOrigin } from "@/lib/server/public-app-url";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -63,7 +64,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/$/, "") ?? "";
+  const appUrl = sanitizePublicAppOrigin(process.env.NEXT_PUBLIC_APP_URL);
   const clientId = process.env.NOTION_CLIENT_ID?.trim();
   const clientSecret = process.env.NOTION_CLIENT_SECRET?.trim();
   if (!appUrl || !clientId || !clientSecret) {

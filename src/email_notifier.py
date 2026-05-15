@@ -14,7 +14,7 @@ Public API:
 
 환경변수:
     RESEND_API_KEY      : 필수 (없으면 dry_run 강제)
-    EMAIL_FROM          : 기본 발신자. 형식 "Actnote <noreply@actnote.app>".
+    EMAIL_FROM          : 기본 발신자. ``Display <email@domain>`` 형식. Resend 는 표시 이름·주소 모두 ASCII 만 허용 (한글 표시명 불가).
                           미설정 시 onboarding@resend.dev (개발 전용)
     NEXT_PUBLIC_APP_URL : 본문 안에 들어가는 호스트 (예: "https://app.actnote.com")
 
@@ -35,6 +35,37 @@ _log = logging.getLogger(__name__)
 _console = Console()
 
 DEFAULT_FROM = "Actnote <onboarding@resend.dev>"
+
+
+def _is_ascii_only(s: str) -> bool:
+    """Resend `from` rejects non-ASCII in display name or mailbox."""
+    return all(ord(c) < 128 for c in s)
+
+
+def _normalize_resend_from(raw: str | None) -> str:
+    """Normalize EMAIL_FROM for Resend (ASCII-only; fix fullwidth brackets)."""
+    if not raw or not raw.strip():
+        return DEFAULT_FROM
+    s = raw.strip().replace("\ufeff", "").replace("\u200b", "").replace("\u200c", "").replace("\u200d", "")
+    s = s.replace("\uff1c", "<").replace("\uff1e", ">")
+    if "<" in s and ">" in s:
+        try:
+            left, rest = s.split("<", 1)
+            addr, _ = rest.split(">", 1)
+        except ValueError:
+            return DEFAULT_FROM
+        display = left.strip().strip('"').strip("'")
+        addr = addr.strip()
+        if not display:
+            display = "Actnote"
+        if "@" not in addr or not _is_ascii_only(addr):
+            return DEFAULT_FROM
+        if not _is_ascii_only(display):
+            display = "Actnote"
+        return f"{display} <{addr}>"
+    if "@" not in s or not _is_ascii_only(s):
+        return DEFAULT_FROM
+    return s
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +112,7 @@ def send_email(
     if not recipients:
         raise ValueError("send_email: to 가 비어있습니다.")
 
-    sender = from_addr or os.getenv("EMAIL_FROM") or DEFAULT_FROM
+    sender = _normalize_resend_from(from_addr or os.getenv("EMAIL_FROM"))
     body_text = text if text is not None else _strip_html(html)
 
     if _is_dry_run(dry_run):

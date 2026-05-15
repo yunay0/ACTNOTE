@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { sanitizePublicAppOrigin } from "@/lib/server/public-app-url";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function GET(req: NextRequest) {
   const clientId = process.env.NOTION_CLIENT_ID?.trim();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  const appUrl = sanitizePublicAppOrigin(process.env.NEXT_PUBLIC_APP_URL);
   if (!clientId || !appUrl) {
     return NextResponse.json(
       {
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const base = appUrl.replace(/\/$/, "");
+  const base = appUrl;
   const redirectUri = `${base}/api/integrations/notion/callback`;
 
   const authorizeUrl = new URL("https://api.notion.com/v1/oauth/authorize");

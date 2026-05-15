@@ -82,6 +82,12 @@ export default function WorkspaceSettingsPage() {
   const [removing, setRemoving] = useState<string | null>(null);
   const [roleChanging, setRoleChanging] = useState<string | null>(null);
   const [roleError, setRoleError] = useState<string | null>(null);
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  /** Personal invite URL when email delivery failed or Resend test mode (share manually). */
+  const [inviteShareLink, setInviteShareLink] = useState<string | null>(null);
+  const [inviteShareCopied, setInviteShareCopied] = useState(false);
+  const [inviteNoticeCode, setInviteNoticeCode] = useState<string | null>(null);
 
   /** Merged former DB `owner` + `admin`: edit settings, invite, remove members (not role RPC). */
   const isElevated = currentDbRole === "owner" || currentDbRole === "admin";
@@ -89,7 +95,10 @@ export default function WorkspaceSettingsPage() {
   const isDbOwner = currentDbRole === "owner";
 
   const loadWorkspace = useCallback(async () => {
-    if (!activeWorkspaceId) return;
+    if (!activeWorkspaceId) {
+      setLoading(false);
+      return;
+    }
 
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -228,40 +237,105 @@ export default function WorkspaceSettingsPage() {
     });
   }
 
+  function handleCopyPersonalInviteLink() {
+    if (!inviteShareLink) return;
+    navigator.clipboard.writeText(inviteShareLink).then(() => {
+      setInviteShareCopied(true);
+      setTimeout(() => setInviteShareCopied(false), 2000);
+    });
+  }
+
   async function handleInvite() {
     const email = inviteEmail.trim();
-    if (!email || !workspaceId) return;
+    const wsId = activeWorkspaceId ?? workspaceId;
 
-    const supabase = createClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: invite, error } = await (supabase as any).rpc("create_invite", {
-      p_workspace_id: workspaceId,
-      p_email: email,
-      p_role: "member",
-      p_expires_in_days: 7,
-    });
-
-    if (error) {
-      setRoleError(error.message ?? "Failed to create invite.");
+    setInviteError(null);
+    setInviteShareLink(null);
+    setInviteNoticeCode(null);
+    setInviteSent(false);
+    if (!email) {
+      setInviteError("Enter an email address.");
+      return;
+    }
+    if (!wsId) {
+      setInviteError("Workspace is not ready. Refresh the page and try again.");
       return;
     }
 
-    const sendRes = await fetch("/api/workspace/send-invite", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ invite }),
-    });
-    const sendBody = (await sendRes.json().catch(() => ({}))) as { error?: string };
-    if (!sendRes.ok) {
-      setRoleError(
-        sendBody.error ?? `Failed to send invite email (${sendRes.status}).`
-      );
-      return;
-    }
+    setInviteSending(true);
+    try {
+      const supabase = createClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: rawInvite, error } = await (supabase as any).rpc("create_invite", {
+        p_workspace_id: wsId,
+        p_email: email,
+        p_role: "member",
+        p_expires_in_days: 7,
+      });
 
-    setInviteSent(true);
-    setInviteEmail("");
-    setTimeout(() => setInviteSent(false), 3000);
+      if (error) {
+        setInviteError(error.message ?? "Failed to create invite.");
+        return;
+      }
+
+      const inviteRow = Array.isArray(rawInvite) ? rawInvite[0] : rawInvite;
+      if (
+        !inviteRow ||
+        typeof inviteRow.token !== "string" ||
+        typeof inviteRow.workspace_id !== "string"
+      ) {
+        setInviteError(
+          "Invite was created but the response format was unexpected. Check the browser console or Supabase logs."
+        );
+        return;
+      }
+
+      const payload = {
+        id: inviteRow.id as string,
+        workspace_id: inviteRow.workspace_id as string,
+        token: inviteRow.token as string,
+        invited_email: (inviteRow.invited_email as string) ?? email,
+      };
+
+      const sendRes = await fetch("/api/workspace/send-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invite: payload }),
+      });
+      const sendBody = (await sendRes.json().catch(() => ({}))) as {
+        error?: string;
+        ok?: boolean;
+        email_sent?: boolean;
+        invite_link?: string;
+        notice_code?: string;
+      };
+
+      if (!sendRes.ok) {
+        setInviteError(sendBody.error ?? `Failed to send invite email (${sendRes.status}).`);
+        if (typeof sendBody.invite_link === "string") {
+          setInviteShareLink(sendBody.invite_link);
+          setInviteNoticeCode(sendBody.notice_code ?? "EMAIL_DELIVERY_FAILED");
+        }
+        return;
+      }
+
+      if (sendBody.email_sent === false && typeof sendBody.invite_link === "string") {
+        setInviteShareLink(sendBody.invite_link);
+        setInviteNoticeCode(sendBody.notice_code ?? "EMAIL_DELIVERY_FAILED");
+      } else {
+        setInviteShareLink(null);
+        setInviteNoticeCode(null);
+      }
+
+      setInviteSent(true);
+      setInviteEmail("");
+      setTimeout(() => setInviteSent(false), 8000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setInviteError(msg || "Invite failed. Check your network and try again.");
+    } finally {
+      setInviteSending(false);
+    }
   }
 
   if (loading) {
@@ -419,23 +493,65 @@ export default function WorkspaceSettingsPage() {
                   <input
                     type="email"
                     value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
+                    onChange={(e) => {
+                      setInviteEmail(e.target.value);
+                      setInviteError(null);
+                      setInviteShareLink(null);
+                      setInviteNoticeCode(null);
+                    }}
                     onKeyDown={(e) => e.key === "Enter" && handleInvite()}
                     placeholder="Enter email to invite"
                     className="h-11 flex-1 rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[13px] text-[#0a2540] placeholder-[#94a3b8] outline-none focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10 transition-all"
                   />
                   <button
+                    type="button"
                     onClick={handleInvite}
-                    className="h-11 rounded-lg px-6 text-[14px] font-bold text-white hover:opacity-90 transition-opacity"
+                    disabled={inviteSending}
+                    className="h-11 rounded-lg px-6 text-[14px] font-bold text-white hover:opacity-90 transition-opacity disabled:opacity-60 disabled:pointer-events-none inline-flex items-center justify-center gap-2 min-w-[100px]"
                     style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
                   >
-                    {inviteSent ? "Sent ✓" : "Invite"}
+                    {inviteSending ? (
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    ) : inviteSent ? (
+                      inviteShareLink ? (
+                        "Saved ✓"
+                      ) : (
+                        "Sent ✓"
+                      )
+                    ) : (
+                      "Invite"
+                    )}
                   </button>
                 </div>
-                {inviteSent && (
-                  <p className="text-[12px] text-[#64748b]">
-                    Invite sent! The link has also been copied to your clipboard.
-                  </p>
+                {inviteError && (
+                  <p className="text-[12px] text-red-600">{inviteError}</p>
+                )}
+                {inviteSent && inviteShareLink && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 space-y-2">
+                    <p className="text-[12px] font-semibold text-amber-950">
+                      Invitation created — email was not delivered
+                    </p>
+                    <p className="text-[11px] leading-snug text-amber-900/90">
+                      {inviteNoticeCode === "RESEND_RECIPIENT_RESTRICTED"
+                        ? "Your Resend account is in test mode: messages only go to your Resend signup email until you verify a sending domain at resend.com/domains and set EMAIL_FROM to an address on that domain."
+                        : "Copy the link below and send it through Slack or another channel. The teammate must sign in with the email you invited."}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200/80 bg-white px-2 py-1.5">
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#64748b]">
+                        {inviteShareLink}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCopyPersonalInviteLink}
+                        className="shrink-0 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-950 hover:bg-amber-100"
+                      >
+                        {inviteShareCopied ? "Copied" : "Copy link"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {inviteSent && !inviteShareLink && !inviteError && (
+                  <p className="text-[12px] text-emerald-700">Invite email sent.</p>
                 )}
               </div>
             )}
@@ -446,7 +562,10 @@ export default function WorkspaceSettingsPage() {
             <section className="rounded-xl border border-[#e2e8f0] bg-white p-8">
               <div className="mb-5">
                 <h2 className="text-[17px] font-bold text-[#0a2540]">Invite Link</h2>
-                <p className="text-[13px] text-[#64748b]">Share this link to invite anyone to your workspace</p>
+                <p className="text-[13px] text-[#64748b]">
+                  Open join link (any logged-in user can join as a member). For a specific person and email, use Invite by
+                  Email above — or share the personal link shown if email delivery is unavailable.
+                </p>
               </div>
               <div className="flex items-center gap-2 rounded-lg border-2 border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
                 <Link2 className="h-4 w-4 shrink-0 text-[#94a3b8]" />
