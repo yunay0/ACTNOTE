@@ -36,3 +36,9 @@ Thumbs.db
 
 # Note: .cursor/rules/ is intentionally tracked (project rules belong in repo)
 docs/features.md
+
+# Local-only docs (기능정의서, 권한, 에러 정책 등)
+docs/v0.3.md
+docs/v0.5.md
+docs/permissions.md
+docs/error-policy.md
