@@ -6,11 +6,19 @@
 
 | 파일 | 표준 type | 한국어/영어 alias |
 |------|-----------|------------------|
-| `default.md` | `default` (= `general`) | `기본`, `일반` |
-| `sprint.md` | `sprint` | `스프린트`, `standup`, `데일리`, `sprint_planning`, `sprint_review` |
-| `planning.md` | `planning` | `기획`, `kickoff` |
-| `retro.md` | `retro` | `회고`, `postmortem` |
-| `1on1.md` | `1on1` | `1:1`, `one_on_one`, `oneonone` |
+| `default.md` | `default` | `general`, `기본`, `일반`, `other`, `기타` |
+| `one_on_one.md` | `one_on_one` | `1on1`, `1:1`, `oneonone` |
+| `standup.md` | `standup` | `sprint`, `sprint_planning`, `sprint_review`, `daily`, `데일리`, `스프린트` |
+| `project_review.md` | `project_review` | `project_update`, `status_review` |
+| `brainstorming.md` | `brainstorming` | — |
+| `client.md` | `client` | `external`, `customer` |
+| `board.md` | `board` | — |
+| `all_hands.md` | `all_hands` | `town_hall`, `townhall`, `all_hands_meeting` |
+| `workshop.md` | `workshop` | — |
+| `planning.md` | `planning` *(레거시)* | `기획`, `kickoff` |
+| `retro.md` | `retro` *(레거시)* | `회고`, `postmortem` |
+
+> **레거시 타입:** `planning` / `retro` 파일은 하위 호환을 위해 유지. 신규 회의는 위 9종 중 적합한 유형 사용 권장.
 
 ## 폴백 규칙
 
@@ -37,4 +45,5 @@
 uv run python src/llm_extractor.py
 ```
 
-상단 "테스트 0" 섹션에서 각 type 의 resolve / load 결과를 확인할 수 있다.
+테스트 0: 전체 alias → 표준 type resolve 결과 확인 (API 호출 없음).
+테스트 4: 5개 유형 system prompt 내용 차이 비교 (API 호출 없음).

@@ -1,7 +1,9 @@
 """Claude Sonnet 4.6으로 회의록에서 요약·결정·액션 아이템을 JSON으로 추출한다.
 
 회의 유형(meeting_type)에 따라 ``prompts/templates/<type>.md`` 를 system prompt 로 로드한다.
-지원 type: ``default`` (기본), ``sprint``, ``planning``, ``retro``, ``1on1``.
+지원 type: ``default``, ``one_on_one``, ``standup``, ``project_review``,
+           ``brainstorming``, ``client``, ``board``, ``all_hands``, ``workshop``,
+           ``planning``, ``retro`` (레거시 호환 유지).
 미지원 / NULL 인 경우 자동으로 ``default`` 로 폴백한다 (MTG-004).
 """
 
@@ -35,24 +37,54 @@ MAX_RETRIES_API = 2
 
 _TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "prompts" / "templates"
 _DEFAULT_TEMPLATE = "default"
-_SUPPORTED_TYPES: set[str] = {"default", "general", "sprint", "planning", "retro", "1on1"}
+_SUPPORTED_TYPES: set[str] = {
+    "default",
+    "one_on_one",
+    "standup",
+    "project_review",
+    "brainstorming",
+    "client",
+    "board",
+    "all_hands",
+    "workshop",
+    # 레거시 (파일 존재 유지)
+    "planning",
+    "retro",
+}
 _TYPE_ALIAS: dict[str, str] = {
-    # 한국어/영어 사용자 표기 → 표준 type 매핑
+    # 범용 폴백
     "general": "default",
     "기본": "default",
     "일반": "default",
-    "sprint_review": "sprint",
-    "sprint_planning": "sprint",
-    "standup": "sprint",
-    "데일리": "sprint",
-    "스프린트": "sprint",
+    "other": "default",
+    "기타": "default",
+    # 1:1
+    "1on1": "one_on_one",
+    "1:1": "one_on_one",
+    "oneonone": "one_on_one",
+    # 스탠드업
+    "sprint": "standup",
+    "sprint_review": "standup",
+    "sprint_planning": "standup",
+    "데일리": "standup",
+    "스프린트": "standup",
+    "daily": "standup",
+    # 기획 (레거시 호환)
     "기획": "planning",
     "kickoff": "planning",
+    # 회고 (레거시 호환)
     "회고": "retro",
     "postmortem": "retro",
-    "1:1": "1on1",
-    "one_on_one": "1on1",
-    "oneonone": "1on1",
+    # 전사 회의
+    "all_hands_meeting": "all_hands",
+    "town_hall": "all_hands",
+    "townhall": "all_hands",
+    # 클라이언트
+    "external": "client",
+    "customer": "client",
+    # 프로젝트 리뷰
+    "project_update": "project_review",
+    "status_review": "project_review",
 }
 _template_cache: dict[str, str] = {}
 
@@ -238,8 +270,9 @@ def extract(
             Anthropic API는 기본적으로 API 데이터를 학습에 미사용.
             metadata는 요청 추적/감사용으로만 사용됨.
         workspace_id: 감사 metadata에 포함할 워크스페이스 ID.
-        meeting_type: 회의 유형 (MTG-004). ``default``/``sprint``/``planning``/
-            ``retro``/``1on1`` 또는 한국어 alias. 미지원/NULL 이면 default 폴백.
+        meeting_type: 회의 유형 (MTG-004). ``default``/``one_on_one``/``standup``/
+            ``project_review``/``brainstorming``/``client``/``board``/``all_hands``/
+            ``workshop``/``planning``/``retro`` 또는 alias. 미지원/NULL 이면 default 폴백.
     """
     tr = tracker if tracker is not None else cost_tracker.default_tracker
     system_prompt = _build_system_prompt(previous_context, meeting_type)
@@ -413,10 +446,25 @@ if __name__ == "__main__":
     for case in [
         ("default", "default"),
         (None, "default"),
-        ("sprint", "sprint"),
-        ("스프린트", "sprint"),
+        ("one_on_one", "one_on_one"),
+        ("1:1", "one_on_one"),
+        ("1on1", "one_on_one"),
+        ("standup", "standup"),
+        ("sprint", "standup"),
+        ("스프린트", "standup"),
+        ("데일리", "standup"),
+        ("project_review", "project_review"),
+        ("brainstorming", "brainstorming"),
+        ("client", "client"),
+        ("board", "board"),
+        ("all_hands", "all_hands"),
+        ("workshop", "workshop"),
+        ("planning", "planning"),
+        ("기획", "planning"),
+        ("retro", "retro"),
         ("회고", "retro"),
-        ("1:1", "1on1"),
+        ("other", "default"),
+        ("기타", "default"),
         ("unknown_type_xyz", "default"),
     ]:
         in_type, expected = case
@@ -486,3 +534,24 @@ if __name__ == "__main__":
             _console.print(f"  -> {doc!r}")
     else:
         _console.print("[yellow][WARN] referenced_documents 없음 — LLM이 인식 못했을 수 있음[/]")
+
+    # --- 테스트 4: 5개 유형별 system prompt 차이 비교 (API 호출 없음) ---
+    _console.print("\n[bold cyan]=== 테스트 4: 유형별 system prompt 구별 검증 ===[/]")
+    type_samples = [
+        ("one_on_one", "개인 성장, 커리어 목표, 1:1"),
+        ("standup", "어제 한 일, 오늘 할 일, 블로커"),
+        ("project_review", "마일스톤, 리스크, 범위 변경"),
+        ("brainstorming", "아이디어 생성, 컨셉 선정"),
+        ("client", "클라이언트 요구사항, 납기 약속"),
+    ]
+    prompts: dict[str, str] = {}
+    for t, desc in type_samples:
+        body = _system_prompt_base(t)
+        prompts[t] = body
+        _console.print(f"  {t:<20} len={len(body):>5}  focus hint: {desc}")
+
+    unique_count = len({p[:200] for p in prompts.values()})
+    if unique_count == len(type_samples):
+        _console.print(f"[green][OK] 5개 유형 모두 서로 다른 system prompt (unique={unique_count})[/]")
+    else:
+        _console.print(f"[yellow][WARN] 일부 유형이 동일한 system prompt — unique={unique_count}/{len(type_samples)}[/]")
