@@ -165,6 +165,7 @@ def _call_claude(
             msg = client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=MAX_LLM_TOKENS,
+                temperature=0,
                 system=_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
             )

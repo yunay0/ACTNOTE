@@ -7,7 +7,11 @@ import {
   type MeetingStatus,
 } from "@/lib/types/meeting";
 import { cn } from "@/lib/utils";
-import { userFacingPipelineError, supportMailtoHref } from "@/lib/meetings/pipeline-error-copy";
+import {
+  userFacingPipelineError,
+  supportMailtoHref,
+  supportEmailAddress,
+} from "@/lib/meetings/pipeline-error-copy";
 
 interface ProcessingProgressProps {
   status: MeetingStatus;
@@ -25,6 +29,7 @@ export function ProcessingProgress({
   const progress = getProcessingProgress(status);
   const currentIdx = PROCESSING_STEPS.indexOf(status);
   const supportHref = supportMailtoHref();
+  const supportEmail = supportEmailAddress();
 
   if (status === "error") {
     const hint = userFacingPipelineError(errorMessage);
@@ -53,6 +58,12 @@ export function ProcessingProgress({
             Contact support
           </a>
         </div>
+        <p className="text-xs text-red-800/85 pt-1">
+          If the button does not open your mail app, write to{" "}
+          <a href={supportHref} className="font-semibold underline break-all">
+            {supportEmail}
+          </a>
+        </p>
       </div>
     );
   }

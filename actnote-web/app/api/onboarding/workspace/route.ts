@@ -39,7 +39,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: updated, error: updateErr } = await supabase
+  // Supabase generated 타입에 workspaces 미포함 시 update 체인이 `never` 로 좁혀짐
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: updated, error: updateErr } = await (supabase as any)
     .from("workspaces")
     .update({ name: nameToSave })
     .eq("owner_id", user.id)
