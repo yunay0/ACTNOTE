@@ -33,7 +33,7 @@ export function supportMailtoHref(): string {
     typeof process !== "undefined" &&
     process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim()
       ? process.env.NEXT_PUBLIC_SUPPORT_EMAIL.trim()
-      : "support@actnote.app";
-  const subject = encodeURIComponent("ACTNOTE — Meeting analysis issue");
+      : "ttojo6@gmail.com";
+  const subject = encodeURIComponent("ACTNOTE Support Request");
   return `mailto:${addr}?subject=${subject}`;
 }

@@ -22,6 +22,49 @@ _DEFAULT_THRESHOLD = 0.3
 _DEFAULT_MATCH_COUNT = 5
 
 
+def _reindex_dirty_meetings(
+    workspace_id: str,
+    sb_client,
+    tracker: cost_tracker.CostTracker,
+) -> None:
+    """embeddings_dirty=TRUE인 published 회의의 action 청크를 배치 재인덱싱.
+
+    재인덱싱 실패 시 해당 회의는 스킵하고 검색을 계속한다.
+    """
+    from src.embeddings import reindex_action_chunks
+
+    try:
+        dirty_resp = (
+            sb_client.table("meetings")
+            .select("id")
+            .eq("workspace_id", workspace_id)
+            .eq("embeddings_dirty", True)
+            .eq("approval_status", "published")
+            .execute()
+        )
+        dirty_meetings = dirty_resp.data or []
+        if not dirty_meetings:
+            return
+
+        _log.info(
+            "JIT 재인덱싱: %d개 dirty 회의 (workspace=%s)",
+            len(dirty_meetings),
+            workspace_id,
+        )
+
+        for meeting in dirty_meetings:
+            mid = meeting["id"]
+            try:
+                count = reindex_action_chunks(mid, workspace_id, sb_client, tracker)
+                sb_client.table("meetings").update({"embeddings_dirty": False}).eq("id", mid).execute()
+                _log.info("JIT 재인덱싱 완료: meeting_id=%s chunks=%d", mid, count)
+            except Exception as e:
+                _log.warning("JIT 재인덱싱 실패 (스킵): meeting_id=%s error=%s", mid, e)
+
+    except Exception as e:
+        _log.warning("dirty 회의 조회 실패 (스킵): workspace_id=%s error=%s", workspace_id, e)
+
+
 def find_related_context(
     query_text: str,
     workspace_id: str,
@@ -51,6 +94,9 @@ def find_related_context(
         return None
 
     tr = tracker if tracker is not None else cost_tracker.default_tracker
+
+    # JIT 재인덱싱: dirty 회의 action 청크를 현재 상태로 갱신 후 검색
+    _reindex_dirty_meetings(workspace_id, sb_client, tr)
 
     # 1. 쿼리 임베딩 생성
     query_embedding = embed_texts([query_text], tracker=tr)[0]
