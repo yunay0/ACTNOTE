@@ -9,6 +9,8 @@ import {
 import { cn } from "@/lib/utils";
 import {
   userFacingPipelineError,
+  supportContactHref,
+  supportContactOpensInNewTab,
   supportMailtoHref,
   supportEmailAddress,
 } from "@/lib/meetings/pipeline-error-copy";
@@ -28,8 +30,10 @@ export function ProcessingProgress({
 }: ProcessingProgressProps) {
   const progress = getProcessingProgress(status);
   const currentIdx = PROCESSING_STEPS.indexOf(status);
-  const supportHref = supportMailtoHref();
+  const contactHref = supportContactHref();
+  const mailtoHref = supportMailtoHref();
   const supportEmail = supportEmailAddress();
+  const contactNewTab = supportContactOpensInNewTab();
 
   if (status === "error") {
     const hint = userFacingPipelineError(errorMessage);
@@ -52,17 +56,35 @@ export function ProcessingProgress({
             </button>
           )}
           <a
-            href={supportHref}
+            href={contactHref}
+            {...(contactNewTab
+              ? { target: "_blank", rel: "noopener noreferrer" }
+              : {})}
             className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-100/60"
           >
             Contact support
           </a>
         </div>
         <p className="text-xs text-red-800/85 pt-1">
-          If the button does not open your mail app, write to{" "}
-          <a href={supportHref} className="font-semibold underline break-all">
-            {supportEmail}
-          </a>
+          {contactNewTab ? (
+            <>
+              Opens Gmail in a new tab.{" "}
+              <a href={mailtoHref} className="underline font-semibold">
+                Try Mail app instead
+              </a>
+              {" · or write to "}
+              <a href={contactHref} className="font-semibold underline break-all" {...(contactNewTab ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
+                {supportEmail}
+              </a>
+            </>
+          ) : (
+            <>
+              If your mail app does not open, write to{" "}
+              <a href={mailtoHref} className="font-semibold underline break-all">
+                {supportEmail}
+              </a>
+            </>
+          )}
         </p>
       </div>
     );
