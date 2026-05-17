@@ -395,6 +395,84 @@ def embed_meeting(
 
 
 # ---------------------------------------------------------------------------
+# Action chunk reindex (JIT / publish)
+# ---------------------------------------------------------------------------
+
+def reindex_action_chunks(
+    meeting_id: str,
+    workspace_id: str,
+    sb_client,
+    tracker: cost_tracker.CostTracker | None = None,
+) -> int:
+    """meeting의 action 청크만 현재 상태로 재인덱싱한다.
+
+    - 기존 action 청크 삭제 후 재삽입 (transcript / decision 청크 보존)
+    - valid_until IS NULL인 모든 action_items를 "[상태: X] content" 형식으로 임베딩
+    - JIT 재인덱싱(CRAG)과 publish 재인덱싱 양쪽에서 사용한다
+
+    Returns:
+        저장된 action 청크 수.
+    """
+    tr = tracker if tracker is not None else cost_tracker.default_tracker
+
+    actions_resp = (
+        sb_client.table("action_items")
+        .select("content, status, assignee, due_date")
+        .eq("meeting_id", meeting_id)
+        .is_("valid_until", "null")
+        .execute()
+    )
+    actions = actions_resp.data or []
+
+    # 기존 action 청크만 제거
+    sb_client.table(EMBED_TABLE).delete().eq("meeting_id", meeting_id).eq("chunk_type", "action").execute()
+
+    if not actions:
+        return 0
+
+    texts: list[str] = []
+    for action in actions:
+        content = (action.get("content") or "").strip()
+        if not content:
+            continue
+        status = action.get("status") or "open"
+        parts = [f"[상태: {status}] {content}"]
+        if action.get("assignee"):
+            parts.append(f"(담당: {action['assignee']})")
+        if action.get("due_date"):
+            parts.append(f"(마감: {action['due_date']})")
+        texts.append(" ".join(parts))
+
+    if not texts:
+        return 0
+
+    embeddings = embed_texts(texts, tr)
+
+    rows = [
+        {
+            "meeting_id": meeting_id,
+            "workspace_id": workspace_id,
+            "chunk_text": text,
+            "chunk_type": "action",
+            "embedding": embedding,
+            "metadata": {},
+        }
+        for text, embedding in zip(texts, embeddings)
+    ]
+
+    try:
+        sb_client.table(EMBED_TABLE).insert(rows).execute()
+    except Exception as e:
+        raise RuntimeError(
+            f"action chunk 재인덱싱 실패 (meeting_id={meeting_id!r}): "
+            f"{type(e).__name__}: {e}"
+        ) from e
+
+    _console.print(f"[green][OK][/] action 청크 {len(rows)}개 재인덱싱 완료")
+    return len(rows)
+
+
+# ---------------------------------------------------------------------------
 # Smoke test
 # ---------------------------------------------------------------------------
 

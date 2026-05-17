@@ -322,18 +322,21 @@ def _push_published_to_notion(meeting_id: str, workspace_id: str) -> dict:
 def _reindex_meeting_embeddings(meeting_id: str, workspace_id: str) -> int:
     """발행본 텍스트 기준으로 meeting_embeddings 를 재구성한다.
 
+    - transcript + decisions: embed_meeting으로 재임베딩
+    - actions: reindex_action_chunks로 [상태: X] 접두어 포함 재임베딩
+    - 완료 후 embeddings_dirty = FALSE 마킹
+
     실패해도 0 반환 (검색 품질 저하만 발생, 발행 자체는 막지 않음).
     """
     try:
-        from src.embeddings import EMBED_TABLE, embed_meeting
+        from src.embeddings import EMBED_TABLE, embed_meeting, reindex_action_chunks
         from src.storage import SupabaseStorage, create_supabase_client_from_env
 
         sb = create_supabase_client_from_env()
 
-        # 기존 임베딩 정리 (멱등성)
+        # 기존 임베딩 전체 정리 (멱등성)
         sb.table(EMBED_TABLE).delete().eq("meeting_id", meeting_id).execute()
 
-        # 발행 시점 데이터로 임베딩 다시 만들기
         meeting_resp = (
             sb.table("meetings")
             .select("decisions")
@@ -346,15 +349,6 @@ def _reindex_meeting_embeddings(meeting_id: str, workspace_id: str) -> int:
             decision_texts = [d.get("content", "") for d in decisions_raw]
         else:
             decision_texts = [str(d) for d in decisions_raw]
-
-        actions_resp = (
-            sb.table("action_items")
-            .select("content")
-            .eq("meeting_id", meeting_id)
-            .in_("status", ["open", "in_progress"])
-            .execute()
-        )
-        actions = actions_resp.data or []
 
         transcripts_resp = (
             sb.table("transcripts")
@@ -375,14 +369,24 @@ def _reindex_meeting_embeddings(meeting_id: str, workspace_id: str) -> int:
 
         bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "meetings")
         backend = SupabaseStorage(client=sb, bucket=bucket, prefix=f"{meeting_id}/results")
-        return embed_meeting(
+
+        # transcript + decisions 임베딩 (actions는 reindex_action_chunks에서 상태 포함 처리)
+        td_count = embed_meeting(
             meeting_id=meeting_id,
             workspace_id=workspace_id,
             aligned_segments=aligned,
             decisions=decision_texts,
-            actions=[{"content": a.get("content", "")} for a in actions],
+            actions=[],
             storage_backend=backend,
         )
+
+        # actions: [상태: X] 접두어 포함 재인덱싱
+        action_count = reindex_action_chunks(meeting_id, workspace_id, sb)
+
+        # 재인덱싱 완료 — dirty 플래그 해제
+        sb.table("meetings").update({"embeddings_dirty": False}).eq("id", meeting_id).execute()
+
+        return td_count + action_count
     except Exception as e:
         logging.getLogger(__name__).warning(
             "재인덱싱 실패 (무시) meeting_id=%s: %s", meeting_id, e,
