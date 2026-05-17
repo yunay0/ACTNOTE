@@ -6,7 +6,8 @@ import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 import {
   userFacingPipelineError,
-  supportMailtoHref,
+  supportContactHref,
+  supportContactOpensInNewTab,
   supportEmailAddress,
 } from "@/lib/meetings/pipeline-error-copy";
 
@@ -51,7 +52,8 @@ export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: M
   const menuRef = useRef<HTMLDivElement>(null);
   const statusKey = getStatusKey(meeting);
   const style = STATUS_STYLE[statusKey];
-  const supportHref = supportMailtoHref();
+  const contactHref = supportContactHref();
+  const contactNewTab = supportContactOpensInNewTab();
   const supportEmail = supportEmailAddress();
   const errorHint =
     meeting.status === "error" ? userFacingPipelineError(meeting.error_message) : null;
@@ -106,8 +108,9 @@ export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: M
             )}
             {isErr && (
               <a
-                href={supportHref}
-                title={`Email ${supportEmail}`}
+                href={contactHref}
+                {...(contactNewTab ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+                title={contactNewTab ? `Open Gmail to ${supportEmail}` : `Email ${supportEmail}`}
                 className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#0a2540] hover:bg-[#f8fafc] transition-colors"
                 onClick={(e) => e.stopPropagation()}
               >
