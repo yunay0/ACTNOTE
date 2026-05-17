@@ -5,8 +5,10 @@ import { ensureRepoRootEnvMerged } from "@/lib/server/repo-env";
 import {
   buildInviteEmailParts,
   isResendRecipientRestrictedError,
+  isSmtpConfigured,
   resolvePublicAppUrl,
   sendViaResend,
+  sendViaSmtp,
 } from "@/lib/server/invite-email";
 
 export const runtime = "nodejs";
@@ -66,6 +68,28 @@ export async function POST(req: NextRequest) {
     inviterName,
   });
 
+  if (isSmtpConfigured()) {
+    const out = await sendViaSmtp(invite.invited_email, mail, {
+      replyTo: inviter?.email || undefined,
+    });
+    if (!out.ok) {
+      return NextResponse.json({
+        ok: true,
+        email_sent: false,
+        invite_link: inviteLink,
+        delivery_error: out.message,
+        notice_code: "EMAIL_DELIVERY_FAILED",
+      });
+    }
+    return NextResponse.json({
+      ok: true,
+      email_sent: true,
+      invite_link: inviteLink,
+      channel: "smtp",
+      id: out.id,
+    });
+  }
+
   const resendKey = process.env.RESEND_API_KEY?.trim();
   if (resendKey) {
     const out = await sendViaResend(invite.invited_email, mail);
@@ -95,7 +119,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "Neither RESEND_API_KEY nor INNGEST_EVENT_KEY is configured. Add RESEND_API_KEY (and EMAIL_FROM) to send mail from Next.js, or INNGEST_EVENT_KEY plus worker RESEND_API_KEY.",
+          "No mail transport configured. Set SMTP_USER + SMTP_PASSWORD (Gmail SMTP), or RESEND_API_KEY (+ EMAIL_FROM), or INNGEST_EVENT_KEY (worker must have SMTP or RESEND).",
       },
       { status: 503 }
     );

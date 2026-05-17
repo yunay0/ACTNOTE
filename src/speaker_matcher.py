@@ -239,6 +239,7 @@ def _call_llm(
             msg = client.messages.create(
                 model=_CLAUDE_MODEL,
                 max_tokens=_MAX_TOKENS,
+                temperature=0,
                 system=_SPEAKER_MATCH_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
                 **({"metadata": metadata} if metadata else {}),

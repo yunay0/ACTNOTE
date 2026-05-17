@@ -57,6 +57,71 @@ export function normalizeResendFrom(raw: string | undefined): string {
   return s;
 }
 
+/** Gmail 등 SMTP — ``SMTP_USER`` + ``SMTP_PASSWORD`` 설정 시 사용. */
+export function isSmtpConfigured(): boolean {
+  const u = process.env.SMTP_USER?.trim();
+  const p = process.env.SMTP_PASSWORD?.trim();
+  return Boolean(u && p);
+}
+
+/** SMTP 용 발신자 — Gmail 은 인증 계정과 같은 address 권장. */
+export function buildSmtpMailFrom(): string | { name: string; address: string } {
+  const user = process.env.SMTP_USER?.trim() ?? "";
+  let raw = stripInvisible(process.env.EMAIL_FROM ?? "");
+  raw = raw.replace(/\uFF1C/g, "<").replace(/\uFF1E/g, ">");
+  if (!raw) return { name: "Actnote", address: user };
+  const angle = /^(.+?)\s*<([^<>]+)>$/.exec(raw);
+  if (angle) {
+    let display = angle[1].trim().replace(/^["']|["']$/g, "");
+    const addr = stripInvisible(angle[2].trim());
+    if (!display) display = "Actnote";
+    return { name: display, address: addr };
+  }
+  if (raw.includes("@")) return { name: "Actnote", address: raw.trim() };
+  return { name: "Actnote", address: user };
+}
+
+/** SMTP 로 초대 메일 발송 (nodemailer). */
+export async function sendViaSmtp(
+  to: string,
+  payload: InviteMailBody,
+  opts?: { replyTo?: string }
+): Promise<
+  | { ok: true; id: string }
+  | { ok: false; status: number; message: string }
+> {
+  if (!isSmtpConfigured()) {
+    return { ok: false, status: 503, message: "SMTP_USER/SMTP_PASSWORD is not configured on this server." };
+  }
+  const nodemailer = await import("nodemailer");
+  const host = process.env.SMTP_HOST?.trim() || "smtp.gmail.com";
+  const port = parseInt(process.env.SMTP_PORT || "587", 10);
+  const user = process.env.SMTP_USER!.trim();
+  const pass = process.env.SMTP_PASSWORD!.trim();
+
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+
+  try {
+    const info = await transporter.sendMail({
+      from: buildSmtpMailFrom(),
+      to,
+      subject: payload.subject,
+      html: payload.html,
+      text: payload.text,
+      replyTo: opts?.replyTo,
+    });
+    return { ok: true, id: info.messageId ?? "smtp-sent" };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, status: 502, message: msg };
+  }
+}
+
 /** POST https://api.resend.com/emails — no extra npm dependency. */
 export async function sendViaResend(
   to: string,

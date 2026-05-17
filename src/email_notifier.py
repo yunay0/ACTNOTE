@@ -1,4 +1,4 @@
-"""B-3-1: 이메일 발송 모듈 (Resend 기반).
+"""B-3-1: 이메일 발송 모듈 (SMTP 또는 Resend).
 
 Public API:
     send_email(to, subject, html, text=None, from_addr=None, *, dry_run=None) -> dict
@@ -8,14 +8,20 @@ Public API:
     render_analysis_failed_email(meeting_title, error_message, app_url) -> dict
 
 설계:
-    - HTML + plain text 둘 다 자동 생성 (Resend 가 멀티파트로 보냄).
-    - dry_run 모드: 실제 호출 대신 console 에 출력 (RESEND_API_KEY 미설정 시 자동 활성화).
+    - HTML + plain text 둘 다 자동 생성 (멀티파트 MIME).
+    - 발송 우선순위: ``SMTP_USER`` + ``SMTP_PASSWORD`` 설정 시 SMTP → 그 외 ``RESEND_API_KEY`` → 없으면 dry_run.
+    - dry_run 모드: 실제 호출 대신 console 에 출력.
     - 모든 템플릿 함수는 ``{"subject": str, "html": str, "text": str}`` 딕셔너리 반환.
 
 환경변수:
-    RESEND_API_KEY      : 필수 (없으면 dry_run 강제)
-    EMAIL_FROM          : 기본 발신자. ``Display <email@domain>`` 형식. Resend 는 표시 이름·주소 모두 ASCII 만 허용 (한글 표시명 불가).
-                          미설정 시 onboarding@resend.dev (개발 전용)
+    SMTP_HOST           : 기본 ``smtp.gmail.com``
+    SMTP_PORT           : 기본 ``587`` (465 면 SSL)
+    SMTP_USER           : Gmail 전체 주소 (예: ``you@gmail.com``)
+    SMTP_PASSWORD       : Gmail 앱 비밀번호 (16자)
+    RESEND_API_KEY      : Resend 사용 시 (SMTP 미설정 시)
+    EMAIL_FROM          : 기본 발신자 헤더. SMTP 에선 유니코드 표시명 허용.
+                          Resend 는 표시 이름·주소 ASCII 만 허용 (한글 표시명 불가).
+                          미설정 시 SMTP 는 ``Actnote <SMTP_USER>``, Resend 는 onboarding@resend.dev
     NEXT_PUBLIC_APP_URL : 본문 안에 들어가는 호스트 (예: "https://app.actnote.com")
 
 도메인 인증 (운영 단계):
@@ -30,6 +36,8 @@ import os
 from html import escape
 
 from rich.console import Console
+
+from src.smtp_mail import format_from_header, send_via_smtp, smtp_credentials_configured
 
 _log = logging.getLogger(__name__)
 _console = Console()
@@ -72,11 +80,34 @@ def _normalize_resend_from(raw: str | None) -> str:
 # Core sender
 # ---------------------------------------------------------------------------
 
+def _can_send_real_email() -> bool:
+    """SMTP 계정 또는 Resend 키가 있으면 실제 발송 가능."""
+    return smtp_credentials_configured() or bool(os.getenv("RESEND_API_KEY"))
+
+
+def _smtp_from_header(from_addr: str | None) -> str:
+    """SMTP 용 ``From`` 헤더. Gmail 은 인증 계정과 같은 메일박스 권장."""
+    user = os.getenv("SMTP_USER", "").strip()
+    raw = (from_addr or os.getenv("EMAIL_FROM") or "").strip()
+    if not raw:
+        return format_from_header("Actnote", user)
+    fixed = raw.replace("\ufeff", "").replace("\uff1c", "<").replace("\uff1e", ">")
+    if "<" in fixed and ">" in fixed:
+        return fixed.strip()
+    parts = fixed.split()
+    if len(parts) == 1 and "@" in parts[0]:
+        return format_from_header("Actnote", parts[0])
+    if len(parts) >= 2 and "@" in parts[-1]:
+        display = " ".join(parts[:-1])
+        return format_from_header(display, parts[-1])
+    return format_from_header("Actnote", user)
+
+
 def _is_dry_run(dry_run_arg: bool | None) -> bool:
-    """dry_run 결정. 명시적 인자 우선, 없으면 RESEND_API_KEY 유무로 판단."""
+    """dry_run 결정. 명시적 인자 우선, 없으면 SMTP/Resend 설정 유무로 판단."""
     if dry_run_arg is not None:
         return dry_run_arg
-    return not bool(os.getenv("RESEND_API_KEY"))
+    return not _can_send_real_email()
 
 
 def send_email(
@@ -98,7 +129,7 @@ def send_email(
         text: plain text 본문 (None 이면 HTML 에서 태그 제거해 자동 생성).
         from_addr: 발신자. 미지정 시 ``EMAIL_FROM`` env 또는 ``DEFAULT_FROM``.
         reply_to: 회신 주소.
-        dry_run: True 면 콘솔 출력만. None (기본) 이면 RESEND_API_KEY 유무로 자동.
+        dry_run: True 면 콘솔 출력만. None (기본) 이면 SMTP/Resend 설정 유무로 자동.
 
     Returns:
         {"id": str, "dry_run": bool, "to": list[str], "subject": str}
@@ -112,12 +143,16 @@ def send_email(
     if not recipients:
         raise ValueError("send_email: to 가 비어있습니다.")
 
-    sender = _normalize_resend_from(from_addr or os.getenv("EMAIL_FROM"))
     body_text = text if text is not None else _strip_html(html)
+    preview_from = (
+        _smtp_from_header(from_addr)
+        if smtp_credentials_configured()
+        else _normalize_resend_from(from_addr or os.getenv("EMAIL_FROM"))
+    )
 
     if _is_dry_run(dry_run):
         _console.print(
-            f"[yellow][DRY-RUN email][/] from={sender} to={recipients} "
+            f"[yellow][DRY-RUN email][/] from={preview_from} to={recipients} "
             f"subject={subject!r}\n{body_text[:300]}{'…' if len(body_text) > 300 else ''}"
         )
         return {
@@ -127,7 +162,20 @@ def send_email(
             "subject": subject,
         }
 
-    # 실제 발송 (lazy import — 미설치 환경에서 dry_run 만 쓰는 경우 보호)
+    if smtp_credentials_configured():
+        sender_smtp = _smtp_from_header(from_addr)
+        return send_via_smtp(
+            from_header=sender_smtp,
+            to=recipients,
+            subject=subject,
+            html=html,
+            text=body_text,
+            reply_to=reply_to,
+        )
+
+    sender = _normalize_resend_from(from_addr or os.getenv("EMAIL_FROM"))
+
+    # 실제 발송 — Resend (lazy import — 미설치 환경에서 dry_run 만 쓰는 경우 보호)
     try:
         import resend  # type: ignore[import-untyped]
     except ImportError as e:
