@@ -83,7 +83,7 @@ function collectRepoRootCandidates(): string[] {
   // 자주 쓰는 레이아웃: dev 서버 cwd 가 actnote-web 인 경우 한 단계 위가 레포 루트
   add(path.join(process.cwd(), ".."));
 
-  return [...seen];
+  return Array.from(seen);
 }
 
 function mergeEnvFilesFromRoot(root: string): void {

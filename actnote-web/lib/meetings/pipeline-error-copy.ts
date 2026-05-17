@@ -28,12 +28,19 @@ export function userFacingPipelineError(raw: string | null | undefined): string 
   return CODE_MESSAGES[code] ?? CODE_MESSAGES.PIPELINE_INTERNAL;
 }
 
-export function supportMailtoHref(): string {
-  const addr =
-    typeof process !== "undefined" &&
-    process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim()
+/** 기획 확정 주소 — `NEXT_PUBLIC_SUPPORT_EMAIL` 미설정 시 폴백 (frontend-handoff와 동일). */
+const DEFAULT_SUPPORT_EMAIL = "actnote.support@gmail.com";
+
+export function supportEmailAddress(): string {
+  const raw =
+    typeof process !== "undefined" && process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim()
       ? process.env.NEXT_PUBLIC_SUPPORT_EMAIL.trim()
-      : "support@actnote.app";
+      : DEFAULT_SUPPORT_EMAIL;
+  return raw;
+}
+
+export function supportMailtoHref(): string {
+  const addr = supportEmailAddress();
   const subject = encodeURIComponent("ACTNOTE — Meeting analysis issue");
   return `mailto:${addr}?subject=${subject}`;
 }

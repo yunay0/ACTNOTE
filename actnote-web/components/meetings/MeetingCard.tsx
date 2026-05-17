@@ -4,7 +4,11 @@ import { useState, useRef, useEffect } from "react";
 import { MoreVertical, Trash2, RefreshCw, Mail } from "lucide-react";
 import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
-import { userFacingPipelineError, supportMailtoHref } from "@/lib/meetings/pipeline-error-copy";
+import {
+  userFacingPipelineError,
+  supportMailtoHref,
+  supportEmailAddress,
+} from "@/lib/meetings/pipeline-error-copy";
 
 interface MeetingCardProps {
   meeting: Meeting;
@@ -48,6 +52,7 @@ export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: M
   const statusKey = getStatusKey(meeting);
   const style = STATUS_STYLE[statusKey];
   const supportHref = supportMailtoHref();
+  const supportEmail = supportEmailAddress();
   const errorHint =
     meeting.status === "error" ? userFacingPipelineError(meeting.error_message) : null;
 
@@ -102,6 +107,7 @@ export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: M
             {isErr && (
               <a
                 href={supportHref}
+                title={`Email ${supportEmail}`}
                 className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#0a2540] hover:bg-[#f8fafc] transition-colors"
                 onClick={(e) => e.stopPropagation()}
               >

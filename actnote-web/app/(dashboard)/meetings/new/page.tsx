@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { X, AlertTriangle } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
@@ -43,9 +43,39 @@ export default function NewMeetingPage() {
   const [pendingNavTarget, setPendingNavTarget] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [memberOptions, setMemberOptions] = useState<{ user_id: string; label: string }[]>([]);
+  const [responsibleUserId, setResponsibleUserId] = useState<string | null>(null);
+  const [membersLoaded, setMembersLoaded] = useState(false);
+
   // 폼에 입력값이 하나라도 있으면 dirty
-  const isDirty = title.trim() !== "" || meetingType.trim() !== "" ||
-    description.trim() !== "" || participants.length > 0 || file !== null;
+  const isDirty =
+    title.trim() !== "" ||
+    meetingType.trim() !== "" ||
+    description.trim() !== "" ||
+    participants.length > 0 ||
+    file !== null;
+
+  const canSubmit = useMemo(() => {
+    return Boolean(
+      workspaceId &&
+        membersLoaded &&
+        title.trim() &&
+        datetime &&
+        file &&
+        meetingType.trim() &&
+        participants.length > 0 &&
+        responsibleUserId
+    );
+  }, [
+    workspaceId,
+    membersLoaded,
+    title,
+    datetime,
+    file,
+    meetingType,
+    participants.length,
+    responsibleUserId,
+  ]);
 
   // 브라우저 새로고침 / 탭 닫기 방지
   useEffect(() => {
@@ -56,6 +86,56 @@ export default function NewMeetingPage() {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isDirty]);
+
+  useEffect(() => {
+    if (!workspaceId) {
+      setMemberOptions([]);
+      setResponsibleUserId(null);
+      setMembersLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
+
+      const { data: rows, error } = await (supabase as any)
+        .from("workspace_members")
+        .select("user_id, users(name, email)")
+        .eq("workspace_id", workspaceId);
+
+      if (cancelled) return;
+
+      if (error || !rows?.length) {
+        setMemberOptions([
+          { user_id: user.id, label: user.email ?? "You (organizer)" },
+        ]);
+        setResponsibleUserId(user.id);
+        setMembersLoaded(true);
+        return;
+      }
+
+      const opts = (rows as any[]).map((r) => {
+        const u = Array.isArray(r.users) ? r.users[0] : r.users;
+        const name = typeof u?.name === "string" ? u.name.trim() : "";
+        const email = typeof u?.email === "string" ? u.email : "";
+        const label = name ? `${name} (${email})` : email || String(r.user_id);
+        return { user_id: r.user_id as string, label };
+      });
+      setMemberOptions(opts);
+      setResponsibleUserId((prev) =>
+        prev && opts.some((o) => o.user_id === prev) ? prev : user.id
+      );
+      setMembersLoaded(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
 
   // 헤더 백버튼 대신 사용할 safe navigate
   function safeNavigate(href: string) {
@@ -108,6 +188,18 @@ export default function NewMeetingPage() {
       setAlertMsg("Please fill in all required fields: Meeting Title, Date & Time, and Recording.");
       return;
     }
+    if (!meetingType.trim()) {
+      setAlertMsg("Please select a meeting type.");
+      return;
+    }
+    if (participants.length === 0) {
+      setAlertMsg("Please add at least one participant.");
+      return;
+    }
+    if (!responsibleUserId) {
+      setAlertMsg("Please select a responsible person for this meeting.");
+      return;
+    }
     const nameErrSubmit = validateRecordingFileName(file.name);
     if (nameErrSubmit) {
       setAlertMsg(nameErrSubmit);
@@ -138,7 +230,9 @@ export default function NewMeetingPage() {
           created_by: user.id,
           meeting_date: new Date(datetime).toISOString(),
           audio_file_size_bytes: file.size,
-          meeting_type: meetingType || null,
+          meeting_type: meetingType.trim(),
+          description: description.trim() || null,
+          responsible_user_id: responsibleUserId,
           participants: participants.map((p) => p.value),
         })
         .select("id")
@@ -367,6 +461,10 @@ export default function NewMeetingPage() {
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#ff6b35] text-xs font-bold text-white">1</span>
                 <h2 className="text-[16px] font-bold text-[#0a2540]">Meeting Information</h2>
               </div>
+              <p className="mb-4 text-[12px] leading-snug text-[#64748b]">
+                <span className="font-semibold text-[#ff6b35]">*</span> Fields are required before{" "}
+                <span className="font-semibold text-[#0a2540]">Generate Notes</span> is enabled. Add your recording in section 2.
+              </p>
 
               <div className="flex flex-col gap-4">
                 <Field label="Meeting Title" required>
@@ -447,8 +545,29 @@ export default function NewMeetingPage() {
                       ))}
                     </div>
                   )}
+                  {participants.length === 0 && (
+                    <p className="text-[11px] text-[#94a3b8]">At least one participant is required.</p>
+                  )}
                   {participants.length > 0 && (
                     <p className="mt-1 text-xs text-[#94a3b8]">Add team members who attended this meeting</p>
+                  )}
+                </Field>
+
+                <Field label="Responsible person" required>
+                  <select
+                    value={responsibleUserId ?? ""}
+                    onChange={(e) => setResponsibleUserId(e.target.value || null)}
+                    disabled={!membersLoaded}
+                    className={`${inputCls} cursor-pointer disabled:opacity-60`}
+                  >
+                    {memberOptions.map((m) => (
+                      <option key={m.user_id} value={m.user_id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                  {!membersLoaded && (
+                    <p className="text-[12px] text-[#94a3b8]">Loading workspace members…</p>
                   )}
                 </Field>
               </div>
@@ -558,11 +677,24 @@ export default function NewMeetingPage() {
         </div>{/* end content row + scroll area */}
 
         {/* Bottom bar — Generate Notes */}
-        <div className="shrink-0 flex items-center justify-end border-t border-[#e2e8f0] bg-white px-8 py-4">
+        <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-t border-[#e2e8f0] bg-white px-8 py-4">
+          {!canSubmit && !loading ? (
+            <p className="text-[12px] text-[#64748b] max-w-xl">
+              Complete all <span className="text-[#ff6b35] font-semibold">*</span> fields in section 1 and attach a recording in section 2.
+            </p>
+          ) : (
+            <span />
+          )}
           <button
+            type="button"
             onClick={handleSubmit}
-            disabled={loading}
-            className="flex h-11 items-center gap-2 rounded-[10px] px-8 text-[15px] font-bold text-white shadow-[0px_4px_6px_rgba(255,107,53,0.2)] hover:opacity-90 disabled:opacity-60 transition-opacity"
+            disabled={loading || !canSubmit}
+            title={
+              !canSubmit && !loading
+                ? "Fill meeting type, participants, recording, and required fields to continue."
+                : undefined
+            }
+            className="flex h-11 items-center gap-2 rounded-[10px] px-8 text-[15px] font-bold text-white shadow-[0px_4px_6px_rgba(255,107,53,0.2)] hover:opacity-90 disabled:opacity-50 disabled:pointer-events-none transition-opacity"
             style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
           >
             {loading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : null}

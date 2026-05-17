@@ -445,7 +445,7 @@ def _send_email_step(
     from_addr: str | None,
     reply_to: str | None,
 ) -> dict:
-    """Resend 발송. 실패 시 raise → Inngest 재시도."""
+    """SMTP 또는 Resend 로 발송. 실패 시 raise → Inngest 재시도."""
     from src.email_notifier import send_email
     return send_email(
         to=to,
@@ -494,6 +494,14 @@ async def send_email_handler(ctx: inngest.Context) -> dict:
         data.get("from"),
         data.get("reply_to"),
     )
+
+    if result.get("dry_run"):
+        ctx.logger.warning(
+            "notification/email_send dry-run — mail not delivered "
+            "(set SMTP_USER + SMTP_PASSWORD or RESEND_API_KEY + EMAIL_FROM on worker). to=%s subject=%r",
+            to_list,
+            subject,
+        )
 
     ctx.logger.info(
         "notification/email_send 완료: id=%s to=%s subject=%r",
