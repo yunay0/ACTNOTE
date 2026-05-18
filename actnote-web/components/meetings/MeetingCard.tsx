@@ -33,18 +33,28 @@ function getStatusKey(meeting: Meeting): string {
   return "draft";
 }
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
+function formatMeetingDateTime(iso: string) {
+  return new Date(iso).toLocaleString("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
   });
 }
 
 const MEETING_TYPE_LABELS: Record<string, string> = {
-  default:  "General",
-  sprint:   "Sprint",
+  default: "General",
+  other: "Other",
+  one_on_one: "1:1 Meeting",
+  "1on1": "1:1 Meeting",
+  standup: "Team Standup",
+  sprint: "Sprint",
+  project_review: "Project Review",
+  brainstorming: "Brainstorming",
+  client: "Client Meeting",
+  board: "Board Meeting",
+  all_hands: "All Hands",
+  workshop: "Workshop",
   planning: "Planning",
-  retro:    "Retro",
-  "1on1":   "1:1",
+  retro: "Retro",
 };
 
 export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: MeetingCardProps) {
@@ -71,7 +81,7 @@ export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: M
   const visibleParticipants = participants.slice(0, 3);
   const extraCount = Math.max(0, participants.length - 3);
   const actionCount = meeting.action_items_count ?? 0;
-  const dateStr = formatDate(meeting.meeting_date ?? meeting.created_at);
+  const dateStr = formatMeetingDateTime(meeting.meeting_date ?? meeting.created_at);
   const isErr = meeting.status === "error";
 
   return (

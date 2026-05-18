@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, supportMailtoHref } from "@/lib/legal-links";
 
 export default function LandingPage() {
   return (
@@ -85,13 +86,13 @@ function LeftColumn() {
 
       {/* CTA */}
       <Link
-        href="/login"
+        href="/signup"
         className="inline-flex w-fit items-center justify-center rounded-xl px-20 py-5 text-[17px] font-bold text-white shadow-[0px_8px_12px_rgba(255,107,53,0.3)] hover:opacity-90 transition-opacity"
         style={{
           background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)",
         }}
       >
-        Get Started
+        Start ACTNOTE
       </Link>
     </div>
   );
@@ -196,19 +197,36 @@ function ActionRow() {
 
 /* ── Footer ── */
 function Footer() {
+  const supportHref = supportMailtoHref();
   return (
-    <footer className="flex h-[60px] shrink-0 items-center justify-between bg-[#0a2540] px-20">
-      <span className="text-xs text-[#94a3b8]">
+    <footer className="flex h-[60px] shrink-0 items-center justify-between border-t border-[#1e3a5f] bg-[#0a2540] px-20">
+      <span className="text-[12.3px] leading-normal text-[#94a3b8]">
         © 2026 ACTNOTE. All rights reserved.
       </span>
-      <div className="flex gap-8">
-        <span className="cursor-pointer text-xs text-[#94a3b8] hover:text-white transition-colors">
+      <nav className="flex gap-8" aria-label="Legal and support">
+        <a
+          href={supportHref}
+          className="text-[12.3px] leading-normal text-[#94a3b8] hover:text-white transition-colors"
+        >
+          Support
+        </a>
+        <a
+          href={TERMS_OF_SERVICE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[12.3px] leading-normal text-[#94a3b8] hover:text-white transition-colors"
+        >
           Terms of Service
-        </span>
-        <span className="cursor-pointer text-xs text-[#94a3b8] hover:text-white transition-colors">
+        </a>
+        <a
+          href={PRIVACY_POLICY_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[12.3px] leading-normal text-[#94a3b8] hover:text-white transition-colors"
+        >
           Privacy Policy
-        </span>
-      </div>
+        </a>
+      </nav>
     </footer>
   );
 }

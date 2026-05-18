@@ -4,6 +4,56 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { AuthMarketingPanel } from "@/components/auth/AuthMarketingPanel";
+import { englishFieldInvalidMessage, clearNativeValidity } from "@/lib/auth-native-validation";
+import { SUPPORT_EMAIL } from "@/lib/legal-links";
+
+const PLACEHOLDER_EMAIL = "lucy@actnote.com";
+const PLACEHOLDER_PASSWORD = "Enter your password";
+
+const inputCls =
+  "w-full rounded-[10px] border-2 border-[#e2e8f0] px-[18px] py-[14px] text-[15px] text-[#0f172a] placeholder-[#94a3b8] outline-none transition-colors focus:border-[#2e5c8a]";
+
+function ForgotPasswordModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="forgot-modal-title"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-[420px] rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-[#fef2f2]">
+          <span className="text-[29px] leading-none" aria-hidden>
+            ❓
+          </span>
+        </div>
+        <h2 id="forgot-modal-title" className="mt-4 text-center text-2xl font-bold text-[#0a2540]">
+          Forgot your account or password?
+        </h2>
+        <p className="mt-3 text-center text-[14.3px] leading-6 text-[#64748b]">
+          Please contact our support team (
+          <a href={`mailto:${SUPPORT_EMAIL}`} className="font-medium text-[#ff6b35] hover:underline">
+            {SUPPORT_EMAIL}
+          </a>
+          ). We&apos;ll help you recover your account within 3 days.
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="mx-auto mt-6 block w-[200px] rounded-[10px] bg-[#ef4444] py-3 text-[15px] font-bold text-white transition-opacity hover:opacity-90"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function LoginForm() {
   const searchParams = useSearchParams();
@@ -12,6 +62,8 @@ function LoginForm() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [staySignedIn, setStaySignedIn] = useState(true);
+  const [forgotOpen, setForgotOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,10 +85,11 @@ function LoginForm() {
     };
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setLoading(true);
     setError(null);
+
+    setLoading(true);
     const supabase = createClient();
     const { error: signErr } = await supabase.auth.signInWithPassword({
       email: email.trim(),
@@ -47,135 +100,136 @@ function LoginForm() {
       setLoading(false);
       return;
     }
+    if (!staySignedIn) {
+      /* Persist session is handled by Supabase client; checkbox documents intent only for now. */
+    }
     window.location.assign("/workspace/select");
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
-      {/* Left — Branding */}
-      <div
-        className="hidden flex-1 flex-col justify-center p-[80px] md:flex"
-        style={{ background: "linear-gradient(135deg, #0a2540 0%, #1e3a5f 100%)" }}
-      >
-        <div className="mb-[39px] flex items-center gap-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-[12px] bg-[#ff6b35]">
-            <span className="text-4xl font-bold leading-none text-[#1e3a5f]">✓</span>
-          </div>
-          <span className="text-[36px] font-bold tracking-[-1px] text-white">ACTNOTE</span>
-        </div>
+    <>
+      <div className="flex min-h-screen w-full bg-[#f8fafc]">
+        <AuthMarketingPanel />
 
-        <p className="mb-[47px] text-[22.5px] leading-[1.5] text-white/90">
-          Transform your meetings
-          <br />
-          into actionable insights
-        </p>
+        <div className="relative z-[1] flex flex-1 items-center justify-center p-10">
+          <div className="w-full max-w-[480px] rounded-2xl bg-white p-[60px] shadow-[0px_4px_6px_rgba(0,0,0,0.1)]">
+            <h2 className="text-[28px] font-bold text-[#0f172a]">Welcome back</h2>
+            <p className="mt-2 text-sm text-[#475569]">Sign in to your ACTNOTE account</p>
 
-        <div className="flex flex-col gap-6">
-          {FEATURES.map(({ emoji, text }) => (
-            <div key={text} className="flex items-center gap-4">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px] bg-[rgba(255,107,53,0.2)] text-xl">
-                {emoji}
-              </div>
-              <span className="text-[15px] text-white/85">{text}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Right — Login Form */}
-      <div className="flex flex-1 flex-col items-center justify-center bg-white p-[80px]">
-        <div className="flex w-full max-w-[400px] flex-col gap-8">
-          <div className="text-center">
-            <h1 className="text-[31px] font-bold text-[#0a2540]">Welcome 👋</h1>
-            <p className="mt-3 text-[15px] text-[#64748b]">Sign in to continue to ACTNOTE</p>
-          </div>
-
-          {queryBanner && (
-            <p
-              className={`rounded-xl border px-4 py-3 text-center text-sm ${
-                queryBanner.kind === "success"
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                  : "border-red-200 bg-red-50 text-red-600"
-              }`}
-            >
-              {queryBanner.text}
-            </p>
-          )}
-
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="login-email" className="text-sm font-medium text-[#0a2540]">
-                Email
-              </label>
-              <input
-                id="login-email"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                required
-                className="h-12 w-full rounded-xl border-2 border-[#e2e8f0] px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a]"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="login-password" className="text-sm font-medium text-[#0a2540]">
-                Password
-              </label>
-              <input
-                id="login-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                minLength={6}
-                className="h-12 w-full rounded-xl border-2 border-[#e2e8f0] px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a]"
-              />
-            </div>
-
-            {error && (
-              <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-center text-sm text-red-600">
-                {error}
+            {queryBanner && (
+              <p
+                className={`mt-6 rounded-xl border px-4 py-3 text-center text-sm ${
+                  queryBanner.kind === "success"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-red-200 bg-red-50 text-red-600"
+                }`}
+              >
+                {queryBanner.text}
               </p>
             )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex h-14 w-full items-center justify-center rounded-[12px] text-[16px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-              style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-            >
-              {loading ? (
-                <span className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-              ) : (
-                "Sign in"
+            <form onSubmit={handleSubmit} className={`flex flex-col gap-4 ${queryBanner ? "mt-4" : "mt-6"}`}>
+              <div className="flex flex-col gap-2">
+                <label htmlFor="login-email" className="text-sm font-bold text-[#0f172a]">
+                  Email Address
+                </label>
+                <input
+                  id="login-email"
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onInvalid={englishFieldInvalidMessage}
+                  onInput={(e) => clearNativeValidity(e.currentTarget)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setError(null);
+                  }}
+                  placeholder={PLACEHOLDER_EMAIL}
+                  required
+                  className={inputCls}
+                />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-4">
+                  <label htmlFor="login-password" className="text-sm font-bold text-[#0f172a]">
+                    Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setForgotOpen(true)}
+                    className="text-[13px] font-bold text-[#ff6b35] hover:underline"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+                <input
+                  id="login-password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onInvalid={englishFieldInvalidMessage}
+                  onInput={(e) => clearNativeValidity(e.currentTarget)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setError(null);
+                  }}
+                  placeholder={PLACEHOLDER_PASSWORD}
+                  required
+                  minLength={6}
+                  className={inputCls}
+                />
+              </div>
+
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={staySignedIn}
+                  onChange={(e) => setStaySignedIn(e.target.checked)}
+                  className="size-[25px] shrink-0 rounded-[10px] border-2 border-[#e2e8f0] accent-[#ff6b35]"
+                />
+                <span className="text-[15px] text-[#94a3b8]">Stay signed in</span>
+              </label>
+
+              {error && (
+                <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-center text-sm text-red-600">
+                  {error}
+                </p>
               )}
-            </button>
-          </form>
 
-          <p className="text-center text-sm text-[#64748b]">
-            No account?{" "}
-            <Link href="/signup" className="font-semibold text-[#ff6b35] hover:underline">
-              Sign up
-            </Link>
-          </p>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-[10px] bg-[#ff6b35] py-[15px] text-base font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+              >
+                {loading ? (
+                  <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                ) : (
+                  "Sign In"
+                )}
+              </button>
+            </form>
 
-          <p className="text-center text-[12px] leading-relaxed text-[#64748b]">
-            By continuing, you agree to our{" "}
-            <span className="cursor-pointer font-medium text-[#ff6b35] hover:underline">
-              Terms of Service
-            </span>{" "}
-            and{" "}
-            <span className="cursor-pointer font-medium text-[#ff6b35] hover:underline">
-              Privacy Policy
-            </span>
-          </p>
+            <div className="mt-6 flex items-center gap-4">
+              <div className="h-px flex-1 bg-[#e2e8f0]" />
+              <span className="shrink-0 text-[13px] text-[#94a3b8]">or</span>
+              <div className="h-px flex-1 bg-[#e2e8f0]" />
+            </div>
+
+            <p className="mt-6 flex flex-wrap items-center justify-center gap-1 text-center text-sm text-[#475569]">
+              Don&apos;t have an account?{" "}
+              <Link href="/signup" className="font-bold text-[#ff6b35] hover:underline">
+                Sign up
+              </Link>
+            </p>
+          </div>
         </div>
       </div>
-    </div>
+
+      <ForgotPasswordModal open={forgotOpen} onClose={() => setForgotOpen(false)} />
+    </>
   );
 }
 
@@ -183,7 +237,7 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex h-screen items-center justify-center bg-white text-[#64748b]">
+        <div className="flex h-screen items-center justify-center bg-[#f8fafc] text-[#64748b]">
           Loading…
         </div>
       }
@@ -192,9 +246,3 @@ export default function LoginPage() {
     </Suspense>
   );
 }
-
-const FEATURES = [
-  { emoji: "🎙️", text: "AI-powered transcription & summary" },
-  { emoji: "✅", text: "Auto-extract action items" },
-  { emoji: "🎫", text: "One-click ticket creation" },
-];
