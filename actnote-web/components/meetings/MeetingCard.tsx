@@ -59,6 +59,7 @@ const MEETING_TYPE_LABELS: Record<string, string> = {
 
 export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: MeetingCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const statusKey = getStatusKey(meeting);
   const style = STATUS_STYLE[statusKey];
@@ -85,6 +86,67 @@ export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: M
   const isErr = meeting.status === "error";
 
   return (
+    <>
+      {deleteConfirmOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+          role="presentation"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            aria-label="Close delete confirmation"
+            className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDeleteConfirmOpen(false);
+            }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-meeting-title"
+            aria-describedby="delete-meeting-desc"
+            className="relative z-[101] w-full max-w-[400px] rounded-2xl bg-white p-6 shadow-xl mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#fef2f2]">
+                <Trash2 className="h-5 w-5 text-red-500" strokeWidth={2} />
+              </div>
+              <div className="min-w-0 flex-1 pt-0.5">
+                <h2 id="delete-meeting-title" className="text-[15px] font-bold leading-snug text-[#0a2540]">
+                  Delete this meeting?
+                </h2>
+                <p id="delete-meeting-desc" className="mt-1 text-[13px] leading-relaxed text-[#64748b]">
+                  This action cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmOpen(false)}
+                className="h-11 flex-1 rounded-xl border-2 border-[#e2e8f0] bg-white text-[14px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDeleteConfirmOpen(false);
+                  onDelete?.(meeting.id);
+                }}
+                className="h-11 flex-1 rounded-xl bg-red-600 text-[14px] font-bold text-white transition-opacity hover:opacity-90"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     <div
       className="group relative flex cursor-pointer flex-col rounded-xl border border-[#e2e8f0] bg-white p-5 transition-all hover:border-[#2e5c8a]/30 hover:shadow-md"
       onClick={onClick}
@@ -128,18 +190,20 @@ export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: M
                 Contact support
               </a>
             )}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setMenuOpen(false);
-                onDelete?.(meeting.id);
-              }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Delete
-            </button>
+            {onDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  setDeleteConfirmOpen(true);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -203,5 +267,6 @@ export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: M
         )}
       </div>
     </div>
+    </>
   );
 }

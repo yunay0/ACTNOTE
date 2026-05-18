@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, CalendarDays, CheckCircle2, ListTodo, Sparkles,
-  Clock, User, Send, Pencil, Trash2, Plus, X, FileText, Save,
+  Clock, User, Send, Pencil, Trash2, Plus, X, Save,
   AlertCircle, ExternalLink,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -830,21 +830,6 @@ export default function MeetingDetailPage() {
                   <EmptyNote text="No action items yet. They will be extracted automatically after AI processing." />
                 )}
               </Section>
-
-              {/* 관련 문서 (DRAFT-006) */}
-              {Array.isArray(meeting.referenced_documents) &&
-                meeting.referenced_documents.length > 0 && (
-                <Section icon={<FileText className="h-4 w-4 text-[#2e5c8a]" />} title="Referenced Documents">
-                  <div className="flex flex-wrap gap-2">
-                    {meeting.referenced_documents.map((doc, i) => (
-                      <span key={i} className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] px-3 py-1.5 text-sm text-[#0a2540]">
-                        <FileText className="h-3.5 w-3.5 text-[#64748b]" />
-                        {doc}
-                      </span>
-                    ))}
-                  </div>
-                </Section>
-              )}
             </>
           )}
         </div>
