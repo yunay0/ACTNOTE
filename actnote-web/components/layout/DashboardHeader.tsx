@@ -198,11 +198,6 @@ export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardH
       </div>
 
       <div className="flex items-center gap-4">
-        {/* Search */}
-        <button className="flex h-10 w-10 items-center justify-center rounded-lg text-[20px] text-[#64748b] hover:bg-[#f8fafc] transition-colors">
-          🔍
-        </button>
-
         {/* Bell — NOTI-001 */}
         <div ref={bellRef} className="relative">
           <button
