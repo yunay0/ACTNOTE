@@ -67,6 +67,7 @@ _MODEL_API_HINTS = (
     "apierror",
     "huggingface",
     "pyannote",
+    "modal",
 )
 
 _DB_PUSH_HINTS = (

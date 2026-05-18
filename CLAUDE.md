@@ -21,6 +21,21 @@
 
 ---
 
+## 배포 현황 (2026-05-18)
+
+
+| 구성요소               | 상태        | 위치                                                                                  |
+| ------------------ | --------- | ----------------------------------------------------------------------------------- |
+| **프론트 (Next.js)**  | ✅ 배포 완료   | https://actnote-web.vercel.app (Vercel)                                             |
+| **Modal GPU 화자분리** | ✅ 배포 완료   | `actnote-diarization` — https://modal.com/apps/ttojo6/main/deployed/actnote-diarization |
+| **백엔드 워커 (Python)** | ⏳ 로컬 실행   | Railway 배포 예정 (미완료)                                                                  |
+
+
+- 워커가 아직 로컬이므로 운영 분석은 **로컬 워커 가동 중에만** 동작 → `uv run python scripts/serve_worker.py` 필요.
+- 화자분리는 `USE_MODAL_DIARIZATION=true` 일 때 Modal GPU 사용 (워커가 Supabase signed URL 전달, service_role 키 Modal 미전달).
+
+---
+
 ## 일정
 
 
@@ -75,7 +90,7 @@
   ↓ Inngest 이벤트 (Route Handler → /api/trigger-pipeline)
 [Inngest Worker (Python)]
   ├─ STT (Whisper API)
-  ├─ Diarization (pyannote 3.1)
+  ├─ Diarization (pyannote 4.x — USE_MODAL_DIARIZATION=true 시 Modal GPU 오프로딩)
   ├─ Alignment
   ├─ CRAG (meeting_embeddings 검색)
   ├─ LLM 추출 (Claude Sonnet 4.6, 유형별 템플릿)
@@ -107,6 +122,7 @@ Actnote/                    ← 레포 루트 = 백엔드 (Python)
 │   ├── error_classifier.py ← 에러 분류 코드 6종
 │   ├── action_resolver.py  ← A.U.D.N 판단 로직
 │   ├── stt.py / diarization.py / alignment.py / embeddings.py
+│   ├── modal_diarization.py← Modal GPU 화자분리 (pyannote 4.x, signed URL 입력)
 │   ├── cost_tracker.py     ← API 비용 추적
 │   ├── encryption.py       ← Fernet 토큰 암호화
 │   ├── policy.py           ← SEC-001 옵트아웃 정책
@@ -202,6 +218,23 @@ uv run python scripts/serve_worker.py
 npx inngest-cli@latest dev
 ```
 
+### 화자분리 Modal GPU (배포 완료 — 2026-05-18)
+
+CPU 화자분리 30분+ → Inngest 타임아웃 초과(500). GPU 오프로딩으로 해결.
+배포 앱: `actnote-diarization` (https://modal.com/apps/ttojo6/main/deployed/actnote-diarization)
+
+```bash
+# 1) Modal 대시보드에서 Secret "actnote-secrets" 생성 → HUGGINGFACE_TOKEN 등록
+#    (pyannote/speaker-diarization-3.1 + segmentation-3.0 라이선스 동의 선행)
+# 2) Modal 함수 배포 (코드 변경 시 재배포)
+modal deploy src/modal_diarization.py
+# 3) 워커 .env 에 USE_MODAL_DIARIZATION=true
+# 4) 워커 환경에 Modal 인증 (modal token set 또는 MODAL_TOKEN_ID/MODAL_TOKEN_SECRET)
+```
+
+- 워커가 Supabase signed URL 을 만들어 Modal 에 전달 (service_role 키 Modal 미전달).
+- Modal 실패 시 로컬 CPU 폴백 **안 함** (타임아웃 재발 방지) → `MODEL_API_FAILED` 로 분류.
+
 ### 프론트엔드 (Next.js)
 
 ```bash
@@ -229,6 +262,8 @@ npm run dev   # http://localhost:3000
 **선택:**
 
 - `SUPABASE_STORAGE_BUCKET` (기본 `meetings`)
+- `USE_MODAL_DIARIZATION` (기본 `true` — 운영; `false` 면 로컬 pyannote)
+- `MODAL_DIARIZATION_URL_TTL` (기본 `3600`, Modal 에 넘길 signed URL 유효시간 초)
 - `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`
 - `RESEND_API_KEY` + `EMAIL_FROM` + `NEXT_PUBLIC_APP_URL`
 - `ACTNOTE_ASSIGNEE_MATCH_THRESHOLD` (기본 0.55, DRAFT-005)
@@ -263,6 +298,9 @@ uv run python scripts/run_pipeline.py <audio_path>
 
 # 벤치마크
 uv run python scripts/benchmark.py
+
+# Modal 화자분리 함수 배포 (src/modal_diarization.py 변경 시)
+modal deploy src/modal_diarization.py
 
 # 프론트 개발 서버
 cd actnote-web && npm run dev
@@ -341,12 +379,15 @@ from src.notion_sync import exchange_notion_code, complete_notion_oauth
 
 - **Worker 에러 상태 처리** (해결 — 2026-05-10): `download-and-process` 단일 step으로 통합, try/except를 step 외부에 배치
 - **재분석 멱등성** (해결 — 2026-05-10, B-5-3): `_cleanup_for_reanalysis()` 자동 호출
+- **Inngest 화자분리 타임아웃** (해결 중 — 2026-05-18): CPU pyannote 30분+ → Inngest 함수 타임아웃 초과(500). `src/modal_diarization.py` Modal GPU 오프로딩 배포 완료(`actnote-diarization`), `USE_MODAL_DIARIZATION=true` 전환. pyannote 4.x 로 로컬/Modal 메이저 버전 정합
 
 ### 인프라 백로그
 
 - GPU 서버 도입 (5/22~5/24)
-- Modal 전환 검토 (Inngest 에러 처리 대안)
-- 비용 산정 + 모델 업그레이드 (5/25~5/27)
+- ~~Modal 전환 검토~~ → **화자분리 Modal GPU 배포 완료 (2026-05-18)** — `actnote-diarization`
+- **백엔드 워커 서버 배포 미완료** → 현재 로컬 실행 필요 (Railway 배포 예정)
+- Modal timeout(현재 600s) ↔ Inngest 함수 timeout 정합 측정 필요 (회의 길이별 T4 벤치마크 후 확정)
+- 비용 산정 + 모델 업그레이드 (5/25~5/27) — Modal GPU 시간 과금분 포함
 
 ---
 

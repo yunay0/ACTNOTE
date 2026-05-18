@@ -1,10 +1,19 @@
-"""화자 분리 모듈: pyannote.audio 4.0.4 + speaker-diarization-3.1.
+"""화자 분리 모듈: pyannote.audio 4.x + speaker-diarization-3.1.
 
-- 모델 lazy 캐시 (`_pipeline`)로 1회만 로드, CUDA OOM 시 CPU fallback
-- 무료 모델이라 cost_tracker 호출 X
-- pyannote 4.x의 torchcodec(=ffmpeg shared lib) 의존성을 우회하려고
-  pydub으로 미리 디코드해서 {"waveform","sample_rate"} dict로 전달한다.
-  (Windows에서 ffmpeg static-only 빌드여도 동작.)
+두 가지 실행 경로:
+    * 로컬 (USE_MODAL_DIARIZATION=false, 기본): pyannote 를 이 프로세스에서 실행.
+      - 모델 lazy 캐시 (`_pipeline`), CUDA OOM 시 CPU fallback
+      - pyannote 4.x 의 torchcodec(ffmpeg shared lib) 의존성을 우회하려고
+        pydub 으로 미리 디코드해 {"waveform","sample_rate"} dict 로 전달.
+    * Modal (USE_MODAL_DIARIZATION=true, 운영): Modal GPU 함수 호출.
+      - 워커가 만든 Supabase signed URL 만 넘긴다 (src/modal_diarization.py).
+      - Modal 실패 시 **로컬 CPU 폴백 금지** (30분+ → Inngest 타임아웃 재발).
+        명시적 에러로 fail-fast → error_classifier 가 분류.
+
+무료 모델이라 cost_tracker 호출 X (단, Modal GPU 시간은 외부 과금 — Modal 대시보드 추적).
+
+torch/pyannote/pydub/numpy 는 로컬 경로에서만 **지연 import** 한다
+(USE_MODAL_DIARIZATION=true 인 워커가 무거운 의존성을 로드하지 않도록).
 """
 
 from __future__ import annotations
@@ -15,11 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
-import torch
 from dotenv import load_dotenv
-from pyannote.audio import Pipeline
-from pydub import AudioSegment
 from rich.console import Console
 
 from src.schemas import DiarizationSegment
@@ -27,22 +32,103 @@ from src.schemas import DiarizationSegment
 load_dotenv()
 
 DIARIZATION_MODEL: str = "pyannote/speaker-diarization-3.1"
+MODAL_APP_NAME: str = "actnote-diarization"
+MODAL_CLS_NAME: str = "Diarizer"
 _console = Console()
 
-# 같은 프로세스 내 재호출 시 모델 다시 로드하지 않도록 캐시
-_pipeline: Pipeline | None = None
+# 같은 프로세스 내 재호출 시 모델 다시 로드하지 않도록 캐시 (로컬 경로 전용)
+_pipeline = None  # type: ignore[var-annotated]
+
+_TRUTHY = {"1", "true", "yes", "on"}
 
 
-def diarize(audio_path: str) -> list[DiarizationSegment]:
+def modal_diarization_enabled() -> bool:
+    """USE_MODAL_DIARIZATION 환경변수가 truthy 면 True."""
+    return os.getenv("USE_MODAL_DIARIZATION", "false").strip().lower() in _TRUTHY
+
+
+def diarize(
+    audio_path: str,
+    remote_url: str | None = None,
+) -> list[DiarizationSegment]:
     """음성 파일을 화자 단위 발화 구간으로 분할.
 
     Args:
-        audio_path: 음성 파일 경로 (ffmpeg가 지원하는 포맷)
+        audio_path: 로컬 음성 파일 경로 (로컬 경로 전용).
+        remote_url: Supabase signed URL. Modal 경로에서 필수.
 
     Returns:
         [{"speaker": "SPEAKER_00", "start": 0.0, "end": 5.2}, ...]
         시작 시각 기준 오름차순 정렬.
     """
+    if modal_diarization_enabled():
+        if not remote_url:
+            raise RuntimeError(
+                "Modal diarization 활성(USE_MODAL_DIARIZATION=true) 상태인데 "
+                "remote_url 이 없습니다. 워커가 Supabase signed URL 을 만들어 전달해야 합니다. "
+                "로컬 테스트는 USE_MODAL_DIARIZATION=false 로 두세요."
+            )
+        return _diarize_via_modal(remote_url)
+
+    return _diarize_local(audio_path)
+
+
+# ---------------------------------------------------------------------------
+# Modal 경로
+# ---------------------------------------------------------------------------
+
+def _lookup_modal_diarizer():
+    """Modal Cls 핸들 조회. SDK 버전 드리프트 대비 from_name → lookup 순서로 시도."""
+    import modal
+
+    Cls = getattr(modal, "Cls", None)
+    if Cls is not None and hasattr(Cls, "from_name"):
+        return Cls.from_name(MODAL_APP_NAME, MODAL_CLS_NAME)
+    if Cls is not None and hasattr(Cls, "lookup"):
+        return Cls.lookup(MODAL_APP_NAME, MODAL_CLS_NAME)
+    raise RuntimeError(
+        "modal.Cls.from_name/lookup 을 찾을 수 없습니다. modal SDK 버전을 확인하세요."
+    )
+
+
+def _diarize_via_modal(remote_url: str) -> list[DiarizationSegment]:
+    """Modal GPU 함수 호출. 실패 시 로컬 폴백 없이 RuntimeError 전파."""
+    _console.print(
+        f"[cyan]Diarizing[/] via Modal GPU app={MODAL_APP_NAME} ..."
+    )
+    t0 = time.perf_counter()
+    try:
+        DiarizerCls = _lookup_modal_diarizer()
+        raw = DiarizerCls().diarize.remote(remote_url)
+    except Exception as e:
+        # "modal diarization" 키워드로 error_classifier → MODEL_API_FAILED 매핑
+        raise RuntimeError(
+            f"Modal diarization 호출 실패: {type(e).__name__}: {e}"
+        ) from e
+
+    segments: list[DiarizationSegment] = [
+        {
+            "speaker": str(s["speaker"]),
+            "start": float(s["start"]),
+            "end": float(s["end"]),
+        }
+        for s in (raw or [])
+    ]
+    segments.sort(key=lambda s: s["start"])
+    elapsed = time.perf_counter() - t0
+    _console.print(
+        f"[green][OK][/] Modal 화자 분리 완료 ({elapsed:.1f}s, {len(segments)} 구간)"
+    )
+    return segments
+
+
+# ---------------------------------------------------------------------------
+# 로컬 경로 (torch/pyannote/pydub/numpy 지연 import)
+# ---------------------------------------------------------------------------
+
+def _diarize_local(audio_path: str) -> list[DiarizationSegment]:
+    import torch
+
     path = Path(audio_path)
     if not path.exists():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -89,11 +175,13 @@ def diarize(audio_path: str) -> list[DiarizationSegment]:
     return segments
 
 
-def _load_pipeline() -> Pipeline:
-    """모델 lazy load + 토큰·라이선스·네트워크 에러 처리."""
+def _load_pipeline():
+    """모델 lazy load + 토큰·라이선스·네트워크 에러 처리 (로컬 경로 전용)."""
     global _pipeline
     if _pipeline is not None:
         return _pipeline
+
+    from pyannote.audio import Pipeline
 
     token = os.getenv("HUGGINGFACE_TOKEN")
     if not token:
@@ -139,15 +227,21 @@ def _load_pipeline() -> Pipeline:
     return _pipeline
 
 
-def _select_device() -> torch.device:
-    """CUDA 사용 가능하면 GPU, 아니면 CPU."""
+def _select_device():
+    """CUDA 사용 가능하면 GPU, 아니면 CPU (로컬 경로 전용)."""
+    import torch
+
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
 
 
 def _load_audio_dict(path: Path) -> dict:
-    """pydub으로 디코드 → pyannote 4.x preloaded 입력 형식 dict로 변환."""
+    """pydub으로 디코드 → pyannote 4.x preloaded 입력 형식 dict (로컬 경로 전용)."""
+    import numpy as np
+    import torch
+    from pydub import AudioSegment
+
     try:
         audio = AudioSegment.from_file(str(path))
     except Exception as e:

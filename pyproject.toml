@@ -23,6 +23,7 @@ dependencies = [
     "cryptography>=42.0.0",
     "httpx>=0.27",
     "resend>=2.4.0",
+    "modal>=0.64",
 ]
 
 [build-system]

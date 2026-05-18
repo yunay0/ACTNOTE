@@ -146,6 +146,54 @@ def _download_from_storage(audio_path: str) -> str:
     return tmp_path
 
 
+def _create_diarization_signed_url(storage_path: str) -> str | None:
+    """USE_MODAL_DIARIZATION=true 일 때만 Supabase signed URL 을 만든다.
+
+    Modal 화자분리는 워커가 bytes 를 재전송하지 않고 signed URL 만 넘긴다
+    (50MB 인자 전송/이중 업로드 회피). service_role 키는 Modal 에 넣지 않는다.
+
+    Modal 비활성이거나 로컬 파일(dev)이면 None 반환 → 로컬 pyannote 경로 그대로.
+    URL 생성 실패 시에도 None → diarize() 가 Modal 모드에서 fail-fast (CPU 폴백 금지).
+    """
+    from src.diarization import modal_diarization_enabled
+
+    if not modal_diarization_enabled():
+        return None
+    # 로컬 dev 파일은 signed URL 대상이 아님 (Modal 모드는 실제 Storage 객체 필요)
+    if os.path.exists(storage_path) or os.path.exists(os.path.abspath(storage_path)):
+        return None
+
+    try:
+        from src.storage import create_supabase_client_from_env
+
+        sb = create_supabase_client_from_env()
+        bucket = os.getenv("SUPABASE_STORAGE_BUCKET", "meetings")
+        ttl = int(os.getenv("MODAL_DIARIZATION_URL_TTL", "3600"))
+        res = sb.storage.from_(bucket).create_signed_url(storage_path, ttl)
+        url: str | None = None
+        if isinstance(res, dict):
+            for k in ("signedURL", "signedUrl", "signed_url", "url"):
+                v = res.get(k)
+                if v:
+                    url = str(v)
+                    break
+        if not url:
+            logging.getLogger(__name__).warning(
+                "signed URL 응답에서 URL 키를 찾지 못함 (Modal 화자분리 실패 가능): keys=%s",
+                list(res.keys()) if isinstance(res, dict) else type(res),
+            )
+            return None
+        if url.startswith("/"):
+            base = os.getenv("SUPABASE_URL", "").rstrip("/")
+            url = f"{base}{url}"
+        return url
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "signed URL 생성 실패 (Modal 화자분리가 실패할 수 있음): %s", e,
+        )
+        return None
+
+
 def _download_and_run_pipeline(
     audio_path: str,
     user_id: str,
@@ -156,8 +204,16 @@ def _download_and_run_pipeline(
 
     두 작업을 하나로 묶어 step 외부의 try/except가 예외를 확실히 잡을 수 있게 한다.
     """
+    # signed URL 은 원본 Storage 경로 기준 (로컬 임시파일 경로 아님)
+    signed_url = _create_diarization_signed_url(audio_path)
     local_path = _download_from_storage(audio_path)
-    return _run_pipeline_full(local_path, user_id, workspace_id, meeting_id)
+    return _run_pipeline_full(
+        local_path,
+        user_id,
+        workspace_id,
+        meeting_id,
+        diarization_remote_url=signed_url,
+    )
 
 
 def _fetch_meeting_metadata(sb_client, meeting_id: str) -> tuple[str | None, str | None]:
@@ -184,6 +240,7 @@ def _run_pipeline_full(
     user_id: str,
     workspace_id: str,
     meeting_id: str,
+    diarization_remote_url: str | None = None,
 ) -> dict:
     """파이프라인 전체 실행. pyannote/torch는 여기서 지연 import.
 
@@ -214,6 +271,7 @@ def _run_pipeline_full(
             backend=storage,
             meeting_title=meeting_title,
             meeting_type=meeting_type,
+            diarization_remote_url=diarization_remote_url,
         )
         # Inngest 응답 크기 제한 대비 — 메타는 제외하고 반환
         result.pop("_pipeline_meta", None)
