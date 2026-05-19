@@ -152,8 +152,8 @@ actnote-web/                ← 프론트엔드 (Next.js 14, 동일 레포)
 │   ├── onboarding/             ← 워크스페이스 생성, 초대 온보딩
 │   └── workspace/select/       ← 워크스페이스 선택
 ├── app/api/
-│   ├── trigger-pipeline/       ← meeting/process 이벤트 발송
-│   ├── trigger-publish/        ← meeting/publish 이벤트 발송
+│   ├── trigger-pipeline/       ← 인증 후 Modal trigger_pipeline 호출
+│   ├── trigger-publish/        ← 인증 후 Modal trigger_publish 호출
 │   ├── workspace/send-invite/  ← 초대 메일 SMTP/Resend 직접 발송
 │   └── integrations/notion/    ← OAuth start + callback
 ├── components/
@@ -340,7 +340,7 @@ cd actnote-web && npx tsc --noEmit
 | DRAFT-005         | `src/assignee_matcher.py`                                                          | —      |
 | DRAFT-010         | `src/speaker_matcher.py` (`ai_draft_notes.speaker_candidates`)                     | —      |
 | PUB-001           | RPC 4종 (`validate/set_ready/publish/revoke`)                                       | `015`  |
-| INTEG-001/003/005 | `notion_sync.py` + `meeting/publish` 이벤트                                           | —      |
+| INTEG-001/003/005 | `notion_sync.py` + Modal `run_publish_fn` (`/api/trigger-publish`)                  | —      |
 | INTEG-002 (OAuth) | `exchange_notion_code` + `docs/notion-oauth.md`                                    | —      |
 | NOTI-001          | `notify_action_assigned` + `email_notifier.py` (Resend 직접; Inngest 제거)            | —      |
 | SEC-006 (초대)      | RPC 3종 (`create_invite/accept_invite/revoke_invite`)                               | `016`  |

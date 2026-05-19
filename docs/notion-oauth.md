@@ -68,8 +68,8 @@ export async function GET(req: NextRequest) {
     .from("workspaces").select("id").eq("owner_id", user.id).single();
 
   // 백엔드 Python 헬퍼는 직접 호출 못 하므로
-  // 별도 백엔드 endpoint(예: Vercel function or Inngest event)에 위임하거나
-  // 같은 Next.js 안에서 동등한 토큰 교환을 수행한다.
+  // 같은 Next.js 안에서 동등한 토큰 교환을 수행하거나
+  // 필요 시 Modal 함수를 별도로 호출하는 라우트를 둔다.
   // (백엔드와 동일 로직: POST https://api.notion.com/v1/oauth/token)
   const tokenRes = await fetch("https://api.notion.com/v1/oauth/token", {
     method: "POST",

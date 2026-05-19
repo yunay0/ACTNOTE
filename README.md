@@ -1,10 +1,10 @@
-# Actnote — Monorepo (Python Worker · Next.js · Supabase · Inngest)
+# Actnote — Monorepo (Modal 서버리스 · Next.js · Supabase)
 
 회의 음성 → STT → 화자 분리 → LLM 요약·결정·액션 추출 → (발행 시) Notion 연동까지 이어지는 **풀스택 모노레포**입니다.
 
 | 영역 | 경로 | 스택 |
 |------|------|------|
-| **백엔드 / 워커** | 레포 루트 (`src/`, `scripts/`) | Python 3.11+, uv, Inngest, Supabase (service_role) |
+| **백엔드 / 파이프라인** | 레포 루트 (`src/`, `scripts/`) | Python 3.11 (Modal 이미지 고정), uv, Modal 서버리스, Supabase (service_role) |
 | **웹 앱** | `actnote-web/` | Next.js 14+ (App Router), TypeScript, Tailwind, Supabase JS, shadcn/ui |
 
 > **프론트 ↔ 백엔드 통합**은 [docs/frontend-handoff.md](./docs/frontend-handoff.md) 한 장을 기준으로 합니다.
@@ -41,28 +41,28 @@
 
 ```
 [Next.js actnote-web]
-       │  업로드 → Storage → meetings INSERT → /api/trigger-pipeline
-       │  워크스페이스 초대: create_invite (RPC) → /api/workspace/send-invite → Resend (또는 Inngest 워커)
-       ▼
-[Inngest] ── meeting/process ─┐
-       └── notification/email_send ─┐ (RESEND 없을 때 워커 경유 등)
+       │  업로드 → Storage → meetings INSERT → /api/trigger-pipeline (supabase.auth 인증 경계)
+       │  워크스페이스 초대: create_invite (RPC) → /api/workspace/send-invite → SMTP/Resend 직접
+       ▼  fetch(Modal 웹 엔드포인트, X-Actnote-Secret)
+[Modal actnote-pipeline] ── 시크릿 검증 → run_pipeline_fn.spawn() → 즉시 202
                               ▼
-[Python Worker]
+[Modal CPU 함수 (src/jobs.py)]
    ├─ STT (Whisper)
-   ├─ Diarization (pyannote)
+   ├─ Diarization → cross-app [Modal GPU actnote-diarization] (signed URL)
    ├─ Alignment
    ├─ CRAG context 검색
    ├─ LLM Extraction (Claude, 회의 유형별 prompt)
    ├─ A.U.D.N (action_items)
    ├─ Embedding 인덱싱
    ├─ 담당자·화자 매칭 (DRAFT-005 / DRAFT-010)
-   └─ 인앱 알림 + 메일 (NOTI-001, Resend / Inngest)
+   └─ 인앱 알림 + 메일 (NOTI-001, Resend 직접)
        │
        ▼
-[Supabase] ── RLS · RPC · Realtime ── [브라우저 클라이언트]
+[Supabase] ── RLS · RPC ── [브라우저 클라이언트]  (상태는 meetings.status 5초 폴링)
        │
        ▼
-[발행] publish_meeting RPC → /api/trigger-publish → meeting/publish → Notion · 임베딩
+[발행] publish_meeting RPC → /api/trigger-publish → Modal run_publish_fn → Notion · 임베딩
+[Modal cron] cleanup_orphans_fn (6h) — workspace_id NULL 회의 정리
 ```
 
 세부 사항: [docs/events.md](./docs/events.md), [docs/rpc.md](./docs/rpc.md).
@@ -78,8 +78,8 @@
 | OpenAI | Whisper STT + 임베딩 | https://platform.openai.com/api-keys |
 | Anthropic | Claude | https://console.anthropic.com/ |
 | HuggingFace | pyannote | 토큰 + [모델 라이선스](https://huggingface.co/pyannote/speaker-diarization-3.1) |
-| Supabase | DB / Auth / Storage | **service_role** 는 서버·워커만 |
-| Inngest | 이벤트 · 워커 오케스트레이션 | 로컬은 `inngest dev` + dev 모드 |
+| Supabase | DB / Auth / Storage | **service_role** 는 서버·Modal 만 |
+| Modal | 서버리스 파이프라인 실행 (CPU) + GPU 화자분리 | `modal deploy`, Secret `actnote-secrets` |
 
 ### 프론트 (브라우저에 노출 가능한 변수만)
 
@@ -90,7 +90,8 @@
 | `NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET` | Storage 버킷명 (워커 `SUPABASE_STORAGE_BUCKET` 과 동일 권장) |
 | `NEXT_PUBLIC_APP_URL` | OAuth 리다이렉트, 초대 링크, 메일 내 링크의 **절대 URL origin** |
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | 분석 실패 등 사용자 안내용 (기획 확정 주소) |
-| `INNGEST_EVENT_KEY` | `/api/trigger-pipeline` 등에서 Inngest 로 이벤트 발송 시 필요 |
+
+> Modal 트리거 변수(`MODAL_PIPELINE_TRIGGER_URL`·`MODAL_PUBLISH_TRIGGER_URL`·`MODAL_TRIGGER_SECRET`)는 **브라우저 노출 금지** — 아래 서버 전용 표 참고.
 
 ### 서버 전용 (Next Route Handler — `actnote-web` 배포 환경)
 
@@ -100,6 +101,9 @@
 |------|------|
 | `RESEND_API_KEY` | 워크스페이스 초대 메일 등 (`/api/workspace/send-invite`) |
 | `EMAIL_FROM` | Resend `from` 필드. **ASCII만** (표시 이름에 한글·전각 문자 금지). 검증된 도메인 주소 권장 |
+| `MODAL_PIPELINE_TRIGGER_URL` | `/api/trigger-pipeline` 가 호출할 Modal 엔드포인트 (`modal deploy` 출력) |
+| `MODAL_PUBLISH_TRIGGER_URL` | `/api/trigger-publish` 가 호출할 Modal 엔드포인트 (`modal deploy` 출력) |
+| `MODAL_TRIGGER_SECRET` | Modal 엔드포인트 인증 헤더(X-Actnote-Secret). Modal Secret 의 동일 키와 **같은 값** |
 
 **Resend 운영 참고**
 
@@ -150,7 +154,7 @@ npm run dev
 # → http://localhost:3000
 ```
 
-**로컬에서 파이프라인까지 보려면** 루트 `.env.example` 상단 주석의 Inngest Dev 워커 연결 절차를 따르고, 필요 시 `actnote-web/.env.local` 에 `INNGEST_DEV=1` 을 추가합니다.
+**로컬에서 파이프라인까지 보려면** Modal 을 배포(`§6.1`)하고 `actnote-web/.env.local` 에 `MODAL_*_TRIGGER_URL` + `MODAL_TRIGGER_SECRET` 을 채웁니다. 또는 Modal 없이 파이프라인만 단독 검증하려면 `uv run python scripts/run_pipeline.py <audio>`.
 
 **동작 요약 (웹)**
 
@@ -162,28 +166,34 @@ npm run dev
 
 1. 관리자가 `create_invite` RPC 로 초대 행 생성 (`workspace_invites`, 이메일·역할·토큰).
 2. 클라이언트가 `POST /api/workspace/send-invite` 로 메일 발송을 요청합니다.
-3. 레포에 `RESEND_API_KEY` 가 있으면 Next 서버가 Resend 로 직접 발송합니다. 없으면 `INNGEST_EVENT_KEY` 로 `notification/email_send` 이벤트를 보내 워커가 처리할 수 있습니다.
+3. `RESEND_API_KEY`(또는 SMTP) 가 있으면 Next 서버가 직접 발송합니다. 둘 다 없으면 메일 없이 **초대 링크만 반환**합니다(Inngest 워커 폴백 제거됨 — 링크 수동 공유).
 4. 수락 URL 형식은 `/invite/<token>` 입니다. 초대 토큰은 DB에서 hex 문자열로 발급되며, `/invite/[slug]` 페이지는 **토큰으로 `workspace_invites` 조회를 먼저** 시도한 뒤, 없으면 워크스페이스 **slug** 로 열린 초대를 처리합니다.
 5. 메일 발송이 제한되어도 초대는 유효합니다. 설정 UI에서 **개인 초대 링크를 복사**해 전달할 수 있습니다.
 
 **배포 (Vercel 등)**
 
-- `NEXT_PUBLIC_*`, `INNGEST_EVENT_KEY`, 초대 메일용 `RESEND_API_KEY` / `EMAIL_FROM` 을 프로젝트 환경 변수에 넣은 뒤 **재배포**해야 런타임에 반영됩니다.
+- `NEXT_PUBLIC_*`, `MODAL_PIPELINE_TRIGGER_URL` / `MODAL_PUBLISH_TRIGGER_URL` / `MODAL_TRIGGER_SECRET`, 초대 메일용 `RESEND_API_KEY` / `EMAIL_FROM` 을 프로젝트 환경 변수에 넣은 뒤 **재배포**해야 런타임에 반영됩니다.
 
 ---
 
 ## 6. 실행
 
-### 6.1 워커
+### 6.1 Modal 배포 (서버리스 — 로컬 워커 없음)
 
 ```bash
-uv run python scripts/serve_worker.py
-# → http://0.0.0.0:8000  (Inngest webhook)
+# Modal 대시보드 Secret "actnote-secrets" 에 백엔드 env 전체 등록 후:
+modal deploy src/modal_diarization.py    # GPU 화자분리 (선행)
+modal deploy src/modal_app.py            # 파이프라인 + 웹 엔드포인트 + cron
+# 출력된 trigger_pipeline / trigger_publish URL 2개 →
+#   actnote-web 의 MODAL_PIPELINE_TRIGGER_URL / MODAL_PUBLISH_TRIGGER_URL
 ```
 
-등록 함수 예: `process-meeting`, `publish-meeting`, `send-email`.
+Modal 함수: `run_pipeline_fn`, `run_publish_fn`, `cleanup_orphans_fn`(cron 6h),
+웹 엔드포인트 `trigger_pipeline`/`trigger_publish`. 두 이미지 모두 Python **3.11 고정**
+(3.13 은 stdlib `audioop` 제거로 pydub import 실패).
 
-로컬: 별도 터미널에서 `npx inngest-cli@latest dev` 등으로 Inngest Dev Server 연결.
+> Inngest·`serve_worker.py`·로컬 워커는 **제거**됨. Modal 없이 파이프라인만 단독
+> 검증: `uv run python scripts/run_pipeline.py <audio_path>`.
 
 ### 6.2 프론트
 
@@ -214,7 +224,7 @@ uv run python scripts/benchmark_crag.py
 | 문서 | 내용 |
 |------|------|
 | **[docs/frontend-handoff.md](./docs/frontend-handoff.md)** | 프론트 통합 1장 요약 |
-| [docs/events.md](./docs/events.md) | Inngest 이벤트 |
+| [docs/events.md](./docs/events.md) | Modal 트리거 계약 (구 Inngest) |
 | [docs/rpc.md](./docs/rpc.md) | Supabase RPC |
 | [docs/notion-oauth.md](./docs/notion-oauth.md) | Notion OAuth |
 | [docs/features.md](./docs/features.md) | 기능 ID 카탈로그 |
@@ -229,7 +239,8 @@ uv run python scripts/benchmark_crag.py
 ```
 ./                                 # 백엔드 루트
 ├── src/                           # 파이프라인 · 워커 · 알림 · Notion 등
-├── scripts/                       # serve_worker, benchmark, CLI
+├── src/modal_app.py · jobs.py     # Modal 앱 · 프레임워크 비의존 작업
+├── scripts/                       # run_pipeline, benchmark, CLI
 ├── prompts/templates/             # 회의 유형별 MD 템플릿
 ├── migrations/                    # Supabase SQL (팀 정한 순서 실행)
 ├── docs/
@@ -276,7 +287,7 @@ actnote-web/                       # Next.js 앱
 | DRAFT-005 / DRAFT-010 | 담당자·화자 매칭 |
 | PUB-001 | 발행 RPC + 워크플로 |
 | INTEG-001~005 | Notion 동기화 · OAuth |
-| NOTI-001 | 인앱 알림 + 메일 (`notifications.py`, Resend/Inngest) |
+| NOTI-001 | 인앱 알림 + 메일 (`notifications.py`, Resend 직접) |
 | SEC-006 / WS-004 | 초대 RPC · 멤버 역할 · 강퇴 등 |
 | 재분석 멱등성 | `pipeline.py` `_cleanup_for_reanalysis()` |
 
@@ -292,9 +303,9 @@ actnote-web/                       # Next.js 앱
 
 | 경로 | 역할 |
 |------|------|
-| `POST /api/trigger-pipeline` | `meeting/process` Inngest 이벤트 발송 |
-| `POST /api/trigger-publish` | `meeting/publish` Inngest 이벤트 발송 |
-| `POST /api/workspace/send-invite` | 초대 메일 발송 (Resend 또는 Inngest 폴백) |
+| `POST /api/trigger-pipeline` | 인증 후 Modal `trigger_pipeline` 엔드포인트 호출 (X-Actnote-Secret) |
+| `POST /api/trigger-publish` | 인증 후 Modal `trigger_publish` 엔드포인트 호출 |
+| `POST /api/workspace/send-invite` | 초대 메일 발송 (SMTP/Resend 직접, 폴백 없음) |
 | `GET /api/integrations/notion/start` | Notion OAuth 시작 |
 | `GET /api/integrations/notion/callback` | Notion OAuth 콜백 |
 | `POST /api/onboarding/workspace` | 온보딩 워크스페이스 생성 등 |

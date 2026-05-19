@@ -11,9 +11,9 @@
 ┌─────────────────────────────────────────────────────────────────────┐
 │ 1. Supabase SQL Editor 에서 마이그레이션 014~018 순서대로 실행       │
 │ 2. .env / Vercel 환경변수 추가 (§ 7)                                │
-│ 3. 워커 띄우기 — uv run python scripts/serve_worker.py              │
-│ 4. 업로드 → meeting/process 이벤트 발송 (§ 1)                       │
-│ 5. 발행 → publish_meeting RPC + meeting/publish 이벤트 (§ 2, § 3)   │
+│ 3. Modal 배포 — modal deploy src/modal_diarization.py·modal_app.py  │
+│ 4. 업로드 → /api/trigger-pipeline → Modal 트리거 (§ 1)              │
+│ 5. 발행 → publish_meeting RPC + /api/trigger-publish → Modal (§ 2,3)│
 │ 6. 워크스페이스 초대 → create_invite RPC + 메일 발송 (§ 4)          │
 │ 7. 회의 메타정보(MTG-002) 입력/표시 (§ 5)                           │
 │ 8. 화자 후보 표시 (DRAFT-010, § 6)                                 │
@@ -24,28 +24,22 @@
 
 ---
 
-## 1. 분석 파이프라인 트리거 — `meeting/process`
+## 1. 분석 파이프라인 트리거 — `/api/trigger-pipeline`
 
-**흐름:** 사용자 업로드 → Storage 업로드 → `meetings` row INSERT → `/api/trigger-pipeline` POST → 워커가 STT/화자분리/LLM/A.U.D.N/임베딩까지 1회 실행.
+**흐름:** 사용자 업로드 → Storage 업로드 → `meetings` row INSERT → `/api/trigger-pipeline` POST(프론트 변경 없음) → 라우트가 `supabase.auth` 인증 후 Modal 웹 엔드포인트를 `X-Actnote-Secret` 헤더로 호출 → Modal 이 `run_pipeline_fn.spawn()` 후 즉시 202 → CPU 함수가 STT/화자분리(GPU)/LLM/A.U.D.N/임베딩 1회 실행.
 
-**최소 페이로드:**
+**라우트 요청 바디 (클라이언트 → `/api/trigger-pipeline`, 기존과 동일):**
 ```json
-{
-  "name": "meeting/process",
-  "data": {
-    "meeting_id": "uuid",
-    "user_id":    "uuid",
-    "workspace_id": "uuid",
-    "audio_path": "<workspace_id>/<meeting_id>/<filename>"
-  }
-}
+{ "meeting_id": "uuid", "workspace_id": "uuid", "audio_path": "<workspace_id>/<meeting_id>/<filename>" }
 ```
+> `user_id` 는 라우트가 `supabase.auth.getUser()` 로 채워 Modal 에 전달 (클라이언트가 보내지 않음).
 
 **중요:**
 - `audio_path` 는 **Storage 객체 키**. Public URL 절대 금지.
-- 같은 `meeting_id` 로 재발송 가능 → `_cleanup_for_reanalysis()` 가 자동으로 transcripts/embeddings DELETE + decisions/actions bi-temporal 만료 처리. 별도 재분석 이벤트 불필요.
+- 같은 `meeting_id` 로 재트리거 가능 → `_cleanup_for_reanalysis()` 가 자동으로 transcripts/embeddings DELETE + decisions/actions bi-temporal 만료 처리. 별도 재분석 트리거 불필요.
+- Modal `retries=3` 은 함수 전체 재시도 = STT·LLM·GPU 재과금 (멱등성은 보장). 상세: `docs/events.md`.
 
-**상태 폴링:** `meetings.status` 컬럼을 Realtime subscribe (`uploaded → transcribing → ready | error`).
+**상태 폴링:** `meetings.status` 컬럼을 **5초 폴링** (`uploaded → transcribing → ready | error`). Realtime 미사용 — Modal 이 컬럼을 갱신하면 폴링이 그대로 반영.
 
 **에러 시 사용자 안내 — 코드 매핑 (case 1/2/3/6):**
 워커가 실패하면 `meetings.error_message` 는 항상 `[code:CODE] <raw>` 형태로 저장된다.
@@ -93,7 +87,7 @@ if (!error) {
 }
 ```
 
-`/api/trigger-publish` Route Handler 가 `meeting/publish` Inngest 이벤트를 발송 → 워커가 Notion push + 임베딩 재인덱싱을 비동기로 처리. 사용자는 즉시 발행 화면을 볼 수 있음.
+`/api/trigger-publish` Route Handler 가 인증 후 Modal `trigger_publish` 엔드포인트를 호출 → `run_publish_fn` 이 Notion push + 임베딩 재인덱싱을 비동기로 처리. 사용자는 즉시 발행 화면을 볼 수 있음.
 
 **에러 코드:**
 - `P0001` — validation 실패 (notion_integration 미연동, title/summary/action_items 누락 등). `error.message` / `error.details` 파싱
@@ -126,7 +120,7 @@ await fetch("/api/workspace/send-invite", {
 });
 ```
 
-`/api/workspace/send-invite` 안에서 직접 `inngest.send("notification/email_send", ...)` 발송도 가능 (Route Handler 예시는 [docs/rpc.md](./rpc.md#6-create_invite-b-4-1)).
+`/api/workspace/send-invite` 는 SMTP→Resend 순으로 **직접 발송**한다 (Inngest 폴백 제거). 둘 다 미설정이면 메일 없이 `{ok:true, email_sent:false, invite_link, notice_code}` 반환 → UI 가 "링크 수동 복사" 안내 (Route Handler 예시는 [docs/rpc.md](./rpc.md#6-create_invite-b-4-1)).
 
 ### 3.2 초대 수락
 
@@ -206,7 +200,7 @@ await supabase.rpc("set_member_role", {                          // owner only
 
 ## 6. 알림 / 메일 (NOTI-001)
 
-**인앱 알림:** 워커가 `notifications` 테이블에 INSERT. 프론트는 Realtime subscribe.
+**인앱 알림:** Modal 함수가 `notifications` 테이블에 INSERT. 프론트는 5초 폴링으로 표시 (Realtime 미사용).
 
 | `kind` | 트리거 | 내용 |
 |--------|--------|------|
@@ -214,11 +208,11 @@ await supabase.rpc("set_member_role", {                          // owner only
 | `analysis_failed` | 분석 실패 | 작성자 |
 | `action_assigned` | A.U.D.N 결과 액션이 할당됨 (assignee_user_id 매칭 시) | 담당자 (자기 자신 제외) |
 
-**메일 (Resend):** 워커가 같은 트리거에 동시에 `notification/email_send` Inngest 이벤트 발송 → Resend API 호출. `RESEND_API_KEY` 가 비어있으면 자동 dry-run.
+**메일 (Resend):** Modal 함수가 인앱 알림과 함께 `src/email_notifier.send_email` 로 **Resend 직접 발송** (Inngest 이벤트 제거). Modal Secret 에 `RESEND_API_KEY`(또는 SMTP) 없으면 dry-run no-op — 인앱 알림은 그대로.
 
-**데모 영상:** 메일 발송 장면까지 넣으려면 워커 `.env`에 `RESEND_API_KEY` 설정(또는 dry-run 시 콘솔 출력만이라도 확인) 후, 초대 발송(`notification/email_send`) 또는 분석 완료/액션 할당 같은 NOTI 플로우 중 하나를 실제 또는 스테이징에서 재현하면 된다.
+**데모 영상:** 메일 발송 장면까지 넣으려면 Modal Secret `actnote-secrets` 에 `RESEND_API_KEY`+`EMAIL_FROM` 설정 후 분석 완료/액션 할당 NOTI 플로우를 재현.
 
-[상세](./events.md#4-notificationemail_send--외부-이메일-발송-resend)
+[상세](./events.md#이메일-이벤트-폐지)
 
 ---
 
@@ -232,25 +226,27 @@ await supabase.rpc("set_member_role", {                          // owner only
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | anon 키 (RLS 통과용) |
 | `NEXT_PUBLIC_APP_URL` | ✅ | OAuth 콜백 / 메일 푸터 (`https://actnote.app`) |
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | ✅ | 에러(case 6) 팝업·알림·문의 링크 — 기획 확정: `actnote.support@gmail.com` |
-| `INNGEST_EVENT_KEY` | ⛔ | Inngest 이벤트 발송 (Route Handler 전용) |
-| `INNGEST_SIGNING_KEY` | ⛔ | Inngest 서명 검증 |
+| `MODAL_PIPELINE_TRIGGER_URL` | ⛔ | `/api/trigger-pipeline` → Modal 엔드포인트 (`modal deploy` 출력) |
+| `MODAL_PUBLISH_TRIGGER_URL` | ⛔ | `/api/trigger-publish` → Modal 엔드포인트 |
+| `MODAL_TRIGGER_SECRET` | ⛔ | X-Actnote-Secret 헤더값. Modal Secret 의 동일 키와 같은 값 |
 | `NOTION_CLIENT_ID` | ⛔ | Notion OAuth (§ 9) |
 | `NOTION_CLIENT_SECRET` | ⛔ | Notion OAuth |
 
-### 워커 (Python — repo 루트 `.env`)
+### Modal 함수 (Secret `actnote-secrets` — 로컬 `.env` 는 단독 테스트용)
 
 | 변수 | 필수 | 용도 |
 |------|------|------|
-| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | ✅ | 워커는 service_role 사용 |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Modal 함수는 service_role 사용 |
 | `SUPABASE_STORAGE_BUCKET` | ⛔ | 기본 `meetings` |
 | `OPENAI_API_KEY` | ✅ | Whisper STT + 임베딩 |
 | `ANTHROPIC_API_KEY` | ✅ | Claude Sonnet 4.6 |
-| `HUGGINGFACE_TOKEN` | ✅ | pyannote diarization |
+| `HUGGINGFACE_TOKEN` | ✅ | pyannote diarization (GPU 앱) |
 | `ACTNOTE_ENCRYPTION_KEY` | ✅ | Notion 토큰 등 integrations 컬럼 Fernet 암호화 |
-| `INNGEST_EVENT_KEY` / `INNGEST_SIGNING_KEY` / `INNGEST_IS_PRODUCTION` | 운영 | Inngest 연결 |
+| `USE_MODAL_DIARIZATION` / `MODAL_DIARIZATION_URL_TTL` | 운영 | 화자분리 GPU 오프로딩 (기본 true) |
+| `MODAL_TRIGGER_SECRET` | ✅ | 웹 엔드포인트 인증 (프론트와 동일 값) |
 | `RESEND_API_KEY` | ⛔ | 미설정 시 메일 dry-run |
 | `EMAIL_FROM` | ⛔ | `Actnote <noreply@actnote.app>` |
-| `NOTION_CLIENT_ID` / `NOTION_CLIENT_SECRET` | ⛔ | OAuth code → token 교환 (워커가 직접 호출하지 않음, 프론트 Route Handler 가 호출) |
+| `NOTION_CLIENT_ID` / `NOTION_CLIENT_SECRET` | ⛔ | 발행 시 Notion API |
 | `ACTNOTE_ASSIGNEE_MATCH_THRESHOLD` | ⛔ | 기본 0.55 (assignee 임베딩 매칭 컷오프) |
 | `ACTNOTE_SPEAKER_MATCH_THRESHOLD` | ⛔ | 기본 0.40 (화자 후보 컷오프) |
 

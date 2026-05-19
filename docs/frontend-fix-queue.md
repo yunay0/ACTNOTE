@@ -28,7 +28,7 @@
 ### 4. 트리거 API 서버 검증 (`actnote-web/app/api/trigger-pipeline/route.ts`)
 
 - **문제:** body의 `meeting_id` / `workspace_id`가 요청자와 일치하는지 DB에서 확인하지 않음.
-- **조치:** `createServerClient`로 `meetings` row를 `id`(+ 필요 시 `workspace_id`)로 조회한 뒤, `**created_by === user.id`**(또는 RLS와 합의된 규칙)일 때만 `inngest.send`. 불일치 시 403/404.
+- **조치:** `createServerClient`로 `meetings` row를 `id`(+ 필요 시 `workspace_id`)로 조회한 뒤, `**created_by === user.id`**(또는 RLS와 합의된 규칙)일 때만 Modal 엔드포인트로 fetch. 불일치 시 403/404.
 
 ---
 
@@ -64,7 +64,7 @@
 
 ### 9. 재분석
 
-- **문제:** 백엔드는 동일 `meeting_id`로 `meeting/process` 재발송만 하면 됨(`docs/events.md`). UI에 **“다시 분석”** 버튼이 없을 수 있음.
+- **문제:** 백엔드는 동일 `meeting_id` 로 `/api/trigger-pipeline` 재호출만 하면 됨(Modal `run_pipeline_fn` 재트리거, `docs/events.md`). UI에 **“다시 분석”** 버튼이 없을 수 있음.
 - **조치:** `status === error` 또는 기획이 허용하는 상태에서 `/api/trigger-pipeline`과 동일 페이로드로 재요청(또는 공용 server action). 업로드된 `audio_path`는 DB/스토리지에서 재조회해 일치시키기.
 
 ### 10. 다중 워크스페이스 (선택)
@@ -77,7 +77,7 @@
 ## 완료 체크리스트 (PR 전)
 
 - 비-owner 멤버로 로그인 → 새 회의 생성·업로드·트리거까지 성공
-- `INNGEST_EVENT_KEY` 없을 때 트리거 실패가 UI에 드러남
+- `MODAL_PIPELINE_TRIGGER_URL` / `MODAL_TRIGGER_SECRET` 없을 때 트리거 실패가 UI에 드러남
 - 멤버 제거가 RPC로 동작하고 RLS와 충돌 없음
 - 의도적으로 `FILE_RETRIEVAL_FAILED` 저장 시 지원 메일 안내 표시
 - 액션 리스트에 만료된 row가 섞이지 않음
