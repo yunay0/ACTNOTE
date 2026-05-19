@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { X, Copy, Check, Link2, ChevronDown } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
+import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
 
 /** Supabase `workspace_members.role` */
 type DbRole = "owner" | "admin" | "member";
@@ -53,7 +55,8 @@ const GRADIENTS = [
 
 const ROLE_STYLE: Record<UiRole, { label: string; bg: string; text: string }> = {
   owner: { label: "Owner", bg: "bg-[#fff4f0]", text: "text-[#ff6b35]" },
-  member: { label: "Member", bg: "bg-[#f1f5f9]", text: "text-[#64748b]" },
+  /** Figma S-09-01: Member badge — blue on light blue */
+  member: { label: "Member", bg: "bg-[#eff6ff]", text: "text-[#2e5c8a]" },
 };
 
 function getInitials(name: string, email: string): string {
@@ -64,7 +67,8 @@ function getInitials(name: string, email: string): string {
 }
 
 export default function WorkspaceSettingsPage() {
-  const { workspaceId: activeWorkspaceId } = useWorkspaceContext();
+  const router = useRouter();
+  const { workspaceId: activeWorkspaceId, refreshWorkspaces } = useWorkspaceContext();
   const [workspaceName, setWorkspaceName] = useState("");
   const [savedName, setSavedName] = useState("");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -88,14 +92,23 @@ export default function WorkspaceSettingsPage() {
   const [inviteShareLink, setInviteShareLink] = useState<string | null>(null);
   const [inviteShareCopied, setInviteShareCopied] = useState(false);
   const [inviteNoticeCode, setInviteNoticeCode] = useState<string | null>(null);
+  const [meetingCount, setMeetingCount] = useState(0);
+  const [deleteWorkspaceModalOpen, setDeleteWorkspaceModalOpen] = useState(false);
+  const [deleteWorkspaceInput, setDeleteWorkspaceInput] = useState("");
+  const [deleteWorkspaceBusy, setDeleteWorkspaceBusy] = useState(false);
+  const [deleteWorkspaceError, setDeleteWorkspaceError] = useState<string | null>(null);
 
   /** Merged former DB `owner` + `admin`: edit settings, invite, remove members (not role RPC). */
   const isElevated = currentDbRole === "owner" || currentDbRole === "admin";
   /** DB workspace owner row only — `set_member_role` RPC & danger zone. */
   const isDbOwner = currentDbRole === "owner";
 
+  const WORKSPACE_NAME_MAX = 50;
+  const nameDirty = workspaceName.trim() !== savedName.trim();
+
   const loadWorkspace = useCallback(async () => {
     if (!activeWorkspaceId) {
+      setMeetingCount(0);
       setLoading(false);
       return;
     }
@@ -114,6 +127,7 @@ export default function WorkspaceSettingsPage() {
       .maybeSingle();
 
     if (!memRow?.workspaces) {
+      setMeetingCount(0);
       setLoading(false);
       return;
     }
@@ -128,6 +142,14 @@ export default function WorkspaceSettingsPage() {
     const myDb = parseDbRole(memRow.role as string);
     setCurrentDbRole(myDb);
     setCurrentRole(toUiRole(myDb));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { count: meetingCountRaw } = await (supabase as any)
+      .from("meetings")
+      .select("*", { count: "exact", head: true })
+      .eq("workspace_id", ws.id)
+      .is("deleted_at", null);
+    setMeetingCount(meetingCountRaw ?? 0);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: memberRows } = await (supabase as any)
@@ -338,6 +360,52 @@ export default function WorkspaceSettingsPage() {
     }
   }
 
+  function openDeleteWorkspaceModal() {
+    setDeleteWorkspaceModalOpen(true);
+    setDeleteWorkspaceInput("");
+    setDeleteWorkspaceError(null);
+    setDeleteWorkspaceBusy(false);
+  }
+
+  function closeDeleteWorkspaceModal() {
+    setDeleteWorkspaceModalOpen(false);
+    setDeleteWorkspaceInput("");
+    setDeleteWorkspaceError(null);
+    setDeleteWorkspaceBusy(false);
+  }
+
+  async function handleConfirmDeleteWorkspace() {
+    if (!workspaceId || deleteWorkspaceInput.trim() !== "DELETE") return;
+    setDeleteWorkspaceBusy(true);
+    setDeleteWorkspaceError(null);
+    try {
+      const res = await fetch("/api/workspace/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          confirmation: deleteWorkspaceInput.trim(),
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setDeleteWorkspaceError(data.error ?? "Could not delete workspace.");
+        setDeleteWorkspaceBusy(false);
+        return;
+      }
+      clearStoredWorkspaceId();
+      await refreshWorkspaces();
+      closeDeleteWorkspaceModal();
+      router.push("/workspace/select");
+      router.refresh();
+    } catch {
+      setDeleteWorkspaceError("Network error. Try again.");
+      setDeleteWorkspaceBusy(false);
+    }
+  }
+
+  const deleteWorkspaceConfirmValid = deleteWorkspaceInput.trim() === "DELETE";
+
   if (loading) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
@@ -353,6 +421,116 @@ export default function WorkspaceSettingsPage() {
     <div className="flex flex-1 flex-col overflow-hidden">
       <DashboardHeader title="Workspace Settings" backHref="/meetings" />
 
+      {deleteWorkspaceModalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm"
+          role="presentation"
+        >
+          <div className="flex max-h-[90vh] min-h-0 w-full max-w-xl flex-col overflow-hidden rounded-[16px] bg-white shadow-[0px_24px_24px_rgba(0,0,0,0.2)] sm:min-w-[36rem]">
+            <div className="shrink-0 border-b border-[#e2e8f0] px-8 pb-[25px] pt-8">
+              <div className="flex items-center gap-3">
+                <div
+                  className="flex size-12 shrink-0 items-center justify-center rounded-[24px] bg-[#fef2f2] text-2xl leading-none"
+                  aria-hidden
+                >
+                  ⚠️
+                </div>
+                <h2 className="text-2xl font-bold leading-tight text-[#0f172a] whitespace-normal sm:whitespace-nowrap">
+                  Delete Workspace?
+                </h2>
+              </div>
+              <p className="mt-3 text-[15px] leading-6 text-[#475569]">
+                This will permanently delete your workspace and all its data.
+              </p>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-8 pb-6 pt-6">
+              <div className="rounded-[12px] border border-[#e2e8f0] bg-[#f8fafc] p-[17px]">
+                <div className="flex items-center gap-3">
+                  <span className="text-xl font-bold leading-none text-[#0f172a]" aria-hidden>
+                    📁
+                  </span>
+                  <span className="min-w-0 break-words text-base font-bold text-[#0f172a]">
+                    {workspaceName || "Workspace"}
+                  </span>
+                </div>
+                <p className="mt-1 pl-9 text-[13px] text-[#475569]">
+                  {meetingCount} {meetingCount === 1 ? "meeting" : "meetings"} • {members.length}{" "}
+                  {members.length === 1 ? "member" : "members"}
+                </p>
+              </div>
+
+              <div className="rounded-[8px] border border-[#ef4444] border-l-4 bg-[#fef2f2] px-[17px] py-[17px] pl-5">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="text-sm leading-none" aria-hidden>
+                    🔥
+                  </span>
+                  <span className="text-sm font-bold text-[#ef4444]">This will permanently delete:</span>
+                </div>
+                <ul className="list-none space-y-[3px] pl-1">
+                  {["All meetings and notes", "All member access", "All workspace data"].map((line) => (
+                    <li
+                      key={line}
+                      className="relative break-words pl-5 text-[13px] leading-[20.8px] text-[#475569] before:absolute before:left-0 before:font-bold before:text-[#ef4444] before:content-['•']"
+                    >
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <p className="text-center text-sm font-bold text-[#ef4444]">
+                ⚠️ This action cannot be undone.
+              </p>
+
+              <div className="flex flex-col gap-2 pb-2">
+                <label htmlFor="delete-workspace-confirm" className="text-sm font-bold text-[#0f172a]">
+                  Type DELETE to confirm:
+                </label>
+                <p className="text-[13px] text-[#475569]">
+                  Please type <span className="font-bold">DELETE</span> in capital letters to proceed.
+                </p>
+                <input
+                  id="delete-workspace-confirm"
+                  type="text"
+                  autoComplete="off"
+                  value={deleteWorkspaceInput}
+                  onChange={(e) => setDeleteWorkspaceInput(e.target.value)}
+                  disabled={deleteWorkspaceBusy}
+                  className="w-full rounded-[10px] border-2 border-[#e2e8f0] px-[18px] py-[14px] text-[15px] font-bold text-[#0f172a] outline-none placeholder:font-mono placeholder:font-bold placeholder:text-[#757575] focus:border-[#ef4444] focus:ring-2 focus:ring-red-100 disabled:bg-[#f8fafc]"
+                  placeholder="DELETE"
+                />
+              </div>
+
+              {deleteWorkspaceError && (
+                <div className="rounded-[8px] border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
+                  {deleteWorkspaceError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex shrink-0 justify-end gap-3 px-8 pb-8 pt-6">
+              <button
+                type="button"
+                disabled={deleteWorkspaceBusy}
+                onClick={closeDeleteWorkspaceModal}
+                className="rounded-[10px] border-2 border-[#e2e8f0] bg-white px-[26px] py-[14px] text-[15px] font-bold text-[#0f172a] hover:bg-[#f8fafc] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteWorkspaceBusy || !deleteWorkspaceConfirmValid}
+                onClick={() => void handleConfirmDeleteWorkspace()}
+                className="rounded-[10px] bg-[#ef4444] px-6 py-[14px] text-[15px] font-bold text-white hover:bg-[#dc2626] disabled:cursor-not-allowed disabled:opacity-50 sm:whitespace-nowrap"
+              >
+                {deleteWorkspaceBusy ? "Deleting…" : "Delete Workspace"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[720px] px-5 py-10 flex flex-col gap-6">
 
@@ -365,33 +543,44 @@ export default function WorkspaceSettingsPage() {
             </div>
           )}
 
-          {/* Workspace Information */}
-          <section className="rounded-xl border border-[#e2e8f0] bg-white p-8">
-            <div className="mb-6">
+          {/* Workspace Information — Figma S-09-01 (106:4944) */}
+          <section className="rounded-[12px] border border-[#e2e8f0] bg-white p-[33px]">
+            <div className="mb-4 space-y-1">
               <h2 className="text-[17px] font-bold text-[#0a2540]">Workspace Information</h2>
               <p className="text-[13px] text-[#64748b]">Manage your workspace details</p>
             </div>
-            <div className="mb-6 flex flex-col gap-2">
-              <label className="text-[13px] font-bold text-[#0a2540]">Workspace Name</label>
+            <div className="mb-4 flex flex-col gap-1.5">
+              <label htmlFor="workspace-name-input" className="text-[13px] font-bold text-[#0a2540]">
+                Workspace Name
+              </label>
               <input
+                id="workspace-name-input"
                 type="text"
                 value={workspaceName}
-                onChange={(e) => setWorkspaceName(e.target.value)}
+                maxLength={WORKSPACE_NAME_MAX}
+                onChange={(e) => setWorkspaceName(e.target.value.slice(0, WORKSPACE_NAME_MAX))}
                 disabled={!isElevated}
-                className="h-11 w-full rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[13px] text-[#0a2540] outline-none focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10 transition-all disabled:bg-[#f8fafc] disabled:cursor-default"
+                className="h-11 w-full rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[13px] text-[#0a2540] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10 disabled:cursor-default disabled:bg-[#f8fafc]"
               />
+              <p className="text-right text-[11px] text-[#64748b]">
+                {workspaceName.length}/{WORKSPACE_NAME_MAX}
+              </p>
             </div>
             {isElevated && (
               <div className="flex items-center justify-end gap-3">
                 <button
+                  type="button"
                   onClick={() => setWorkspaceName(savedName)}
-                  className="h-11 rounded-lg border-2 border-[#e2e8f0] px-6 text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc] transition-colors"
+                  disabled={!nameDirty}
+                  className="h-11 rounded-lg border-2 border-[#e2e8f0] px-[26px] text-[14px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  Cancel
+                  Discard Changes
                 </button>
                 <button
+                  type="button"
                   onClick={handleSaveName}
-                  className="h-11 rounded-lg px-6 text-[14px] font-bold text-white shadow-[0px_2px_4px_rgba(255,107,53,0.2)] hover:opacity-90 transition-opacity"
+                  disabled={!nameDirty}
+                  className="h-11 rounded-lg px-6 text-[14px] font-bold text-white shadow-[0px_2px_4px_rgba(255,107,53,0.2)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
                 >
                   {nameSaved ? "Saved ✓" : "Save Changes"}
@@ -400,18 +589,20 @@ export default function WorkspaceSettingsPage() {
             )}
           </section>
 
-          {/* Team Members — WS-003 */}
-          <section className="rounded-xl border border-[#e2e8f0] bg-white p-8">
-            <div className="mb-6">
+          {/* Team Members — Figma S-09-01 + WS-003 */}
+          <section className="rounded-[12px] border border-[#e2e8f0] bg-white p-[33px]">
+            <div className="mb-6 space-y-1">
               <h2 className="text-[17px] font-bold text-[#0a2540]">Team Members</h2>
               <p className="text-[13px] text-[#64748b]">
+                Manage who has access to this workspace
+              </p>
+              <p className="text-[12px] text-[#94a3b8]">
                 {members.length} member{members.length !== 1 ? "s" : ""} · Your role:{" "}
-                <span className={`font-bold ${ROLE_STYLE[currentRole].text}`}>
+                <span className={`font-semibold ${ROLE_STYLE[currentRole].text}`}>
                   {ROLE_STYLE[currentRole].label}
                 </span>
-              </p>
-              <p className="mt-1 text-[12px] text-[#94a3b8]">
-                Members have read-only access here; Owners manage workspace settings and invitations.
+                {" · "}
+                Members are read-only here; Owners manage settings and invitations.
               </p>
             </div>
 
@@ -485,10 +676,9 @@ export default function WorkspaceSettingsPage() {
               })}
             </div>
 
-            {/* Invite by email (elevated: DB owner or admin); invites join as Member */}
+            {/* Invite — Figma: placeholder + Invite button */}
             {isElevated && (
               <div className="flex flex-col gap-2">
-                <label className="text-[13px] font-bold text-[#0a2540]">Invite by Email</label>
                 <div className="flex gap-2">
                   <input
                     type="email"
@@ -499,15 +689,17 @@ export default function WorkspaceSettingsPage() {
                       setInviteShareLink(null);
                       setInviteNoticeCode(null);
                     }}
-                    onKeyDown={(e) => e.key === "Enter" && handleInvite()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && inviteEmail.trim()) void handleInvite();
+                    }}
                     placeholder="Enter email to invite"
                     className="h-11 flex-1 rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[13px] text-[#0a2540] placeholder-[#94a3b8] outline-none focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10 transition-all"
                   />
                   <button
                     type="button"
                     onClick={handleInvite}
-                    disabled={inviteSending}
-                    className="h-11 rounded-lg px-6 text-[14px] font-bold text-white hover:opacity-90 transition-opacity disabled:opacity-60 disabled:pointer-events-none inline-flex items-center justify-center gap-2 min-w-[100px]"
+                    disabled={inviteSending || !inviteEmail.trim()}
+                    className="h-11 rounded-lg px-6 text-[14px] font-bold text-white hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:opacity-50 inline-flex min-w-[100px] items-center justify-center gap-2"
                     style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
                   >
                     {inviteSending ? (
@@ -559,7 +751,7 @@ export default function WorkspaceSettingsPage() {
 
           {/* Invite Link (elevated) */}
           {isElevated && (
-            <section className="rounded-xl border border-[#e2e8f0] bg-white p-8">
+            <section className="rounded-[12px] border border-[#e2e8f0] bg-white p-[33px]">
               <div className="mb-5">
                 <h2 className="text-[17px] font-bold text-[#0a2540]">Invite Link</h2>
                 <p className="text-[13px] text-[#64748b]">
@@ -585,13 +777,17 @@ export default function WorkspaceSettingsPage() {
             </section>
           )}
 
-          {/* AI Model Training — SEC-001 */}
-          <section className="rounded-xl border border-[#e2e8f0] bg-white p-8">
+          {/* AI Model Training — Figma S-09-01 + SEC-001 */}
+          <section className="rounded-[12px] border border-[#e2e8f0] bg-white p-[33px]">
             <div className="flex items-start justify-between gap-6">
-              <div>
+              <div className="min-w-0 flex-1">
                 <h2 className="text-[17px] font-bold text-[#0a2540]">AI Model Training</h2>
-                <p className="mt-1 text-[13px] text-[#64748b]">Control whether your meeting data is used to improve AI models.</p>
-                <p className="mt-2 text-[12px] text-[#94a3b8]">When opted out, your recordings and transcripts will not be used as training data.</p>
+                <p className="mt-1 text-[13px] text-[#64748b]">
+                  Control whether your meeting data is used to improve AI models.
+                </p>
+                <p className="mt-2 text-[12px] text-[#94a3b8]">
+                  When opted out, your recordings and transcripts will not be used as training data.
+                </p>
               </div>
               <button
                 onClick={handleToggleOptOut}
@@ -613,19 +809,28 @@ export default function WorkspaceSettingsPage() {
             </div>
           </section>
 
-          {/* Danger zone — DB workspace owner only */}
+          {/* Danger zone — Figma 106:5085, DB workspace owner only */}
           {isDbOwner && (
-            <section className="rounded-xl border-2 border-[#fee2e2] bg-[#fef2f2] p-8">
-              <div className="mb-4">
-                <h2 className="text-[17px] font-bold text-[#0a2540]">Delete Workspace</h2>
-                <p className="text-[13px] text-[#64748b]">Permanently delete this workspace and all associated data</p>
+            <section className="rounded-[12px] border-2 border-[#fee2e2] bg-[#fef2f2] pb-[30px] pl-[34px] pr-[22px] pt-[29px]">
+              <div className="flex flex-col gap-[30px]">
+                <div className="flex flex-col gap-1">
+                  <h2 className="text-[17px] font-bold text-[#0a2540]">Delete Workspace</h2>
+                  <div className="flex flex-col gap-0 text-[15px] leading-[22px] text-[#64748b]">
+                    <p>Permanently delete this workspace and all associated data.</p>
+                    <p>All meetings, notes, and member access will be permanently deleted.</p>
+                    <p className="pt-0 font-bold text-[#0a2540]">This action cannot be undone.</p>
+                  </div>
+                </div>
+                <div className="flex justify-end pt-2.5">
+                  <button
+                    type="button"
+                    onClick={openDeleteWorkspaceModal}
+                    className="h-11 rounded-lg bg-[#ef4444] px-6 text-[14px] font-bold text-white transition-colors hover:bg-[#dc2626]"
+                  >
+                    Delete Workspace
+                  </button>
+                </div>
               </div>
-              <p className="mb-5 text-[12px] text-[#64748b]">
-                This action cannot be undone. All meetings, notes, and member access will be permanently deleted.
-              </p>
-              <button className="h-11 rounded-lg bg-[#ef4444] px-6 text-[14px] font-bold text-white hover:bg-[#dc2626] transition-colors">
-                Delete Workspace
-              </button>
             </section>
           )}
 
