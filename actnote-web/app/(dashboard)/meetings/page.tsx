@@ -22,6 +22,38 @@ const TABS: { id: Tab; label: string }[] = [
 
 const PAGE_SIZE = 10;
 
+/** 선택된 필터 탭 색을 MeetingCard 상태 배지와 맞춤 */
+function tabActiveShellClasses(tabId: Tab): string {
+  switch (tabId) {
+    case "all":
+      return "bg-[#f1f5f9] text-[#0a2540]";
+    case "analyzing":
+      return "bg-[#fff4f0] text-[#ff6b35]";
+    case "drafts":
+      return "bg-[#f0f4ff] text-[#2e5c8a]";
+    case "published":
+      return "bg-[#f0fdf4] text-green-700";
+    default:
+      return "bg-[#f1f5f9] text-[#0a2540]";
+  }
+}
+
+function tabCountBadgeClasses(tabId: Tab, isActive: boolean): string {
+  if (!isActive) return "bg-[#f1f5f9] text-[#94a3b8]";
+  switch (tabId) {
+    case "all":
+      return "bg-[#e2e8f0] text-[#64748b]";
+    case "analyzing":
+      return "bg-[#ff6b35]/10 text-[#ff6b35]";
+    case "drafts":
+      return "bg-[#2e5c8a]/10 text-[#2e5c8a]";
+    case "published":
+      return "bg-green-100 text-green-700";
+    default:
+      return "bg-[#e2e8f0] text-[#64748b]";
+  }
+}
+
 function filterMeetings(meetings: Meeting[], tab: Tab): Meeting[] {
   switch (tab) {
     case "analyzing":
@@ -139,26 +171,27 @@ export default function MeetingsPage() {
         <div className="mb-6 flex items-center justify-between gap-4 flex-wrap">
           {/* 필터 탭 */}
           <div className="flex items-center gap-1">
-            {TABS.map((tab) => (
+            {TABS.map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
               <button
                 key={tab.id}
                 onClick={() => handleTabChange(tab.id)}
                 className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-[14px] font-bold transition-colors ${
-                  activeTab === tab.id
-                    ? "bg-[#fff4f0] text-[#ff6b35]"
+                  isActive
+                    ? tabActiveShellClasses(tab.id)
                     : "text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
                 }`}
               >
                 {tab.label}
                 {hydrated && counts[tab.id] > 0 && (
-                  <span className={`rounded-full px-1.5 py-px text-[11px] font-bold ${
-                    activeTab === tab.id ? "bg-[#ff6b35]/10 text-[#ff6b35]" : "bg-[#f1f5f9] text-[#94a3b8]"
-                  }`}>
+                  <span className={`rounded-full px-1.5 py-px text-[11px] font-bold ${tabCountBadgeClasses(tab.id, isActive)}`}>
                     {counts[tab.id]}
                   </span>
                 )}
               </button>
-            ))}
+              );
+            })}
           </div>
 
           <div className="flex items-center gap-2">

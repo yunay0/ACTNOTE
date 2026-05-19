@@ -341,7 +341,7 @@ export default function NewMeetingPage() {
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex flex-1 flex-col overflow-hidden bg-white">
       <DashboardHeader title="New Meeting" onBack={() => safeNavigate("/meetings")} />
 
       {/* Leave confirmation modal */}
@@ -455,24 +455,22 @@ export default function NewMeetingPage() {
         <div className="flex gap-6 p-8">
           {/* Left — Form */}
           <div className="flex flex-1 flex-col gap-6 min-w-0">
-            {/* Section 1 */}
-            <div className="rounded-xl border border-[#e2e8f0] bg-white p-6">
-              <div className="mb-5 flex items-center gap-3">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#ff6b35] text-xs font-bold text-white">1</span>
-                <h2 className="text-[16px] font-bold text-[#0a2540]">Meeting Information</h2>
+            {/* Section 1 — matches Figma S-08-01 (node 81:6644) */}
+            <div className="flex max-w-[600px] flex-col gap-[15px]">
+              <div className="flex items-center gap-2">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-[14px] bg-[#fff4f0] text-[14px] font-bold text-[#ff6b35]">
+                  1
+                </span>
+                <h2 className="pb-px text-[17px] font-bold leading-none text-[#0a2540]">Meeting Information</h2>
               </div>
-              <p className="mb-4 text-[12px] leading-snug text-[#64748b]">
-                <span className="font-semibold text-[#ff6b35]">*</span> Fields are required before{" "}
-                <span className="font-semibold text-[#0a2540]">Generate Notes</span> is enabled. Add your recording in section 2.
-              </p>
 
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-[15px]">
                 <Field label="Meeting Title" required>
                   <input
                     type="text"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    placeholder="e.g. Product Roadmap Q2 Review"
+                    placeholder="Enter meeting title"
                     className={inputCls}
                   />
                 </Field>
@@ -481,38 +479,36 @@ export default function NewMeetingPage() {
                   <select
                     value={meetingType}
                     onChange={(e) => setMeetingType(e.target.value)}
-                    className={`${inputCls} cursor-pointer`}
+                    className={`${inputCls} cursor-pointer appearance-none bg-[length:12px_8px] bg-[right_18px_center] bg-no-repeat pr-10`}
+                    style={{
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2364748b' d='M6 8 .07.59 1.43-.82 6 4.88 10.57-.81 11.93.59z'/%3E%3C/svg%3E")`,
+                    }}
                   >
-                    <option value="">Select meeting type...</option>
+                    <option value="">Select meeting type</option>
                     {MEETING_TYPES.map(({ value, label }) => (
-                      <option key={value} value={value}>{label}</option>
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
                     ))}
                   </select>
-                  {meetingType && MEETING_TYPE_HINTS[meetingType] && (
-                    <p className="text-[12px] text-[#64748b] mt-1 flex items-start gap-1">
-                      <span className="text-[#ff6b35] mt-px">✦</span>
-                      {MEETING_TYPE_HINTS[meetingType]}
-                    </p>
-                  )}
                 </Field>
 
                 <Field label="Date & Time" required>
-                  <input
-                    type="datetime-local"
-                    value={datetime}
-                    onChange={(e) => setDatetime(e.target.value)}
-                    className={inputCls}
-                  />
-                </Field>
-
-                <Field label="Description (Optional)">
-                  <textarea
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Brief description of the meeting agenda or topics..."
-                    rows={3}
-                    className={`${inputCls} resize-none`}
-                  />
+                  <div className="relative">
+                    <input
+                      type="datetime-local"
+                      value={datetime}
+                      onChange={(e) => setDatetime(e.target.value)}
+                      aria-label="Meeting date and time"
+                      lang="en-US"
+                      className="peer absolute inset-0 z-10 min-h-[52px] w-full cursor-pointer opacity-0"
+                    />
+                    <div
+                      className={`${inputCls} flex min-h-[52px] items-center peer-focus:border-[#2e5c8a] peer-focus:ring-2 peer-focus:ring-[#2e5c8a]/10`}
+                    >
+                      {formatDatetimeLocalEn(datetime) || "Select date and time"}
+                    </div>
+                  </div>
                 </Field>
 
                 <Field label="Participants" required>
@@ -528,65 +524,62 @@ export default function NewMeetingPage() {
                     <button
                       type="button"
                       onClick={addParticipant}
-                      className="h-11 rounded-xl bg-[#0a2540] px-4 text-sm font-bold text-white hover:opacity-90 transition-opacity"
+                      className="h-[52px] shrink-0 rounded-lg bg-[#2e5c8a] px-5 text-sm font-bold text-white transition-opacity hover:opacity-90"
                     >
                       Add
                     </button>
                   </div>
+                  <p className="text-[12px] leading-[19.5px] text-[#64748b]">Add team members who attended this meeting</p>
                   {participants.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2">
                       {participants.map((p) => (
-                        <span key={p.id} className="flex items-center gap-1 rounded-full bg-[#e3f2fd] px-3 py-1 text-xs font-medium text-[#2e5c8a]">
+                        <span
+                          key={p.id}
+                          className="flex items-center gap-1 rounded-full bg-[#e3f2fd] px-3 py-1 text-xs font-medium text-[#2e5c8a]"
+                        >
                           {p.value}
-                          <button onClick={() => setParticipants((prev) => prev.filter((x) => x.id !== p.id))}>
+                          <button type="button" onClick={() => setParticipants((prev) => prev.filter((x) => x.id !== p.id))}>
                             <X className="h-3 w-3" />
                           </button>
                         </span>
                       ))}
                     </div>
                   )}
-                  {participants.length === 0 && (
-                    <p className="text-[11px] text-[#94a3b8]">At least one participant is required.</p>
-                  )}
-                  {participants.length > 0 && (
-                    <p className="mt-1 text-xs text-[#94a3b8]">Add team members who attended this meeting</p>
-                  )}
                 </Field>
 
-                <Field label="Responsible person" required>
-                  <select
-                    value={responsibleUserId ?? ""}
-                    onChange={(e) => setResponsibleUserId(e.target.value || null)}
-                    disabled={!membersLoaded}
-                    className={`${inputCls} cursor-pointer disabled:opacity-60`}
-                  >
-                    {memberOptions.map((m) => (
-                      <option key={m.user_id} value={m.user_id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                  {!membersLoaded && (
-                    <p className="text-[12px] text-[#94a3b8]">Loading workspace members…</p>
-                  )}
+                <Field label="Description (Optional)">
+                  <textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Brief description of the meeting agenda or topics..."
+                    rows={4}
+                    className={`${inputCls} min-h-[118px] resize-none py-[14px]`}
+                  />
                 </Field>
               </div>
             </div>
 
             {/* Section 2 */}
-            <div className="rounded-xl border border-[#e2e8f0] bg-white p-6">
-              <div className="mb-5 flex items-center gap-3">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[#ff6b35] text-xs font-bold text-white">2</span>
-                <h2 className="text-[16px] font-bold text-[#0a2540]">Upload Recording <span className="text-[#ff6b35]">*</span></h2>
+            <div className="flex max-w-[600px] flex-col gap-2 pt-2">
+              <div className="flex items-center gap-2">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-[14px] bg-[#fff4f0] text-[14px] font-bold text-[#ff6b35]">
+                  2
+                </span>
+                <h2 className="text-[18px] font-bold leading-none text-[#0a2540]">
+                  Upload Recording <span className="text-[#ff6b35]">*</span>
+                </h2>
               </div>
 
               <div
                 onDrop={handleDrop}
-                onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragging(true);
+                }}
                 onDragLeave={() => setIsDragging(false)}
                 onClick={() => fileInputRef.current?.click()}
-                className={`flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed p-10 text-center transition-colors ${
-                  isDragging ? "border-[#ff6b35] bg-[#fff4f0]" : "border-[#e2e8f0] bg-[#f8fafc] hover:border-[#2e5c8a]/40"
+                className={`flex min-h-[180px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-[50px] py-4 text-center transition-colors ${
+                  isDragging ? "border-[#ff6b35] bg-[#fff4f0]" : "border-[#cbd5e1] bg-white hover:border-[#2e5c8a]/40"
                 }`}
               >
                 <input ref={fileInputRef} type="file" accept={fileAcceptAttribute()} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }} />
@@ -620,19 +613,24 @@ export default function NewMeetingPage() {
                   </div>
                 ) : (
                   <>
-                    <span className="text-4xl">🗂️</span>
+                    <span className="text-[36px] leading-none">📁</span>
                     <div>
-                      <p className="text-sm font-semibold text-[#0a2540]">Drag & drop your recording here</p>
-                      <p className="text-xs text-[#64748b]">or click to browse files</p>
+                      <p className="text-base font-bold text-[#0a2540]">Drag & drop your recording here</p>
+                      <p className="mt-1 text-[13px] text-[#64748b]">or click to browse files</p>
                     </div>
                     <button
                       type="button"
-                      className="rounded-lg bg-[#0a2540] px-5 py-2 text-sm font-bold text-white hover:opacity-90 transition-opacity"
-                      onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                      className="rounded-lg bg-[#2e5c8a] px-5 py-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        fileInputRef.current?.click();
+                      }}
                     >
                       Choose File
                     </button>
-                    <p className="text-xs text-[#94a3b8]">Supported: {allowedRecordingExtensionsLabel()} (max {MAX_SIZE_MB}MB)</p>
+                    <p className="text-[11px] text-[#94a3b8]">
+                      Supported : {allowedRecordingExtensionsLabel()} (max {MAX_SIZE_MB}MB)
+                    </p>
                   </>
                 )}
               </div>
@@ -640,34 +638,33 @@ export default function NewMeetingPage() {
           </div>
 
           {/* Right — Info panels */}
-          <div className="w-[300px] shrink-0 flex flex-col gap-4">
-            <div className="rounded-xl border border-[#e2e8f0] bg-white p-5">
-              <h3 className="mb-4 flex items-center gap-2 text-[14px] font-bold text-[#0a2540]">
-                <span className="text-[#ff6b35]">✦</span> What happens next?
+          <div className="flex w-[360px] shrink-0 flex-col gap-5">
+            <div className="rounded-xl border border-[#e2e8f0] bg-white p-[25px]">
+              <h3 className="mb-4 flex items-center gap-2 pb-px text-[15.6px] font-bold leading-none text-[#0a2540]">
+                <span>✨</span> What happens next?
               </h3>
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-4">
                 {STEPS.map(({ num, title: t, desc }) => (
                   <div key={num} className="flex gap-3">
-                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#ff6b35] text-[11px] font-bold text-white mt-0.5">{num}</span>
+                    <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-xl bg-[#fff4f0] text-[12px] font-bold text-[#ff6b35]">
+                      {num}
+                    </span>
                     <div>
-                      <p className="text-[13px] font-bold text-[#0a2540]">{t}</p>
-                      <p className="text-[12px] text-[#64748b]">{desc}</p>
+                      <p className="text-[13.6px] font-bold leading-none text-[#0a2540]">{t}</p>
+                      <p className="mt-1 text-[12px] leading-[19.5px] text-[#64748b]">{desc}</p>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="rounded-xl border border-[#e2e8f0] bg-white p-5">
-              <h3 className="mb-4 flex items-center gap-2 text-[14px] font-bold text-[#0a2540]">
-                <span>⚡</span> Tips for best results
+            <div className="rounded-xl border border-[#e2e8f0] bg-white p-[25px]">
+              <h3 className="mb-4 flex items-center gap-2 pb-px text-[15.6px] font-bold leading-none text-[#0a2540]">
+                <span className="text-xs">💡</span> Tips for best results
               </h3>
-              <ul className="flex flex-col gap-2">
+              <ul className="flex flex-col gap-0 text-[11.9px] leading-[25px] text-[#64748b]">
                 {TIPS.map((tip) => (
-                  <li key={tip} className="flex items-start gap-1.5 text-[12px] text-[#64748b]">
-                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#94a3b8]" />
-                    {tip}
-                  </li>
+                  <li key={tip}>• {tip}</li>
                 ))}
               </ul>
             </div>
@@ -676,15 +673,15 @@ export default function NewMeetingPage() {
 
         </div>{/* end content row + scroll area */}
 
-        {/* Bottom bar — Generate Notes */}
-        <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-t border-[#e2e8f0] bg-white px-8 py-4">
-          {!canSubmit && !loading ? (
-            <p className="text-[12px] text-[#64748b] max-w-xl">
-              Complete all <span className="text-[#ff6b35] font-semibold">*</span> fields in section 1 and attach a recording in section 2.
-            </p>
-          ) : (
-            <span />
-          )}
+        {/* Bottom bar — Cancel + Generate Notes (Figma) */}
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2.5 border-t border-[#e2e8f0] bg-white px-8 py-5">
+          <button
+            type="button"
+            onClick={() => safeNavigate("/meetings")}
+            className="rounded-[10px] border-2 border-[#e2e8f0] bg-white px-[26px] py-[14px] text-[15px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc]"
+          >
+            Cancel
+          </button>
           <button
             type="button"
             onClick={handleSubmit}
@@ -694,8 +691,8 @@ export default function NewMeetingPage() {
                 ? "Fill meeting type, participants, recording, and required fields to continue."
                 : undefined
             }
-            className="flex h-11 items-center gap-2 rounded-[10px] px-8 text-[15px] font-bold text-white shadow-[0px_4px_6px_rgba(255,107,53,0.2)] hover:opacity-90 disabled:opacity-50 disabled:pointer-events-none transition-opacity"
-            style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+            className="flex h-12 items-center gap-2 rounded-[10px] px-7 text-[15px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-50"
+            style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
           >
             {loading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> : null}
             Generate Notes
@@ -710,7 +707,8 @@ const STEPS = [
   { num: 1, title: "AI Processing", desc: "Your recording will be transcribed and summarized" },
   { num: 2, title: "Action Items Extracted", desc: "AI identifies tasks, assignees, and due dates" },
   { num: 3, title: "Review Draft", desc: "Edit and approve the generated notes" },
-  { num: 4, title: "Publish", desc: "Share meeting notes" },
+  { num: 4, title: "Owner Approval", desc: "Workspace owner reviews and approves" },
+  { num: 5, title: "Publish", desc: "Share meeting notes" },
 ];
 
 const TIPS = [
@@ -721,25 +719,47 @@ const TIPS = [
 ];
 
 const inputCls =
-  "h-11 w-full rounded-xl border border-[#e2e8f0] bg-white px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10";
+  "w-full rounded-[10px] border-2 border-[#e2e8f0] bg-white px-[18px] py-[14px] text-[15px] text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10";
 
-// MTG-004: 회의 유형 템플릿
-// 백엔드 스펙: 'default' | 'sprint' | 'planning' | 'retro' | '1on1'
+/** Stored `meetings.meeting_type` — normalized by backend `llm_extractor._resolve_template_name`. */
 const MEETING_TYPES = [
-  { value: "default",  label: "General Meeting" },
-  { value: "sprint",   label: "Sprint" },
-  { value: "planning", label: "Planning" },
-  { value: "retro",    label: "Retrospective" },
-  { value: "1on1",     label: "1:1" },
+  { value: "one_on_one", label: "1:1 Meeting" },
+  { value: "standup", label: "Team Standup" },
+  { value: "project_review", label: "Project Review" },
+  { value: "brainstorming", label: "Brainstorming" },
+  { value: "client", label: "Client Meeting" },
+  { value: "board", label: "Board Meeting" },
+  { value: "all_hands", label: "All Hands" },
+  { value: "workshop", label: "Workshop" },
+  { value: "other", label: "Other" },
 ];
 
-const MEETING_TYPE_HINTS: Record<string, string> = {
-  default:  "AI will extract general action items, decisions, and key discussion points.",
-  sprint:   "AI will focus on task assignments, story points, sprint goals, and blockers.",
-  planning: "AI will extract goals, timelines, owners, milestones, and key decisions.",
-  retro:    "AI will identify what went well, what didn't, and action items for improvement.",
-  "1on1":   "AI will focus on personal goals, blockers, feedback, and follow-up actions.",
-};
+/** datetime-local (`YYYY-MM-DDTHH:mm`, local) → Date */
+function parseDatetimeLocal(value: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value.trim());
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const h = Number(m[4]);
+  const mi = Number(m[5]);
+  const dt = new Date(y, mo - 1, d, h, mi);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+/** Visible label uses English AM/PM; native control stays hidden but receives clicks (OS picker may still locale). */
+function formatDatetimeLocalEn(value: string): string {
+  const dt = parseDatetimeLocal(value);
+  if (!dt) return "";
+  return dt.toLocaleString("en-US", {
+    month: "2-digit",
+    day: "2-digit",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
 
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (

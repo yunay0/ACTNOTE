@@ -3,35 +3,71 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { AuthMarketingPanel } from "@/components/auth/AuthMarketingPanel";
+import { englishFieldInvalidMessage, clearNativeValidity } from "@/lib/auth-native-validation";
+import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from "@/lib/legal-links";
+
+const PLACEHOLDER_FIRST = "Lucy";
+const PLACEHOLDER_LAST = "Lee";
+const PLACEHOLDER_EMAIL = "lucy@actnote.com";
+const PLACEHOLDER_PASSWORD = "Enter your password";
+
+function passwordMeetsPolicy(p: string): boolean {
+  if (p.length < 8) return false;
+  if (!/[A-Z]/.test(p)) return false;
+  if (!/[0-9]/.test(p)) return false;
+  if (!/[^A-Za-z0-9]/.test(p)) return false;
+  return true;
+}
+
+const inputCls =
+  "w-full rounded-[10px] border-2 border-[#e2e8f0] px-[18px] py-[14px] text-[15px] text-[#0f172a] placeholder-[#94a3b8] outline-none transition-colors focus:border-[#2e5c8a]";
 
 export default function SignupPage() {
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [agreeTerms, setAgreeTerms] = useState(false);
+  const [agreePrivacy, setAgreePrivacy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setLoading(true);
     setError(null);
 
+    if (!passwordMeetsPolicy(password)) {
+      setError("Your password must meet all requirements listed below.");
+      return;
+    }
+
+    setLoading(true);
+
+    const em = email.trim();
     const supabase = createClient();
-    const { data, error } = await supabase.auth.signUp({
-      email,
+    const displayName = `${firstName.trim()} ${lastName.trim()}`.trim();
+    const { data, error: signErr } = await supabase.auth.signUp({
+      email: em,
       password,
       options: {
         emailRedirectTo: `${window.location.origin}/auth/email-verified`,
+        data: {
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          full_name: displayName,
+          name: displayName,
+        },
       },
     });
 
-    if (error) {
-      setError(error.message);
+    if (signErr) {
+      setError(signErr.message);
       setLoading(false);
       return;
     }
 
-    // Confirm email 이 꺼져 있으면 세션이 바로 생김 → 바로 온보딩으로
     if (data.session) {
       window.location.assign("/workspace/select");
       return;
@@ -42,121 +78,210 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden">
-      <div className="flex w-full">
+    <div className="flex min-h-screen w-full bg-[#f8fafc]">
+      <AuthMarketingPanel />
 
-        {/* Left — Branding */}
-        <div
-          className="hidden flex-1 flex-col justify-center p-16 md:flex"
-          style={{ background: "linear-gradient(135deg, #0a2540 0%, #1e3a5f 100%)" }}
-        >
-          <div className="mb-10 flex items-center gap-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-[12px] bg-[#ff6b35]">
-              <span className="text-4xl font-bold leading-none text-[#1e3a5f]">✓</span>
+      <div className="relative z-[1] flex flex-1 items-center justify-center p-10">
+        <div className="w-full max-w-[480px] rounded-2xl bg-white p-[60px] shadow-[0px_4px_6px_rgba(0,0,0,0.1)]">
+          {done ? (
+            <div className="text-center">
+              <div className="mb-4 text-5xl">📬</div>
+              <h2 className="mb-2 text-[28px] font-bold text-[#0f172a]">Verify your email</h2>
+              <p className="text-[14px] leading-relaxed text-[#64748b]">
+                We sent a link to <strong className="text-[#0f172a]">{email}</strong>. Open it to confirm you own this
+                inbox.
+                <br />
+                <br />
+                After verifying, come back and <strong>sign in with your password</strong>.
+              </p>
+              <Link href="/login" className="mt-6 inline-block text-sm font-bold text-[#ff6b35] hover:underline">
+                Sign in
+              </Link>
             </div>
-            <span className="text-[36px] font-bold tracking-[-1px] text-white">ACTNOTE</span>
-          </div>
+          ) : (
+            <>
+              <h2 className="text-[28px] font-bold text-[#0f172a]">Create your account</h2>
+              <p className="mt-2 text-sm text-[#475569]">Start transforming your meetings into actions</p>
 
-          <p className="mb-10 text-[22px] leading-[1.5] text-white/90">
-            Transform your meetings
-            <br />
-            into actionable insights
-          </p>
-
-          <div className="flex flex-col gap-6">
-            {[
-              { emoji: "🎙️", text: "AI-powered transcription & summary" },
-              { emoji: "✅", text: "Auto-extract action items" },
-              { emoji: "🎫", text: "One-click ticket creation" },
-            ].map(({ emoji, text }) => (
-              <div key={text} className="flex items-center gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px] bg-[rgba(255,107,53,0.2)] text-xl">
-                  {emoji}
-                </div>
-                <span className="text-[15px] text-white/85">{text}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Right — Signup Form */}
-        <div className="flex flex-1 flex-col items-center justify-center bg-white p-16">
-          <div className="w-full max-w-[360px]">
-            {done ? (
-              <div className="text-center">
-                <div className="mb-4 text-5xl">📬</div>
-                <h2 className="mb-2 text-2xl font-bold text-[#0a2540]">Verify your email</h2>
-                <p className="text-[15px] leading-relaxed text-[#64748b]">
-                  We sent a link to <strong>{email}</strong>. Open it to confirm you own this inbox.
-                  <br />
-                  <br />
-                  That step only verifies email—it does not sign you in. After verifying, come back here and{" "}
-                  <strong>sign in with your password</strong>.
-                </p>
-                <Link href="/login" className="mt-6 inline-block text-sm font-semibold text-[#ff6b35] hover:underline">
-                  Go to Sign In
-                </Link>
-              </div>
-            ) : (
-              <>
-                <div className="mb-8 text-center">
-                  <h1 className="mb-3 text-[31px] font-bold text-[#0a2540]">Get started 🚀</h1>
-                  <p className="text-[15px] text-[#64748b]">Create your ACTNOTE account</p>
-                </div>
-
-                <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium text-[#0a2540]">Email</label>
+              <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-[18px]">
+                <div className="flex gap-5">
+                  <div className="flex flex-1 flex-col gap-2">
+                    <label htmlFor="signup-first" className="text-sm font-bold text-[#0f172a]">
+                      First Name
+                    </label>
                     <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="you@example.com"
+                      id="signup-first"
+                      autoComplete="given-name"
+                      value={firstName}
+                      onInvalid={englishFieldInvalidMessage}
+                      onInput={(e) => clearNativeValidity(e.currentTarget)}
+                      onChange={(e) => {
+                        setFirstName(e.target.value);
+                        setError(null);
+                      }}
+                      placeholder={PLACEHOLDER_FIRST}
                       required
-                      className="h-12 w-full rounded-xl border-2 border-[#e2e8f0] px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a]"
+                      className={inputCls}
                     />
                   </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium text-[#0a2540]">Password</label>
+                  <div className="flex flex-1 flex-col gap-2">
+                    <label htmlFor="signup-last" className="text-sm font-bold text-[#0f172a]">
+                      Last Name
+                    </label>
                     <input
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
+                      id="signup-last"
+                      autoComplete="family-name"
+                      value={lastName}
+                      onInvalid={englishFieldInvalidMessage}
+                      onInput={(e) => clearNativeValidity(e.currentTarget)}
+                      onChange={(e) => {
+                        setLastName(e.target.value);
+                        setError(null);
+                      }}
+                      placeholder={PLACEHOLDER_LAST}
                       required
-                      minLength={6}
-                      className="h-12 w-full rounded-xl border-2 border-[#e2e8f0] px-4 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a]"
+                      className={inputCls}
                     />
                   </div>
+                </div>
 
-                  {error && (
-                    <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="signup-email" className="text-sm font-bold text-[#0f172a]">
+                    Email Address
+                  </label>
+                  <input
+                    id="signup-email"
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onInvalid={englishFieldInvalidMessage}
+                    onInput={(e) => clearNativeValidity(e.currentTarget)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setError(null);
+                    }}
+                    placeholder={PLACEHOLDER_EMAIL}
+                    required
+                    className={inputCls}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="signup-password" className="text-sm font-bold text-[#0f172a]">
+                    Password
+                  </label>
+                  <input
+                    id="signup-password"
+                    type="password"
+                    autoComplete="new-password"
+                    value={password}
+                    onInvalid={englishFieldInvalidMessage}
+                    onInput={(e) => clearNativeValidity(e.currentTarget)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      setError(null);
+                    }}
+                    placeholder={PLACEHOLDER_PASSWORD}
+                    required
+                    minLength={8}
+                    className={inputCls}
+                  />
+                  <ul className="flex flex-col gap-1 text-xs text-[#94a3b8]">
+                    <li className="flex items-center gap-1.5">
+                      <span aria-hidden>○</span> At least 8 characters
+                    </li>
+                    <li className="flex items-center gap-1.5">
+                      <span aria-hidden>○</span> One uppercase letter
+                    </li>
+                    <li className="flex items-center gap-1.5">
+                      <span aria-hidden>○</span> One number
+                    </li>
+                    <li className="flex items-center gap-1.5">
+                      <span aria-hidden>○</span> One special character
+                    </li>
+                  </ul>
+                </div>
+
+                <div className="flex flex-col gap-3 pt-1">
+                  <label className="flex cursor-pointer gap-3">
+                    <input
+                      type="checkbox"
+                      checked={agreeTerms}
+                      required
+                      onInvalid={englishFieldInvalidMessage}
+                      onChange={(e) => {
+                        clearNativeValidity(e.currentTarget);
+                        setAgreeTerms(e.target.checked);
+                        setError(null);
+                      }}
+                      className="mt-0.5 size-[18px] shrink-0 rounded border border-[#767676] accent-[#ff6b35]"
+                    />
+                    <span className="text-sm leading-relaxed text-[#475569]">
+                      I agree to the{" "}
+                      <a
+                        href={TERMS_OF_SERVICE_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-bold text-[#ff6b35] hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Terms of Service
+                      </a>
+                    </span>
+                  </label>
+                  <label className="flex cursor-pointer gap-3">
+                    <input
+                      type="checkbox"
+                      checked={agreePrivacy}
+                      required
+                      onInvalid={englishFieldInvalidMessage}
+                      onChange={(e) => {
+                        clearNativeValidity(e.currentTarget);
+                        setAgreePrivacy(e.target.checked);
+                        setError(null);
+                      }}
+                      className="mt-0.5 size-[18px] shrink-0 rounded border border-[#767676] accent-[#ff6b35]"
+                    />
+                    <span className="text-sm leading-relaxed text-[#475569]">
+                      I agree to the{" "}
+                      <a
+                        href={PRIVACY_POLICY_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-bold text-[#ff6b35] hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        Privacy Policy
+                      </a>
+                    </span>
+                  </label>
+                </div>
+
+                {error && (
+                  <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="mt-1 w-full rounded-[10px] bg-[#ff6b35] py-[14px] text-base font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:opacity-60"
+                >
+                  {loading ? (
+                    <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  ) : (
+                    "Create Account"
                   )}
+                </button>
+              </form>
 
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="mt-2 flex h-12 w-full items-center justify-center rounded-xl text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-                    style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-                  >
-                    {loading ? (
-                      <span className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                    ) : (
-                      "Create Account"
-                    )}
-                  </button>
-                </form>
-
-                <p className="mt-6 text-center text-sm text-[#64748b]">
-                  Already have an account?{" "}
-                  <Link href="/login" className="font-semibold text-[#ff6b35] hover:underline">
-                    Sign In
-                  </Link>
-                </p>
-              </>
-            )}
-          </div>
+              <p className="mt-6 flex flex-wrap items-center justify-center gap-1 text-center text-sm text-[#475569]">
+                Already have an account?{" "}
+                <Link href="/login" className="font-bold text-[#ff6b35] hover:underline">
+                  Sign in
+                </Link>
+              </p>
+            </>
+          )}
         </div>
       </div>
     </div>

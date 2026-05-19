@@ -71,24 +71,29 @@ export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardH
   }, [loadNotifications]);
 
   // Realtime 구독 — 새 알림 INSERT 시 뱃지 자동 업데이트
+  // 채널 이름은 매 마운트마다 고유해야 함. React Strict Mode 이중 실행 시 같은 이름 채널이
+  // 이미 subscribe 된 상태로 재사용되면 `.on()` 추가 시 "after subscribe()" 오류가 난다.
   useEffect(() => {
     const supabase = createClient();
-    let userId: string | null = null;
+    let cancelled = false;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
 
-    async function subscribe() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      userId = user.id;
+    void (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
 
-      const channel = supabase
-        .channel("notifications-realtime")
+      const name = `notifications-rt-${user.id}-${crypto.randomUUID()}`;
+      channel = supabase
+        .channel(name)
         .on(
           "postgres_changes",
           {
             event: "INSERT",
             schema: "public",
             table: "notifications",
-            filter: `user_id=eq.${userId}`,
+            filter: `user_id=eq.${user.id}`,
           },
           (payload) => {
             const newNotif = payload.new as Notification;
@@ -97,15 +102,15 @@ export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardH
         )
         .subscribe();
 
-      return channel;
-    }
-
-    const channelPromise = subscribe();
+      if (cancelled) {
+        supabase.removeChannel(channel);
+        channel = null;
+      }
+    })();
 
     return () => {
-      channelPromise.then((channel) => {
-        if (channel) supabase.removeChannel(channel);
-      });
+      cancelled = true;
+      if (channel) supabase.removeChannel(channel);
     };
   }, []);
 
@@ -193,11 +198,6 @@ export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardH
       </div>
 
       <div className="flex items-center gap-4">
-        {/* Search */}
-        <button className="flex h-10 w-10 items-center justify-center rounded-lg text-[20px] text-[#64748b] hover:bg-[#f8fafc] transition-colors">
-          🔍
-        </button>
-
         {/* Bell — NOTI-001 */}
         <div ref={bellRef} className="relative">
           <button
