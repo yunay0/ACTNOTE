@@ -212,7 +212,7 @@ def push_published_to_notion(
         ``{"notion_page_id": str | None, "action_ticket_count": int}``
 
     Raises:
-        RuntimeError: Notion API 호출 실패 (Inngest 재시도가 처리).
+        RuntimeError: Notion API 호출 실패 (Modal run_publish_fn retries=3 가 처리).
 
     Note:
         Notion 미연동 시 외부 동기화 없이 성공으로 반환한다 (로컬 QA / 선택 연동).

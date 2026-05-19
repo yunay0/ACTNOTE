@@ -1,25 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Inngest } from "inngest";
 import { createClient } from "@/lib/supabase/server";
 import { ensureRepoRootEnvMerged } from "@/lib/server/repo-env";
 
 export const runtime = "nodejs";
 
+// Inngest 제거 → Modal 전환. DB 상태 전환은 Supabase RPC publish_meeting 이 이미 처리;
+// 이 라우트는 Notion push + 재인덱싱을 Modal 백그라운드 함수에 위임한다.
+
 export async function POST(req: NextRequest) {
   ensureRepoRootEnvMerged();
 
-  const eventKey = process.env.INNGEST_EVENT_KEY?.trim();
-  if (!eventKey) {
+  const modalUrl = process.env.MODAL_PUBLISH_TRIGGER_URL?.trim();
+  const triggerSecret = process.env.MODAL_TRIGGER_SECRET?.trim();
+  if (!modalUrl || !triggerSecret) {
     return NextResponse.json(
       {
         error:
-          "INNGEST_EVENT_KEY is missing or empty. Set it in actnote-web/.env.local or the repo-root env file (no blank INNGEST_EVENT_KEY= line). Restart next dev.",
+          "MODAL_PUBLISH_TRIGGER_URL or MODAL_TRIGGER_SECRET is missing. Set them in actnote-web/.env.local or the repo-root env file (deploy src/modal_app.py and copy the endpoint URL). Restart next dev.",
       },
       { status: 503 }
     );
   }
 
-  const inngest = new Inngest({ id: "actnote", eventKey });
   const { meeting_id } = await req.json();
   if (!meeting_id) return NextResponse.json({ error: "meeting_id required" }, { status: 400 });
 
@@ -39,14 +41,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "not published yet" }, { status: 400 });
   }
 
-  await inngest.send({
-    name: "meeting/publish",
-    data: {
-      meeting_id: meeting.id,
-      user_id: user.id,
-      workspace_id: meeting.workspace_id,
-    },
-  });
+  try {
+    const res = await fetch(modalUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Actnote-Secret": triggerSecret,
+      },
+      body: JSON.stringify({
+        meeting_id: meeting.id,
+        workspace_id: meeting.workspace_id,
+      }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      return NextResponse.json(
+        { error: `Modal publish trigger failed (${res.status}): ${detail.slice(0, 300)}` },
+        { status: 502 }
+      );
+    }
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return NextResponse.json(
+      { error: `Modal publish request failed: ${message}` },
+      { status: 502 }
+    );
+  }
 
   return NextResponse.json({ ok: true });
 }

@@ -207,6 +207,7 @@ def run_pipeline(
     tracker: cost_tracker.CostTracker | None = None,
     language: str = "en",
     backend: StorageBackend | None = None,
+    diarization_remote_url: str | None = None,
 ) -> dict:
     """음성 파일에서 최종 추출 결과까지 실행하고 중간 산출물을 저장한다.
 
@@ -216,6 +217,9 @@ def run_pipeline(
     Steps 5-6 (A.U.D.N, 임베딩) 실패 시 에러를 _pipeline_meta에 기록하고 4단계 결과를 반환한다.
 
     backend 가 None 이면 LocalStorage(output_dir) 가 사용된다 (기존 CLI 동작).
+
+    diarization_remote_url 은 USE_MODAL_DIARIZATION=true 일 때 화자분리 Modal 함수에
+    넘길 Supabase signed URL. 로컬 경로(기본)에서는 무시된다.
     """
     store: StorageBackend = backend if backend is not None else LocalStorage(Path(output_dir))
 
@@ -253,7 +257,7 @@ def run_pipeline(
         # [2/6] Diarization
         t0 = time.perf_counter()
         _console.print("[cyan][2/6][/] Speaker Diarization (pyannote speaker-diarization-3.1)...")
-        diar = diarization.diarize(audio_path)
+        diar = diarization.diarize(audio_path, remote_url=diarization_remote_url)
         step_times["diarization"] = time.perf_counter() - t0
         store.save_json("diarization.json", diar)
         completed.append("Speaker Diarization (pyannote)")

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Inngest } from "inngest";
 import { createClient } from "@/lib/supabase/server";
 import { ensureRepoRootEnvMerged } from "@/lib/server/repo-env";
 import {
@@ -114,43 +113,13 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const eventKey = process.env.INNGEST_EVENT_KEY?.trim();
-  if (!eventKey) {
-    return NextResponse.json(
-      {
-        error:
-          "No mail transport configured. Set SMTP_USER + SMTP_PASSWORD (Gmail SMTP), or RESEND_API_KEY (+ EMAIL_FROM), or INNGEST_EVENT_KEY (worker must have SMTP or RESEND).",
-      },
-      { status: 503 }
-    );
-  }
-
-  const inngest = new Inngest({ id: "actnote", eventKey });
-
-  try {
-    await inngest.send({
-      name: "notification/email_send",
-      data: {
-        to: invite.invited_email,
-        subject: mail.subject,
-        body_html: mail.html,
-        body_text: mail.text,
-        ref: {
-          kind: "workspace_invite",
-          workspace_id: invite.workspace_id,
-          invite_id: invite.id,
-        },
-      },
-    });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ error: `Inngest send failed: ${message}` }, { status: 502 });
-  }
-
+  // Inngest 제거(Modal 전환): 워커 위임 폴백 없음. SMTP/Resend 미설정이면 링크만 반환.
   return NextResponse.json({
     ok: true,
-    email_sent: true,
+    email_sent: false,
     invite_link: inviteLink,
-    channel: "inngest",
+    notice_code: "NO_MAIL_TRANSPORT",
+    delivery_error:
+      "No mail transport configured. Set SMTP_USER + SMTP_PASSWORD (Gmail SMTP) or RESEND_API_KEY (+ EMAIL_FROM). Share the invite link manually meanwhile.",
   });
 }

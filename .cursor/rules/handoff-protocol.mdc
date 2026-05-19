@@ -13,14 +13,14 @@ alwaysApply: true
 ## 2. API는 Supabase 직접 호출이 기본
 - 별도 백엔드 API 만들지 않음
 - 권한은 RLS가 자동 처리
-- 단, 파이프라인 트리거(meeting/process)만 Inngest 이벤트 발송
+- 단, 파이프라인/발행 트리거만 Next 라우트(`/api/trigger-*`)가 인증 후 Modal 웹 엔드포인트 호출 (Inngest 제거)
 
 ## 3. 파일 업로드 흐름
 1. 사용자가 파일 선택
 2. supabase.storage.from('meetings').upload(...)
 3. meetings 테이블에 row insert (status: 'uploaded')
-4. /api/trigger-pipeline POST → Inngest 이벤트 발송
-5. UI는 meeting.status를 polling 또는 realtime subscribe
+4. /api/trigger-pipeline POST → (인증) → Modal 엔드포인트 호출 → spawn → 202
+5. UI는 meeting.status를 5초 폴링 (Realtime 미사용)
 
 ## 4. 막혔을 때
 - DB 쿼리 안 됨 → RLS 정책 확인

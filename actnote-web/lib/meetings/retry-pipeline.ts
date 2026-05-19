@@ -56,7 +56,7 @@ export async function retryMeetingPipeline(input: RetryPipelineInput): Promise<R
       ok: false,
       error:
         body.error ??
-        `Pipeline could not be started (${triggerRes.status}). Check Inngest configuration.`,
+        `Pipeline could not be started (${triggerRes.status}). Check Modal trigger configuration.`,
     };
   }
 
