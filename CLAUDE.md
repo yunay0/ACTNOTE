@@ -28,11 +28,14 @@
 | ------------------ | --------- | ----------------------------------------------------------------------------------- |
 | **프론트 (Next.js)**  | ✅ 배포 완료   | https://actnote-web.vercel.app (Vercel)                                             |
 | **Modal GPU 화자분리** | ✅ 배포 완료   | `actnote-diarization` — https://modal.com/apps/ttojo6/main/deployed/actnote-diarization |
-| **백엔드 워커 (Python)** | ⏳ 로컬 실행   | Railway 배포 예정 (미완료)                                                                  |
+| **백엔드 파이프라인 (Python)** | 🆕 Modal 전환 (코드 완료, 배포 필요) | `actnote-pipeline` — `modal deploy src/modal_app.py` |
 
 
-- 워커가 아직 로컬이므로 운영 분석은 **로컬 워커 가동 중에만** 동작 → `uv run python scripts/serve_worker.py` 필요.
-- 화자분리는 `USE_MODAL_DIARIZATION=true` 일 때 Modal GPU 사용 (워커가 Supabase signed URL 전달, service_role 키 Modal 미전달).
+- **Inngest 완전 제거 → Modal 서버리스**(2026-05-18). 로컬 워커/`serve_worker.py` 없음. 동욱 PC·별도 서버 불필요.
+- 프론트 `/api/trigger-*` 가 인증(supabase.auth) 후 공유 시크릿으로 Modal 웹 엔드포인트 호출 → `spawn` 후 즉시 202 → 백그라운드 실행.
+- 화자분리는 `USE_MODAL_DIARIZATION=true` 일 때 별도 GPU 앱(`actnote-diarization`)으로 cross-app 호출 (CPU/GPU 함수 분리 — 비용). signed URL 만 전달, service_role 키 Modal 미전달.
+- 상태는 `meetings.status` 컬럼 + 프론트 5초 폴링 (Realtime 미사용).
+- 배포 후 `modal deploy src/modal_app.py` 출력 URL 2개 → 프론트 env `MODAL_PIPELINE_TRIGGER_URL`/`MODAL_PUBLISH_TRIGGER_URL`, 시크릿은 `MODAL_TRIGGER_SECRET`.
 
 ---
 
@@ -85,21 +88,25 @@
 
 ```
 [프론트 Next.js]
-  ↓ Supabase anon 키 + RLS
-[Supabase DB]  ←→  [Supabase Storage]  ←→  [Supabase Realtime]
-  ↓ Inngest 이벤트 (Route Handler → /api/trigger-pipeline)
-[Inngest Worker (Python)]
+  ↓ Supabase anon 키 + RLS / 상태는 meetings.status 5초 폴링
+[Supabase DB]  ←→  [Supabase Storage]
+  ↓ Next /api/trigger-* (supabase.auth 인증 경계) + X-Actnote-Secret
+[Modal 웹 엔드포인트]  (src/modal_app.py: 시크릿 검증 → spawn → 202)
+  ↓
+[Modal CPU 함수 run_pipeline_fn]  (src/jobs.py, retries=3)
   ├─ STT (Whisper API)
-  ├─ Diarization (pyannote 4.x — USE_MODAL_DIARIZATION=true 시 Modal GPU 오프로딩)
+  ├─ Diarization → cross-app [Modal GPU actnote-diarization]  (USE_MODAL_DIARIZATION=true, signed URL)
   ├─ Alignment
   ├─ CRAG (meeting_embeddings 검색)
   ├─ LLM 추출 (Claude Sonnet 4.6, 유형별 템플릿)
   ├─ A.U.D.N (action_resolver)
   └─ 임베딩 저장
-  ↓ meeting/publish 이벤트
+  ↓ /api/trigger-publish → [Modal run_publish_fn]
 [Notion API]  (회의록 push + 티켓 자동 생성)
   ↓
-[Resend]  (이메일 알림)
+[Resend]  (이메일 알림 — email_notifier.send_email 직접, Inngest 제거)
+
+[Modal cron cleanup_orphans_fn]  6h — workspace_id NULL 회의 정리
 ```
 
 ---
@@ -109,7 +116,8 @@
 ```
 Actnote/                    ← 레포 루트 = 백엔드 (Python)
 ├── src/                    ← 핵심 백엔드 모듈
-│   ├── worker.py           ← Inngest 이벤트 핸들러 (3종 + cron)
+│   ├── modal_app.py        ← Modal 앱 actnote-pipeline (웹 엔드포인트 + spawn + cron)
+│   ├── jobs.py             ← 프레임워크 비의존 작업 3종 (구 worker 로직)
 │   ├── pipeline.py         ← 6단계 파이프라인 오케스트레이션
 │   ├── llm_extractor.py    ← Claude Sonnet 4.6 추출 + MTG-004
 │   ├── assignee_matcher.py ← DRAFT-005 담당자 매칭
@@ -119,7 +127,7 @@ Actnote/                    ← 레포 루트 = 백엔드 (Python)
 │   ├── publication.py      ← PUB-001 발행 워크플로우
 │   ├── notion_sync.py      ← INTEG-001/003/005 Notion 연동
 │   ├── crag.py             ← CONTEXT-001 이전 회의 RAG
-│   ├── error_classifier.py ← 에러 분류 코드 6종
+│   ├── error_classifier.py ← 에러 분류 코드 6종 (Modal 실패 → MODEL_API_FAILED)
 │   ├── action_resolver.py  ← A.U.D.N 판단 로직
 │   ├── stt.py / diarization.py / alignment.py / embeddings.py
 │   ├── modal_diarization.py← Modal GPU 화자분리 (pyannote 4.x, signed URL 입력)
@@ -146,7 +154,7 @@ actnote-web/                ← 프론트엔드 (Next.js 14, 동일 레포)
 ├── app/api/
 │   ├── trigger-pipeline/       ← meeting/process 이벤트 발송
 │   ├── trigger-publish/        ← meeting/publish 이벤트 발송
-│   ├── workspace/send-invite/  ← 초대 메일 Inngest 발송
+│   ├── workspace/send-invite/  ← 초대 메일 SMTP/Resend 직접 발송
 │   └── integrations/notion/    ← OAuth start + callback
 ├── components/
 └── lib/
@@ -160,7 +168,7 @@ actnote-web/                ← 프론트엔드 (Next.js 14, 동일 레포)
 2. `localStorage`에 인증 토큰 저장
 3. 마이그레이션 파일 직접 수정 — 새 변경은 새 번호 파일로
 4. 실제 회의 transcript를 디자인 mockup에 그대로 사용 (개인정보)
-5. 새 Inngest 이벤트/RPC 추가 시 `docs/events.md` / `docs/rpc.md` 갱신 누락
+5. Modal 트리거(웹 엔드포인트 페이로드)·RPC 추가/변경 시 `docs/events.md` / `docs/rpc.md` 갱신 누락
 6. **사용자에게 노출되는 에러/안내 문구는 백엔드가 임의 확정 금지**
   - 워커·API가 반환하는 `error_message`는 분류 코드(`[code:...]`)와 디버그 원문 위주
   - 사용자 화면 카피는 기획팀 합의 문구만 프론트에 노출. 매핑 표가 갱신되면 `docs/frontend-handoff.md`도 함께 갱신
@@ -187,7 +195,7 @@ actnote-web/                ← 프론트엔드 (Next.js 14, 동일 레포)
 | 전체 기능 ID 스펙               | `docs/features.md`                   |
 | **권한 관련 작업**              | `**docs/permissions.md` 먼저 읽기**      |
 | **에러 처리 관련 작업**           | `**docs/error-policy.md` 먼저 읽기**     |
-| Inngest 이벤트 스펙            | `docs/events.md`                     |
+| Modal 트리거 계약 (구 Inngest)  | `docs/events.md`                     |
 | Supabase RPC (발행/초대/역할)   | `docs/rpc.md`                        |
 | Notion OAuth 연동           | `docs/notion-oauth.md`               |
 | 회의유형별 prompt 추가           | `prompts/templates/README.md`        |
@@ -201,39 +209,37 @@ actnote-web/                ← 프론트엔드 (Next.js 14, 동일 레포)
 
 ## 환경 셋업
 
-### 백엔드 (Python)
+### 백엔드 (Python — Modal 서버리스, 로컬 워커 없음)
 
 ```bash
-# 의존성 설치 (uv 사용)
-uv sync
+uv sync                       # 의존성 설치
+cp .env.example .env          # .env 편집 (MODAL_TRIGGER_SECRET 등 필수 항목)
 
-# 환경변수 설정
-cp .env.example .env
-# .env 편집 (필수 항목 채우기)
-
-# 워커 실행
-uv run python scripts/serve_worker.py
-
-# Inngest Dev UI (로컬 테스트)
-npx inngest-cli@latest dev
+# 파이프라인 로컬 단독 테스트 (Modal 없이)
+uv run python scripts/run_pipeline.py <audio_path>
 ```
 
-### 화자분리 Modal GPU (배포 완료 — 2026-05-18)
+> Inngest 제거됨. `serve_worker.py`/로컬 워커 없음. 운영 파이프라인은 **Modal 배포**로만 동작.
 
-CPU 화자분리 30분+ → Inngest 타임아웃 초과(500). GPU 오프로딩으로 해결.
-배포 앱: `actnote-diarization` (https://modal.com/apps/ttojo6/main/deployed/actnote-diarization)
+### Modal 배포 (2종 앱 — 동욱 직접)
 
 ```bash
-# 1) Modal 대시보드에서 Secret "actnote-secrets" 생성 → HUGGINGFACE_TOKEN 등록
-#    (pyannote/speaker-diarization-3.1 + segmentation-3.0 라이선스 동의 선행)
-# 2) Modal 함수 배포 (코드 변경 시 재배포)
-modal deploy src/modal_diarization.py
-# 3) 워커 .env 에 USE_MODAL_DIARIZATION=true
-# 4) 워커 환경에 Modal 인증 (modal token set 또는 MODAL_TOKEN_ID/MODAL_TOKEN_SECRET)
+# 0) Modal 대시보드 Secret "actnote-secrets" 에 전체 백엔드 env 등록:
+#    OPENAI_API_KEY ANTHROPIC_API_KEY HUGGINGFACE_TOKEN
+#    SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_STORAGE_BUCKET
+#    ACTNOTE_ENCRYPTION_KEY RESEND_API_KEY EMAIL_FROM NEXT_PUBLIC_APP_URL
+#    NOTION_CLIENT_ID NOTION_CLIENT_SECRET
+#    USE_MODAL_DIARIZATION=true MODAL_DIARIZATION_URL_TTL MODAL_TRIGGER_SECRET
+#    (pyannote-3.1 + segmentation-3.0 라이선스 동의 선행)
+modal deploy src/modal_diarization.py    # GPU 화자분리 (선행)
+modal deploy src/modal_app.py            # 파이프라인 + 웹 엔드포인트 + cron
+# 출력된 trigger_pipeline / trigger_publish URL 2개를 프론트 env 에 설정:
+#   MODAL_PIPELINE_TRIGGER_URL, MODAL_PUBLISH_TRIGGER_URL, MODAL_TRIGGER_SECRET
 ```
 
-- 워커가 Supabase signed URL 을 만들어 Modal 에 전달 (service_role 키 Modal 미전달).
-- Modal 실패 시 로컬 CPU 폴백 **안 함** (타임아웃 재발 방지) → `MODEL_API_FAILED` 로 분류.
+- CPU 함수가 화자분리만 GPU 앱(`actnote-diarization`)으로 cross-app 호출 (비용 절감 — 함수 분리).
+- 워커가 Supabase signed URL 을 만들어 Modal GPU 에 전달 (service_role 키 Modal 미전달).
+- Modal 화자분리 실패 시 로컬 CPU 폴백 **안 함** → `MODEL_API_FAILED` 분류.
 
 ### 프론트엔드 (Next.js)
 
@@ -257,7 +263,8 @@ npm run dev   # http://localhost:3000
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `HUGGINGFACE_TOKEN`
 - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
 - `ACTNOTE_ENCRYPTION_KEY` (Fernet, `integrations.access_token_encrypted` 용)
-- `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY` (운영)
+- `MODAL_TRIGGER_SECRET` (프론트 ↔ Modal 웹 엔드포인트 공유 시크릿; Modal Secret 과 동일 값)
+- 위 전부 Modal Secret `actnote-secrets` 에도 등록 (Modal 함수 런타임 env)
 
 **선택:**
 
@@ -279,8 +286,9 @@ npm run dev   # http://localhost:3000
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅   | anon 키                                     |
 | `NEXT_PUBLIC_APP_URL`           | ✅   | OAuth 콜백 / 메일 푸터                           |
 | `NEXT_PUBLIC_SUPPORT_EMAIL`     | ✅   | 에러 팝업 문의 이메일 (`actnote.support@gmail.com`) |
-| `INNGEST_EVENT_KEY`             | ⛔   | Route Handler 전용                           |
-| `INNGEST_SIGNING_KEY`           | ⛔   | 서명 검증                                      |
+| `MODAL_PIPELINE_TRIGGER_URL`    | ⛔   | `modal deploy` 출력 trigger_pipeline URL     |
+| `MODAL_PUBLISH_TRIGGER_URL`     | ⛔   | `modal deploy` 출력 trigger_publish URL      |
+| `MODAL_TRIGGER_SECRET`          | ⛔   | Modal 엔드포인트 X-Actnote-Secret (Modal Secret 과 동일) |
 | `NOTION_CLIENT_ID`              | ⛔   | Notion OAuth                               |
 | `NOTION_CLIENT_SECRET`          | ⛔   | Notion OAuth                               |
 
@@ -290,17 +298,15 @@ npm run dev   # http://localhost:3000
 ## 자주 쓰는 명령어
 
 ```bash
-# 백엔드 워커 실행
-uv run python scripts/serve_worker.py
-
-# 파이프라인 로컬 테스트
+# 파이프라인 로컬 테스트 (Modal 없이 단독)
 uv run python scripts/run_pipeline.py <audio_path>
 
 # 벤치마크
 uv run python scripts/benchmark.py
 
-# Modal 화자분리 함수 배포 (src/modal_diarization.py 변경 시)
+# Modal 배포 (코드 변경 시 재배포) — 화자분리 GPU 선행, 파이프라인 후행
 modal deploy src/modal_diarization.py
+modal deploy src/modal_app.py
 
 # 프론트 개발 서버
 cd actnote-web && npm run dev
@@ -336,14 +342,14 @@ cd actnote-web && npx tsc --noEmit
 | PUB-001           | RPC 4종 (`validate/set_ready/publish/revoke`)                                       | `015`  |
 | INTEG-001/003/005 | `notion_sync.py` + `meeting/publish` 이벤트                                           | —      |
 | INTEG-002 (OAuth) | `exchange_notion_code` + `docs/notion-oauth.md`                                    | —      |
-| NOTI-001          | `notify_action_assigned` + `email_notifier.py` + `send-email` 워커                   | —      |
+| NOTI-001          | `notify_action_assigned` + `email_notifier.py` (Resend 직접; Inngest 제거)            | —      |
 | SEC-006 (초대)      | RPC 3종 (`create_invite/accept_invite/revoke_invite`)                               | `016`  |
 | SEC-006 (역할)      | `set_member_role` RPC + `002` 트리거 정합성 보정                                           | `017`  |
 | WS-004 (강퇴)       | `remove_workspace_member` RPC                                                      | `018`  |
 | 재분석 멱등성           | `_cleanup_for_reanalysis()` in `pipeline.py`                                       | —      |
 | 워커 에러 상태          | `_run_pipeline_full` try/except + `analysis_failed` 알림                             | —      |
 | 워커 에러 분류          | `src/error_classifier.py` → `meetings.error_message` `[code:...]` prefix           | —      |
-| 고아 회의 정리          | `cleanup-orphan-meetings` Inngest cron (6h) + `src/workspace_cleanup.py`           | —      |
+| 고아 회의 정리          | Modal cron `cleanup_orphans_fn` (6h) + `src/workspace_cleanup.py`                  | —      |
 
 
 새 모듈 import 위치 (메인2 작업자용):
@@ -379,15 +385,16 @@ from src.notion_sync import exchange_notion_code, complete_notion_oauth
 
 - **Worker 에러 상태 처리** (해결 — 2026-05-10): `download-and-process` 단일 step으로 통합, try/except를 step 외부에 배치
 - **재분석 멱등성** (해결 — 2026-05-10, B-5-3): `_cleanup_for_reanalysis()` 자동 호출
-- **Inngest 화자분리 타임아웃** (해결 중 — 2026-05-18): CPU pyannote 30분+ → Inngest 함수 타임아웃 초과(500). `src/modal_diarization.py` Modal GPU 오프로딩 배포 완료(`actnote-diarization`), `USE_MODAL_DIARIZATION=true` 전환. pyannote 4.x 로 로컬/Modal 메이저 버전 정합
+- **Inngest 화자분리 타임아웃** (해결 — 2026-05-18): CPU pyannote 30분+ → 타임아웃(500). Modal GPU 오프로딩(`actnote-diarization`) + pyannote 4.x 정합.
+- **Inngest 완전 제거 → Modal 서버리스** (코드 완료 — 2026-05-18): `src/worker.py`/`serve_worker.py` 삭제, `src/jobs.py`+`src/modal_app.py` 신설. CPU/GPU 함수 분리(비용). 프론트 `/api/trigger-*` 가 인증 후 Modal 웹 엔드포인트 호출(공유 시크릿). **남은 작업: `modal deploy` 2종 + Modal Secret 등록 + 프론트 env URL 설정 (동욱).**
 
 ### 인프라 백로그
 
 - GPU 서버 도입 (5/22~5/24)
-- ~~Modal 전환 검토~~ → **화자분리 Modal GPU 배포 완료 (2026-05-18)** — `actnote-diarization`
-- **백엔드 워커 서버 배포 미완료** → 현재 로컬 실행 필요 (Railway 배포 예정)
-- Modal timeout(현재 600s) ↔ Inngest 함수 timeout 정합 측정 필요 (회의 길이별 T4 벤치마크 후 확정)
-- 비용 산정 + 모델 업그레이드 (5/25~5/27) — Modal GPU 시간 과금분 포함
+- ~~Modal 전환 검토~~ / ~~워커 Railway 배포~~ → **Inngest 제거·Modal 서버리스 전환 코드 완료 (2026-05-18)**. 배포만 남음.
+- **재시도 = 전체 재실행/재과금** (decision #3, 의도적): Modal `retries=3` 은 step memoization 이 없어 실패 재시도 시 STT·화자분리·LLM 을 처음부터 재과금. 멱등성은 `_cleanup_for_reanalysis()` 가 보장(중복 derived 없음)하나 비용은 중복. 체크포인트 최적화는 보류 — `src/jobs.py` docstring 참조.
+- Modal CPU 함수 timeout(현재 3600s) ↔ 웹 엔드포인트 150s + 동시성 상한(`max_containers`, 대시보드) 정합 측정 필요 (회의 길이별 벤치마크 후 확정).
+- 비용 산정 + 모델 업그레이드 (5/25~5/27) — Modal CPU+GPU 시간 과금분 포함.
 
 ---
 

@@ -298,7 +298,7 @@ export default function NewMeetingPage() {
         .update({ audio_file_url: urlData?.publicUrl ?? audioPath })
         .eq("id", meetingId);
 
-      // 4. Inngest 이벤트 발송 → 백엔드 파이프라인 트리거
+      // 4. Modal 파이프라인 트리거 (Next 라우트가 인증 후 Modal 엔드포인트 호출)
       const triggerRes = await fetch("/api/trigger-pipeline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -312,7 +312,7 @@ export default function NewMeetingPage() {
       if (!triggerRes.ok) {
         setAlertMsg(
           triggerBody.error ??
-            `Pipeline trigger failed (${triggerRes.status}). Check INNGEST_EVENT_KEY and Inngest app id.`
+            `Pipeline trigger failed (${triggerRes.status}). Check MODAL_PIPELINE_TRIGGER_URL and MODAL_TRIGGER_SECRET.`
         );
         setLoading(false);
         return;

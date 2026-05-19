@@ -36,10 +36,10 @@ export function ensureRepoRootEnvMerged(): void {
 
   if (
     process.env.NODE_ENV === "development" &&
-    envValueMissing("INNGEST_EVENT_KEY")
+    envValueMissing("MODAL_TRIGGER_SECRET")
   ) {
     console.warn(
-      "[repo-env] INNGEST_EVENT_KEY still unset after merge. cwd=%s candidates=%s",
+      "[repo-env] MODAL_TRIGGER_SECRET still unset after merge. cwd=%s candidates=%s",
       process.cwd(),
       JSON.stringify(candidates)
     );

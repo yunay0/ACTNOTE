@@ -2,8 +2,8 @@
 
 파이프라인 완료/실패 시 notifications 테이블에 row를 INSERT한다.
 B-3-2: 액션 할당 알림 (DRAFT-005 매칭된 사용자) 추가.
-메일은 ``notification/email_send`` Inngest 이벤트로 위임 (선택).
-Realtime 구독은 프론트엔드에서 처리.
+메일은 ``src.email_notifier.send_email`` 로 Resend 직접 발송 (Inngest 제거 — Modal 전환).
+상태 폴링은 프론트엔드에서 처리 (Realtime 미사용, 5초 폴링).
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Any
 
 _log = logging.getLogger(__name__)
 
@@ -126,66 +125,47 @@ def _dispatch_pipeline_email(
     rendered: dict[str, str],
     ref_kind: str,
     meeting_id: str | None,
-    workspace_id: str | None,
-    inngest_client: Any | None,
+    workspace_id: str | None = None,
 ) -> None:
-    """워커에서 분석 관련 메일: RESEND_API_KEY 있으면 즉시 발송, 없으면 Inngest fan-out."""
-    key = os.getenv("RESEND_API_KEY", "").strip()
-    if key:
-        try:
-            from src.email_notifier import send_email
+    """분석 관련 메일을 Resend(또는 SMTP)로 직접 발송한다.
 
-            send_email(
-                to,
-                rendered["subject"],
-                rendered["html"],
-                rendered["text"],
-            )
-            _log.info(
-                "pipeline email sent via Resend (kind=%s meeting_id=%s to=%s)",
+    Inngest 제거(Modal 전환) 후 전송 경로는 ``src.email_notifier.send_email`` 단일.
+    transport 미설정이면 send_email 이 dry-run 으로 no-op → 여기서는 raise 하지 않음
+    (인앱 알림은 이미 INSERT 됨).
+    """
+    try:
+        from src.email_notifier import send_email
+
+        result = send_email(
+            to,
+            rendered["subject"],
+            rendered["html"],
+            rendered["text"],
+        )
+        if result.get("dry_run"):
+            _log.warning(
+                "pipeline email dry-run — not delivered (kind=%s meeting_id=%s to=%s). "
+                "Set RESEND_API_KEY+EMAIL_FROM (or SMTP_*) on the Modal secret.",
                 ref_kind,
                 meeting_id,
                 to,
             )
-            return
-        except Exception as e:
-            _log.warning(
-                "pipeline email Resend failed (kind=%s): %s — trying Inngest",
+        else:
+            _log.info(
+                "pipeline email sent (kind=%s meeting_id=%s to=%s id=%s)",
                 ref_kind,
-                e,
+                meeting_id,
+                to,
+                result.get("id"),
             )
-    if inngest_client is None:
-        _log.warning(
-            "pipeline email skipped (kind=%s): no RESEND_API_KEY and no Inngest client",
-            ref_kind,
-        )
-        return
-    try:
-        inngest_client.send_sync(
-            _email_send_event(
-                to=to,
-                rendered=rendered,
-                ref_kind=ref_kind,
-                meeting_id=meeting_id,
-                workspace_id=workspace_id,
-            )
-        )
-        _log.info(
-            "pipeline email queued via Inngest (kind=%s meeting_id=%s to=%s)",
-            ref_kind,
-            meeting_id,
-            to,
-        )
     except Exception as e:
-        _log.warning("pipeline email Inngest failed (kind=%s): %s", ref_kind, e)
+        _log.warning("pipeline email send failed (kind=%s): %s", ref_kind, e)
 
 
 def notify_analysis_complete(
     meeting_id: str,
     workspace_id: str,
     sb_client,
-    *,
-    inngest_client: Any | None = None,
 ) -> int:
     """분석 완료 알림 생성.
 
@@ -293,7 +273,6 @@ def notify_analysis_complete(
                 ref_kind="analysis_complete",
                 meeting_id=meeting_id,
                 workspace_id=workspace_id,
-                inngest_client=inngest_client,
             )
 
     return len(rows)
@@ -303,8 +282,6 @@ def notify_action_assigned(
     meeting_id: str,
     workspace_id: str,
     sb_client,
-    *,
-    inngest_client: Any = None,
 ) -> int:
     """B-3-2: assignee_user_id 가 매핑된 액션에 대해 인앱 알림 INSERT + (선택) 메일 발송.
 
@@ -316,8 +293,9 @@ def notify_action_assigned(
         meeting_id: 대상 회의.
         workspace_id: 격리.
         sb_client: supabase-py Client (service_role).
-        inngest_client: 전달되면 ``notification/email_send`` 이벤트로 메일도 발송.
-            None 이면 인앱 알림만 INSERT.
+
+    메일은 Resend(email_notifier.send_email)로 직접 발송한다. transport 미설정 시
+    send_email 이 dry-run 으로 no-op (인앱 알림은 항상 INSERT).
 
     Returns:
         새로 INSERT 된 알림 row 개수 (이미 보낸 건 제외).
@@ -396,16 +374,14 @@ def notify_action_assigned(
         len(fresh), meeting_id,
     )
 
-    # 메일 발송 (옵션)
-    if inngest_client is not None:
-        _enqueue_action_assigned_emails(
-            actions=fresh,
-            meeting_id=meeting_id,
-            workspace_id=workspace_id,
-            meeting_title=meeting_title,
-            sb_client=sb_client,
-            inngest_client=inngest_client,
-        )
+    # 메일 발송 (Resend 직접; 미설정 시 dry-run no-op)
+    _enqueue_action_assigned_emails(
+        actions=fresh,
+        meeting_id=meeting_id,
+        workspace_id=workspace_id,
+        meeting_title=meeting_title,
+        sb_client=sb_client,
+    )
 
     return len(fresh)
 
@@ -417,9 +393,8 @@ def _enqueue_action_assigned_emails(
     workspace_id: str,
     meeting_title: str,
     sb_client,
-    inngest_client: Any,
 ) -> int:
-    """담당자 user_id → users.email 조회 → notification/email_send 이벤트 발송.
+    """담당자 user_id → users.email 조회 → Resend 직접 발송.
 
     실패 시에도 인앱 알림은 이미 INSERT 되어있으므로 raise 하지 않는다.
     """
@@ -462,7 +437,6 @@ def _enqueue_action_assigned_emails(
                 ref_kind="action_assigned",
                 meeting_id=meeting_id,
                 workspace_id=workspace_id,
-                inngest_client=inngest_client,
             )
             sent += 1
         except Exception as e:
@@ -476,36 +450,6 @@ def _enqueue_action_assigned_emails(
     return sent
 
 
-def _email_send_event(
-    *,
-    to: str,
-    rendered: dict,
-    ref_kind: str,
-    meeting_id: str | None = None,
-    workspace_id: str | None = None,
-    invite_id: str | None = None,
-):
-    """notification/email_send Inngest Event 페이로드 생성."""
-    import inngest
-    ref: dict[str, Any] = {"kind": ref_kind}
-    if meeting_id:
-        ref["meeting_id"] = meeting_id
-    if workspace_id:
-        ref["workspace_id"] = workspace_id
-    if invite_id:
-        ref["invite_id"] = invite_id
-    return inngest.Event(
-        name="notification/email_send",
-        data={
-            "to": to,
-            "subject": rendered["subject"],
-            "body_html": rendered["html"],
-            "body_text": rendered["text"],
-            "ref": ref,
-        },
-    )
-
-
 # ---------------------------------------------------------------------------
 # B-4-2: 워크스페이스 초대 메일
 # ---------------------------------------------------------------------------
@@ -514,10 +458,9 @@ def send_invite_email(
     invite: dict,
     sb_client,
     *,
-    inngest_client: Any,
     app_url: str | None = None,
 ) -> dict:
-    """``create_invite`` RPC 결과 row 를 받아 초대 메일 1통을 발송한다.
+    """``create_invite`` RPC 결과 row 를 받아 초대 메일 1통을 Resend 로 직접 발송한다.
 
     Args:
         invite: ``workspace_invites`` row dict. 최소 키:
@@ -527,17 +470,17 @@ def send_invite_email(
             - ``invited_by``: str (user_id)
             - ``token``: str
         sb_client: supabase-py Client (service_role 권장).
-        inngest_client: ``inngest.Inngest`` 인스턴스. 워커가 send-email step 으로 처리.
         app_url: 메일 링크 호스트. 미지정 시 ``NEXT_PUBLIC_APP_URL`` env.
 
     Returns:
         ``{"ok": bool, "to": str, "invite_link": str, "event_id": str | None}``
+        (``event_id`` 는 Resend 메시지 id. dry-run/실패 시 None.)
 
     Raises:
         ValueError: invite 필수 키 누락.
         RuntimeError: 초대자/워크스페이스 row 조회 실패.
     """
-    from src.email_notifier import render_invite_email
+    from src.email_notifier import render_invite_email, send_email
 
     for key in ("id", "workspace_id", "invited_email", "invited_by", "token"):
         if not invite.get(key):
@@ -579,19 +522,23 @@ def send_invite_email(
 
     event_id: str | None = None
     try:
-        ids = inngest_client.send_sync(_email_send_event(
-            to=invite["invited_email"],
-            rendered=rendered,
-            ref_kind="workspace_invite",
-            workspace_id=invite["workspace_id"],
-            invite_id=invite["id"],
-        ))
-        # send_sync 는 list[str] 반환
-        if isinstance(ids, list) and ids:
-            event_id = ids[0]
+        result = send_email(
+            invite["invited_email"],
+            rendered["subject"],
+            rendered["html"],
+            rendered["text"],
+        )
+        if result.get("dry_run"):
+            _log.warning(
+                "send_invite_email: dry-run — not delivered (invite_id=%s, to=%s). "
+                "Set RESEND_API_KEY+EMAIL_FROM (or SMTP_*).",
+                invite["id"], invite["invited_email"],
+            )
+        else:
+            event_id = result.get("id")
     except Exception as e:
         _log.warning(
-            "send_invite_email: 메일 이벤트 발송 실패 (invite_id=%s, to=%s): %s",
+            "send_invite_email: 메일 발송 실패 (invite_id=%s, to=%s): %s",
             invite["id"], invite["invited_email"], e,
         )
         return {
@@ -602,8 +549,8 @@ def send_invite_email(
         }
 
     _log.info(
-        "send_invite_email: 메일 이벤트 발송 (invite_id=%s, to=%s)",
-        invite["id"], invite["invited_email"],
+        "send_invite_email: 메일 발송 (invite_id=%s, to=%s id=%s)",
+        invite["id"], invite["invited_email"], event_id,
     )
     return {
         "ok": True,
@@ -618,8 +565,6 @@ def notify_analysis_failed(
     workspace_id: str,
     error_message: str,
     sb_client,
-    *,
-    inngest_client: Any = None,
 ) -> int:
     """분석 실패 알림 (인앱 + 선택 메일).
 
@@ -688,7 +633,6 @@ def notify_analysis_failed(
                 ref_kind="analysis_failed",
                 meeting_id=meeting_id,
                 workspace_id=workspace_id,
-                inngest_client=inngest_client,
             )
             _log.info(
                 "notify_analysis_failed: email dispatched for %s (meeting_id=%s)",
@@ -770,12 +714,12 @@ if __name__ == "__main__":
 
     # --- B-3-2: notify_action_assigned ---
     # 위 액션의 assignee_user_id == creator → SKIP 기대
-    count = notify_action_assigned(mid, workspace_id, sb, inngest_client=None)
+    count = notify_action_assigned(mid, workspace_id, sb)
     assert count == 0, f"creator=assignee 인 케이스는 SKIP 기대, 실제={count}"
     console.print(f"[green][OK][/] notify_action_assigned (creator=assignee) → {count}건 (SKIP)")
 
     # 별도 user 가 있는 시나리오는 멤버 추가가 필요해 단위 테스트만 — 멱등성 검증
-    count_again = notify_action_assigned(mid, workspace_id, sb, inngest_client=None)
+    count_again = notify_action_assigned(mid, workspace_id, sb)
     assert count_again == 0, "재호출도 동일하게 0건이어야 함 (멱등)"
     console.print(f"[green][OK][/] notify_action_assigned (재호출) → 0건 (멱등 보장)")
 

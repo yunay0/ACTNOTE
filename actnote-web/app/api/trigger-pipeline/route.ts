@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { Inngest } from "inngest";
 import { createClient } from "@/lib/supabase/server";
 import { ensureRepoRootEnvMerged } from "@/lib/server/repo-env";
 
 export const runtime = "nodejs";
 
-// 워커 src/worker.py 의 app_id="actnote" 와 동일해야 이벤트가 같은 앱의 함수로 라우팅됨.
+// Inngest 제거 → Modal 전환. 이 라우트가 인증 경계(supabase.auth)이고,
+// 공유 시크릿(X-Actnote-Secret)으로 Modal 웹 엔드포인트를 호출한다.
+// Modal 엔드포인트는 spawn 후 즉시 202 반환 (파이프라인은 백그라운드 실행).
 
 export async function POST(request: Request) {
   ensureRepoRootEnvMerged();
@@ -33,33 +34,44 @@ export async function POST(request: Request) {
     );
   }
 
-  const eventKey = process.env.INNGEST_EVENT_KEY?.trim();
-  if (!eventKey) {
+  const modalUrl = process.env.MODAL_PIPELINE_TRIGGER_URL?.trim();
+  const triggerSecret = process.env.MODAL_TRIGGER_SECRET?.trim();
+  if (!modalUrl || !triggerSecret) {
     return NextResponse.json(
       {
         error:
-          "INNGEST_EVENT_KEY is missing or empty. Set it in actnote-web/.env.local or the repo-root env file (no blank INNGEST_EVENT_KEY= line). Restart next dev.",
+          "MODAL_PIPELINE_TRIGGER_URL or MODAL_TRIGGER_SECRET is missing. Set them in actnote-web/.env.local or the repo-root env file (deploy src/modal_app.py and copy the endpoint URL). Restart next dev.",
       },
       { status: 503 }
     );
   }
 
-  const inngest = new Inngest({ id: "actnote", eventKey });
-
   try {
-    await inngest.send({
-      name: "meeting/process",
-      data: {
+    const res = await fetch(modalUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Actnote-Secret": triggerSecret,
+      },
+      body: JSON.stringify({
         meeting_id,
         user_id: user.id,
         workspace_id,
         audio_path,
-      },
+      }),
     });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      return NextResponse.json(
+        { error: `Modal trigger failed (${res.status}): ${detail.slice(0, 300)}` },
+        { status: 502 }
+      );
+    }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
-      { error: `Inngest send failed: ${message}` },
+      { error: `Modal trigger request failed: ${message}` },
       { status: 502 }
     );
   }

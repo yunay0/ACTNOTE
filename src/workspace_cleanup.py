@@ -3,7 +3,7 @@
 기획 정책: meetings.workspace_id IS NULL 행은 주기적으로 service_role 로 hard delete.
 FK CASCADE 로 transcripts 등 하위 행 제거.
 
-트리거: 워커에서 Inngest TriggerCron (기본 6시간). 비활성화:
+트리거: Modal cron ``cleanup_orphans_fn`` (modal.Cron, 기본 6시간). 비활성화:
 ``ACTNOTE_ORPHAN_MEETING_CLEANUP_DISABLED=true``
 """
 
