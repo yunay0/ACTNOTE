@@ -49,7 +49,10 @@ def _bake_model() -> None:
 
 
 image = (
-    modal.Image.debian_slim()
+    # Python 3.11 고정: 3.13 은 stdlib audioop 제거(PEP 594) → pydub import 실패
+    # (No module named 'pyaudioop'). 3.11 은 audioop 가 stdlib 라 shim 불필요.
+    # modal_app.py 와 동일 버전 + repo requires-python>=3.11 정합.
+    modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")  # pydub 디코딩(mp3/m4a/mp4/mov)에 필수
     .pip_install(
         "pyannote.audio>=4.0,<5",  # (c) 로컬과 메이저 버전 일치
