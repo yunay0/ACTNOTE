@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, CalendarDays, CheckCircle2, ListTodo, Sparkles,
@@ -28,6 +28,10 @@ interface MeetingRow {
   audio_file_url: string | null;
   workspace_id: string;
   error_message?: string | null;
+  meeting_type: string | null;
+  description: string | null;
+  participants: string[];
+  responsible_user_id: string | null;
 }
 
 interface ActionItem {
@@ -110,6 +114,52 @@ function decisionsFromMeetingJson(raw: unknown): { content: string }[] {
   return out;
 }
 
+/** `meetings.participants` JSONB — 문자열·JSON 문자열·배열 등 대응 */
+function normalizeParticipants(raw: unknown): string[] {
+  if (raw == null) return [];
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return [];
+    if (s.startsWith("[")) {
+      try {
+        const p = JSON.parse(s) as unknown;
+        if (Array.isArray(p)) {
+          return p
+            .filter((x): x is string => typeof x === "string" && x.trim())
+            .map((x) => x.trim());
+        }
+      } catch {
+        return [s];
+      }
+    }
+    return [s];
+  }
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const x of raw) {
+    if (typeof x === "string" && x.trim()) out.push(x.trim());
+  }
+  return out;
+}
+
+/** Align with new-meeting form + backend template aliases */
+const MEETING_TYPE_LABELS: Record<string, string> = {
+  default: "General",
+  other: "Other",
+  one_on_one: "1:1 Meeting",
+  "1on1": "1:1 Meeting",
+  standup: "Team Standup",
+  sprint: "Sprint",
+  project_review: "Project Review",
+  brainstorming: "Brainstorming",
+  client: "Client Meeting",
+  board: "Board Meeting",
+  all_hands: "All Hands",
+  workshop: "Workshop",
+  planning: "Planning",
+  retro: "Retro",
+};
+
 export default function MeetingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -144,13 +194,31 @@ export default function MeetingDetailPage() {
   const [notionConnected, setNotionConnected] = useState<boolean | null>(null);
   const [retryAnalysisLoading, setRetryAnalysisLoading] = useState(false);
 
+  const loadMembers = useCallback(async (wsId: string) => {
+    const supabase = createClient();
+    const { data } = await (supabase as any)
+      .from("workspace_members")
+      .select("user_id, users(name, email)")
+      .eq("workspace_id", wsId);
+
+    if (data) {
+      setMembers(
+        (data as any[]).map((row) => ({
+          user_id: row.user_id,
+          name: row.users?.name ?? null,
+          email: typeof row.users?.email === "string" ? row.users.email : "",
+        }))
+      );
+    }
+  }, []);
+
   const fetchMeeting = useCallback(async () => {
     const supabase = createClient();
     const [mRes, dRes] = await Promise.all([
       (supabase as any)
         .from("meetings")
         .select(
-          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id, error_message"
+          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id, error_message, description, meeting_type, participants, responsible_user_id"
         )
         .eq("id", id)
         .is("deleted_at", null)
@@ -183,6 +251,13 @@ export default function MeetingDetailPage() {
       ...(m as MeetingRow),
       decisions: mergedDecisions.length ? mergedDecisions : null,
       referenced_documents: normalizeReferencedDocuments(row.referenced_documents),
+      participants: normalizeParticipants(row.participants),
+      meeting_type: typeof row.meeting_type === "string" ? row.meeting_type : null,
+      description: typeof row.description === "string" ? row.description : null,
+      responsible_user_id:
+        row.responsible_user_id != null && row.responsible_user_id !== ""
+          ? String(row.responsible_user_id)
+          : null,
     });
 
     const { data: items } = await (supabase as any)
@@ -212,6 +287,11 @@ export default function MeetingDetailPage() {
     return () => clearInterval(interval);
   }, [meeting, fetchMeeting]);
 
+  useEffect(() => {
+    if (!meeting?.workspace_id || !meeting.responsible_user_id) return;
+    void loadMembers(meeting.workspace_id);
+  }, [meeting?.workspace_id, meeting?.responsible_user_id, loadMembers]);
+
   async function handleRetryAnalysis() {
     if (!meeting) return;
     setRetryAnalysisLoading(true);
@@ -226,25 +306,6 @@ export default function MeetingDetailPage() {
       return;
     }
     await fetchMeeting();
-  }
-
-  // 워크스페이스 멤버 로드 (DRAFT-005)
-  async function loadMembers(wsId: string) {
-    const supabase = createClient();
-    const { data } = await (supabase as any)
-      .from("workspace_members")
-      .select("user_id, users(name, email)")
-      .eq("workspace_id", wsId);
-
-    if (data) {
-      setMembers(
-        (data as any[]).map((row) => ({
-          user_id: row.user_id,
-          name: row.users?.name ?? null,
-          email: row.users?.email ?? "",
-        }))
-      );
-    }
   }
 
   function enterEditMode() {
@@ -456,6 +517,13 @@ export default function MeetingDetailPage() {
     router.push("/meetings");
   }
 
+  const responsibleDisplayLabel = useMemo(() => {
+    if (!meeting?.responsible_user_id) return null;
+    const mem = members.find((x) => x.user_id === meeting.responsible_user_id);
+    if (!mem) return null;
+    return mem.name ? `${mem.name} (${mem.email})` : mem.email;
+  }, [meeting?.responsible_user_id, members]);
+
   // ─── 로딩 / 에러 ────────────────────────────────────────────
   if (loading) {
     return (
@@ -655,12 +723,100 @@ export default function MeetingDetailPage() {
               <CalendarDays className="h-4 w-4" />{dateStr}
             </div>
             {!isReady && (
-              <ProcessingProgress
-                status={meeting.status}
-                errorMessage={meeting.status === "error" ? meeting.error_message : null}
-                onRetry={meeting.status === "error" ? handleRetryAnalysis : undefined}
-                retryLoading={retryAnalysisLoading}
-              />
+              <>
+                <div className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-5">
+                  <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-[#64748b]">
+                    Meeting information
+                  </p>
+                  <dl className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
+                        Meeting title
+                      </dt>
+                      <dd className="mt-0.5 text-sm font-medium text-[#0a2540]">
+                        {meeting.title?.trim() || "—"}
+                      </dd>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
+                        Meeting type
+                      </dt>
+                      <dd className="mt-0.5 text-sm font-medium text-[#0a2540]">
+                        {meeting.meeting_type
+                          ? MEETING_TYPE_LABELS[meeting.meeting_type] ?? meeting.meeting_type
+                          : "—"}
+                      </dd>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
+                        Date & time
+                      </dt>
+                      <dd className="mt-0.5 text-sm font-medium text-[#0a2540]">
+                        {meeting.meeting_date || meeting.created_at
+                          ? new Date(meeting.meeting_date ?? meeting.created_at).toLocaleString(
+                              "en-US",
+                              { dateStyle: "medium", timeStyle: "short" }
+                            )
+                          : "—"}
+                      </dd>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
+                        Participants
+                      </dt>
+                      <dd className="mt-2">
+                        {meeting.participants.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {meeting.participants.map((p, i) => (
+                              <span
+                                key={`${p}-${i}`}
+                                className="rounded-full border border-[#e2e8f0] bg-white px-3 py-1 text-xs font-medium text-[#0a2540]"
+                              >
+                                {p}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-sm font-medium text-[#94a3b8]">—</span>
+                        )}
+                      </dd>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
+                        Description{" "}
+                        <span className="font-normal normal-case text-[#cbd5e1]">(optional)</span>
+                      </dt>
+                      <dd className="mt-0.5 whitespace-pre-wrap text-sm leading-relaxed text-[#0a2540]">
+                        {meeting.description?.trim() ? (
+                          meeting.description
+                        ) : (
+                          <span className="font-medium text-[#94a3b8]">—</span>
+                        )}
+                      </dd>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
+                        Responsible person
+                      </dt>
+                      <dd className="mt-0.5 text-sm font-medium text-[#0a2540]">
+                        {meeting.responsible_user_id ? (
+                          responsibleDisplayLabel ?? (
+                            <span className="font-normal italic text-[#94a3b8]">Loading…</span>
+                          )
+                        ) : (
+                          "—"
+                        )}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
+                <ProcessingProgress
+                  status={meeting.status}
+                  errorMessage={meeting.status === "error" ? meeting.error_message : null}
+                  onRetry={meeting.status === "error" ? handleRetryAnalysis : undefined}
+                  retryLoading={retryAnalysisLoading}
+                />
+              </>
             )}
             {publishDone && (
               <div className="flex items-center gap-2 rounded-lg bg-green-50 border border-green-200 px-4 py-2.5">
