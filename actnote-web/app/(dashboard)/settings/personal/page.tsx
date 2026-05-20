@@ -564,7 +564,7 @@ export default function PersonalSettingsPage() {
                           "Your profile and personal information",
                           "Access to all workspaces you're a member of",
                           "All meetings you created",
-                          "Your Google account connection",
+                          "Linked integrations (e.g. Notion) and saved tokens",
                         ]
                       : [
                           "Your ACTNOTE profile and saved preferences.",
@@ -699,7 +699,7 @@ export default function PersonalSettingsPage() {
                 className="h-11 cursor-default rounded-lg border-2 border-[#e2e8f0] bg-[#f8fafc] px-4 text-[13px] text-[#94a3b8] outline-none"
               />
               <p className="px-0.5 text-[12px] leading-snug text-[#64748b]">
-                Your email is managed through Google and cannot be changed here
+                Email is tied to your account and cannot be changed here yet. Contact support if you need to update it.
               </p>
             </div>
 

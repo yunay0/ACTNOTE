@@ -8,9 +8,7 @@ import { AuthMarketingPanel } from "@/components/auth/AuthMarketingPanel";
 import { englishFieldInvalidMessage, clearNativeValidity } from "@/lib/auth-native-validation";
 import { SUPPORT_EMAIL } from "@/lib/legal-links";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
-import { startGoogleSignIn } from "@/lib/auth/start-google-sign-in";
 import { AuthLegalFooter } from "@/components/auth/AuthLegalFooter";
-import { GoogleMark } from "@/components/auth/GoogleMark";
 
 const PLACEHOLDER_EMAIL = "lucy@actnote.com";
 const PLACEHOLDER_PASSWORD = "Enter your password";
@@ -70,7 +68,6 @@ function LoginForm() {
   const [staySignedIn, setStaySignedIn] = useState(true);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   let queryBanner: { kind: "success" | "error"; text: string } | null = null;
@@ -120,7 +117,7 @@ function LoginForm() {
         <div className="relative z-[1] flex flex-1 items-center justify-center p-10">
           <div className="w-full max-w-[480px] rounded-2xl bg-white p-[60px] shadow-[0px_4px_6px_rgba(0,0,0,0.1)]">
             <h2 className="text-[28px] font-bold text-[#0f172a]">Welcome back</h2>
-            <p className="mt-2 text-sm text-[#475569]">Sign in to your ACTNOTE account</p>
+            <p className="mt-2 text-sm text-[#475569]">Sign in with your email and password (any email, including Gmail).</p>
 
             {queryBanner && (
               <p
@@ -135,35 +132,6 @@ function LoginForm() {
             )}
 
             <form onSubmit={handleSubmit} className={`flex flex-col gap-4 ${queryBanner ? "mt-4" : "mt-6"}`}>
-              <button
-                type="button"
-                disabled={googleLoading || loading}
-                onClick={() => {
-                  setError(null);
-                  setGoogleLoading(true);
-                  void startGoogleSignIn(returnTo)
-                    .catch((e) => {
-                      setError(e instanceof Error ? e.message : "Google sign-in could not start.");
-                    })
-                    .finally(() => setGoogleLoading(false));
-                }}
-                className="flex w-full items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white py-[14px] text-[15px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc] disabled:opacity-60"
-              >
-                {googleLoading ? (
-                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#0f172a] border-t-transparent" />
-                ) : (
-                  <>
-                    <GoogleMark />
-                    Continue with Google
-                  </>
-                )}
-              </button>
-
-              <div className="flex items-center gap-4">
-                <div className="h-px flex-1 bg-[#e2e8f0]" />
-                <span className="shrink-0 text-[13px] text-[#94a3b8]">or sign in with email</span>
-                <div className="h-px flex-1 bg-[#e2e8f0]" />
-              </div>
               <div className="flex flex-col gap-2">
                 <label htmlFor="login-email" className="text-sm font-bold text-[#0f172a]">
                   Email Address
@@ -236,7 +204,7 @@ function LoginForm() {
 
               <button
                 type="submit"
-                disabled={loading || googleLoading}
+                disabled={loading}
                 className="w-full rounded-[10px] bg-[#ff6b35] py-[15px] text-base font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
               >
                 {loading ? (
