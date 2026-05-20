@@ -60,10 +60,48 @@ interface AccountDeleteContext {
   };
 }
 
+type TransferEligibleMember = {
+  userId: string;
+  role: "owner" | "admin" | "member";
+  displayName: string;
+  email: string;
+  initials: string;
+};
+
+type TransferOwnerModalContext = AccountDeleteContext & {
+  eligibleMembers: TransferEligibleMember[];
+};
+
+const TRANSFER_ROLE_BADGE: Record<
+  TransferEligibleMember["role"],
+  { label: string; bg: string; text: string }
+> = {
+  owner: { label: "Owner", bg: "bg-[#fff4f0]", text: "text-[#ff6b35]" },
+  admin: { label: "Admin", bg: "bg-[#f0fdf4]", text: "text-[#15803d]" },
+  member: { label: "Member", bg: "bg-[#eff6ff]", text: "text-[#2e5c8a]" },
+};
+
+function parseTransferMember(raw: unknown): TransferEligibleMember | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const userId = typeof o.userId === "string" ? o.userId : "";
+  if (!userId) return null;
+  const roleRaw = typeof o.role === "string" ? o.role : "member";
+  const role: TransferEligibleMember["role"] =
+    roleRaw === "owner" || roleRaw === "admin" || roleRaw === "member" ? roleRaw : "member";
+  return {
+    userId,
+    role,
+    displayName: typeof o.displayName === "string" ? o.displayName : "Member",
+    email: typeof o.email === "string" ? o.email : "",
+    initials: typeof o.initials === "string" ? o.initials : "?",
+  };
+}
+
 type DeleteModalState =
   | { open: false }
   | { open: true; phase: "loading" }
-  | { open: true; phase: "transfer" }
+  | { open: true; phase: "transfer"; ctx: TransferOwnerModalContext }
   /** You are the only workspace member / DB owner — explain before the destructive confirm (v0.3). */
   | { open: true; phase: "sole_owner_gate"; ctx: AccountDeleteContext }
   | {
@@ -75,7 +113,7 @@ type DeleteModalState =
 
 export default function PersonalSettingsPage() {
   const router = useRouter();
-  const { workspaceId, memberships, hydrated } = useWorkspaceContext();
+  const { workspaceId, memberships, hydrated, refreshWorkspaces } = useWorkspaceContext();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -217,6 +255,8 @@ export default function PersonalSettingsPage() {
     setDeleteError(null);
     setDeleteConfirmInput("");
     setDeleteBusy(false);
+    setTransferSelectedUserId(null);
+    setTransferBusy(false);
   }
 
   async function openDeleteAccountFlow() {
@@ -246,6 +286,7 @@ export default function PersonalSettingsPage() {
       const data = (await res.json()) as AccountDeleteContext & {
         flow?: string;
         error?: string;
+        eligibleMembers?: unknown[];
       };
       if (!res.ok) {
         setDeleteError(data.error ?? "Could not load account deletion options.");
@@ -268,7 +309,17 @@ export default function PersonalSettingsPage() {
         profile: data.profile,
       };
       if (flow === "transfer_required") {
-        setDeleteModal({ open: true, phase: "transfer" });
+        const parsed =
+          Array.isArray(data.eligibleMembers) ?
+            data.eligibleMembers.map(parseTransferMember).filter(Boolean)
+          : [];
+        const eligibleMembers = parsed as TransferEligibleMember[];
+        setTransferSelectedUserId(null);
+        setDeleteModal({
+          open: true,
+          phase: "transfer",
+          ctx: { ...ctx, eligibleMembers },
+        });
       } else if (flow === "delete_workspace_and_account") {
         setDeleteModal({ open: true, phase: "sole_owner_gate", ctx });
       } else {
@@ -315,9 +366,70 @@ export default function PersonalSettingsPage() {
     }
   }
 
-  function goToWorkspaceSettingsForTransfer() {
-    closeDeleteModal();
-    router.push("/settings/workspace");
+  async function handleTransferOwnerContinue(ctx: TransferOwnerModalContext) {
+    if (!transferSelectedUserId || transferBusy) return;
+    setTransferBusy(true);
+    setDeleteError(null);
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setDeleteError("You must be signed in to transfer ownership.");
+      setTransferBusy(false);
+      return;
+    }
+    const wid = ctx.workspace.id;
+    const targetId = transferSelectedUserId;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: promoteErr } = await (supabase as any).rpc("set_member_role", {
+      p_workspace_id: wid,
+      p_target_user_id: targetId,
+      p_new_role: "owner",
+    });
+    if (promoteErr) {
+      const msg =
+        promoteErr.message === "last_owner_cannot_be_demoted"
+          ? "Cannot complete transfer with the current workspace state."
+          : promoteErr.code === "42501"
+            ? "Only the workspace owner can transfer ownership."
+            : promoteErr.message || "Could not transfer ownership.";
+      setDeleteError(msg);
+      setTransferBusy(false);
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: demoteErr } = await (supabase as any).rpc("set_member_role", {
+      p_workspace_id: wid,
+      p_target_user_id: user.id,
+      p_new_role: "member",
+    });
+    if (demoteErr) {
+      const msg =
+        demoteErr.message === "last_owner_cannot_be_demoted"
+          ? "Ownership was assigned, but we could not update your role. Open Workspace settings or contact support."
+          : demoteErr.code === "42501"
+            ? "Could not finalize the transfer. Open Workspace settings."
+            : demoteErr.message || "Could not finalize ownership transfer.";
+      setDeleteError(msg);
+      setTransferBusy(false);
+      return;
+    }
+
+    await refreshWorkspaces();
+    setTransferBusy(false);
+    setTransferSelectedUserId(null);
+    setDeleteModal({
+      open: true,
+      phase: "destructive",
+      variant: "account_only",
+      ctx: {
+        workspace: ctx.workspace,
+        profile: ctx.profile,
+      },
+    });
   }
 
   const deleteConfirmValid = deleteConfirmInput.trim() === "DELETE";
@@ -411,65 +523,174 @@ export default function PersonalSettingsPage() {
           )}
 
           {deleteModal.phase === "transfer" && (
-            <div className="w-full max-w-lg rounded-[16px] bg-white p-8 shadow-xl">
-              <div className="mb-6 flex gap-4">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-50">
-                  <span className="text-xl leading-none text-amber-600" aria-hidden>
-                    ⚠️
-                  </span>
-                </div>
-                <div className="min-w-0 space-y-1">
-                  <h3 className="text-[17px] font-bold text-[#0a2540]">Owner transfer required</h3>
-                  <p className="text-[13px] leading-relaxed text-[#64748b]">
-                    You are the owner of this workspace and other members still have access. Transfer
-                    ownership before you can delete your account without leaving the workspace orphaned.
-                  </p>
-                </div>
+            <div
+              className="flex max-h-[90vh] w-full max-w-[520px] flex-col overflow-hidden rounded-[16px] bg-white shadow-xl"
+              role="dialog"
+              aria-labelledby="transfer-owner-title"
+              aria-describedby="transfer-owner-desc"
+            >
+              <div className="shrink-0 border-b border-[#e2e8f0] px-6 pb-4 pt-6 sm:px-8 sm:pb-5 sm:pt-8">
+                <h3
+                  id="transfer-owner-title"
+                  className="text-xl font-bold leading-tight text-[#0f172a] sm:text-[22px]"
+                >
+                  Transfer Owner Role
+                </h3>
+                <p id="transfer-owner-desc" className="mt-2 text-[14px] leading-relaxed text-[#64748b]">
+                  Select a workspace member to become the new owner. You need to transfer ownership before you can
+                  delete your account.
+                </p>
               </div>
 
-              <ol className="mb-8 space-y-4 text-[13px] leading-relaxed text-[#0a2540]">
-                <li className="flex gap-3">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#f1f5f9] text-[12px] font-bold text-[#475569]">
-                    1
-                  </span>
-                  <span>Open Workspace settings and open the Members section.</span>
-                </li>
-                <li className="flex gap-3">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#f1f5f9] text-[12px] font-bold text-[#475569]">
-                    2
-                  </span>
-                  <span>Assign another member as workspace owner. Then return here to delete your account.</span>
-                </li>
-              </ol>
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-5 sm:px-8">
+                <p className="mb-3 text-[13px] font-bold text-[#0f172a]">Select New Owner</p>
 
-              {deleteError && (
-                <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
-                  {deleteError}
+                {deleteModal.ctx.eligibleMembers.length === 0 ? (
+                  <p className="text-[13px] leading-relaxed text-[#64748b]">
+                    No other members were found in this workspace.{" "}
+                    <button
+                      type="button"
+                      className="font-bold text-[#2e5c8a] underline underline-offset-2 hover:text-[#ff6b35]"
+                      onClick={() => {
+                        closeDeleteModal();
+                        router.push("/settings/workspace");
+                      }}
+                    >
+                      Open Workspace settings
+                    </button>{" "}
+                    to invite someone, then try again.
+                  </p>
+                ) : (
+                  <fieldset className="space-y-2 border-0 p-0">
+                    <legend className="sr-only">Choose the new workspace owner</legend>
+                    {deleteModal.ctx.eligibleMembers.map((m) => {
+                      const badge = TRANSFER_ROLE_BADGE[m.role];
+                      const selected = transferSelectedUserId === m.userId;
+                      return (
+                        <label
+                          key={m.userId}
+                          className={cn(
+                            "flex cursor-pointer items-center gap-3 rounded-xl border-2 px-3 py-3 transition-colors sm:gap-4 sm:px-4",
+                            selected ? "border-[#ff6b35] bg-[#fff4f0]/40" : "border-[#e2e8f0] hover:bg-[#f8fafc]",
+                          )}
+                        >
+                          <input
+                            type="radio"
+                            name="transfer-new-owner"
+                            className="sr-only"
+                            checked={selected}
+                            onChange={() => setTransferSelectedUserId(m.userId)}
+                          />
+                          <span
+                            className={cn(
+                              "flex size-10 shrink-0 items-center justify-center rounded-full text-[13px] font-bold text-white sm:size-11 sm:text-[14px]",
+                              selected ? "bg-[#ff6b35]" : "bg-[#2e5c8a]",
+                            )}
+                            aria-hidden
+                          >
+                            {m.initials}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center gap-2">
+                              <span className="text-[14px] font-bold text-[#0f172a]">{m.displayName}</span>
+                              <span
+                                className={cn(
+                                  "rounded-md px-2 py-0.5 text-[11px] font-bold",
+                                  badge.bg,
+                                  badge.text,
+                                )}
+                              >
+                                {badge.label}
+                              </span>
+                            </span>
+                            <span className="block break-all text-[12px] text-[#64748b]">{m.email || "—"}</span>
+                          </span>
+                          <span
+                            className={cn(
+                              "flex size-5 shrink-0 items-center justify-center rounded-full border-2",
+                              selected ? "border-[#ff6b35] bg-[#ff6b35]" : "border-[#cbd5e1] bg-white",
+                            )}
+                            aria-hidden
+                          >
+                            {selected ? <span className="size-2 rounded-full bg-white" /> : null}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </fieldset>
+                )}
+
+                <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3">
+                  <p className="text-[13px] font-bold text-amber-900">What happens next</p>
+                  <ul className="mt-2 list-none space-y-1.5 pl-0 text-[12px] leading-relaxed text-amber-950/90">
+                    <li className="relative pl-4 before:absolute before:left-0 before:font-bold before:text-amber-700 before:content-['•']">
+                      The selected member becomes the workspace owner.
+                    </li>
+                    <li className="relative pl-4 before:absolute before:left-0 before:font-bold before:text-amber-700 before:content-['•']">
+                      Your role changes to member; you can still use the workspace until you delete your account.
+                    </li>
+                    <li className="relative pl-4 before:absolute before:left-0 before:font-bold before:text-amber-700 before:content-['•']">
+                      After this step, you can continue with account deletion.
+                    </li>
+                  </ul>
                 </div>
-              )}
 
-              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                {deleteError && (
+                  <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
+                    {deleteError}
+                  </div>
+                )}
+
+                <p className="mt-4 text-center text-[12px] text-[#64748b]">
+                  Prefer to do this in Workspace settings?{" "}
+                  <button
+                    type="button"
+                    className="font-bold text-[#2e5c8a] underline underline-offset-2 hover:text-[#ff6b35]"
+                    onClick={() => {
+                      closeDeleteModal();
+                      router.push("/settings/workspace");
+                    }}
+                  >
+                    Open members page
+                  </button>
+                </p>
+              </div>
+
+              <div className="flex shrink-0 flex-col-reverse gap-3 border-t border-[#e2e8f0] bg-white px-6 py-5 sm:flex-row sm:justify-end sm:px-8">
                 <button
                   type="button"
+                  disabled={transferBusy}
                   onClick={closeDeleteModal}
-                  className="h-11 rounded-xl border-2 border-[#e2e8f0] px-5 text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc]"
+                  className="h-11 rounded-xl border-2 border-[#e2e8f0] px-5 text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc] disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={goToWorkspaceSettingsForTransfer}
-                  className="h-11 rounded-xl bg-[#ff6b35] px-5 text-[14px] font-bold text-white shadow-sm hover:opacity-95"
+                  disabled={
+                    transferBusy ||
+                    deleteModal.ctx.eligibleMembers.length === 0 ||
+                    !transferSelectedUserId
+                  }
+                  onClick={() => void handleTransferOwnerContinue(deleteModal.ctx)}
+                  className="h-11 rounded-xl bg-[#ff6b35] px-5 text-[14px] font-bold text-white shadow-sm hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Transfer owner role
+                  {transferBusy ? "Transferring…" : "Transfer & Continue"}
                 </button>
               </div>
             </div>
           )}
 
           {deleteModal.phase === "destructive" && (
-            <div className="flex max-h-[90vh] min-h-0 w-full max-w-xl flex-col overflow-hidden rounded-[16px] bg-white shadow-[0px_24px_24px_rgba(0,0,0,0.2)] sm:min-w-[36rem]">
-              {/* Header — Figma 109:11219 */}
+            <div
+              className={cn(
+                "flex max-h-[90vh] min-h-0 w-full flex-col overflow-hidden rounded-[16px] bg-white shadow-[0px_24px_24px_rgba(0,0,0,0.2)]",
+                deleteModal.variant === "account_only" ?
+                  "max-w-[520px]"
+                : "max-w-xl sm:min-w-[36rem]",
+              )}
+            >
+              {/* Header — full: Figma 109:11219 · account-only: Figma S-10-02 (117:11132) */}
               <div className="shrink-0 border-b border-[#e2e8f0] px-8 pb-[25px] pt-8">
                 <div className="flex items-center gap-3">
                   <div
@@ -478,20 +699,35 @@ export default function PersonalSettingsPage() {
                   >
                     ⚠️
                   </div>
-                  <h3 className="text-2xl font-bold leading-tight text-[#0f172a] whitespace-normal sm:whitespace-nowrap">
-                    {deleteModal.variant === "full"
-                      ? "Delete Workspace and Account?"
-                      : "Delete your account?"}
+                  <h3
+                    className={cn(
+                      "font-bold leading-tight text-[#0f172a]",
+                      deleteModal.variant === "account_only" ?
+                        "text-2xl whitespace-normal"
+                      : "text-2xl whitespace-normal sm:whitespace-nowrap",
+                    )}
+                  >
+                    {deleteModal.variant === "full" ? "Delete Workspace and Account?" : "Delete Account?"}
                   </h3>
                 </div>
-                <p className="mt-3 text-[15px] leading-6 text-[#475569]">
-                  {deleteModal.variant === "full"
-                    ? "This will permanently delete your ACTNOTE Workspace and Account. And all personal data."
-                    : "This will permanently delete your ACTNOTE account and remove your access to workspaces you belong to."}
-                </p>
+                {deleteModal.variant === "full" ? (
+                  <p className="mt-3 text-[15px] leading-6 text-[#475569]">
+                    This will permanently delete your ACTNOTE Workspace and Account. And all personal data.
+                  </p>
+                ) : (
+                  <div className="mt-3 text-[15px] leading-6 text-[#475569]">
+                    <p className="mb-0 leading-6">This will permanently delete your ACTNOTE account and all</p>
+                    <p className="leading-6">personal data.</p>
+                  </div>
+                )}
               </div>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-8 pb-8 pt-6">
+              <div
+                className={cn(
+                  "flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto overscroll-contain px-8",
+                  deleteModal.variant === "account_only" ? "pb-12 pt-6" : "pb-8 pt-6",
+                )}
+              >
                 {deleteModal.variant === "full" ? (
                   <>
                     <div className="rounded-[12px] border border-[#e2e8f0] bg-[#f8fafc] p-[17px]">
@@ -567,9 +803,10 @@ export default function PersonalSettingsPage() {
                           "Linked integrations (e.g. Notion) and saved tokens",
                         ]
                       : [
-                          "Your ACTNOTE profile and saved preferences.",
-                          "Your membership in all workspaces.",
-                          "Access to meetings and notes tied to your account.",
+                          "Your profile and personal information",
+                          "Access to all workspaces you're a member of",
+                          "All meetings you created",
+                          "Your Google account connection",
                         ]
                     ).map((line) => (
                       <li

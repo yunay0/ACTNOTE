@@ -13,6 +13,7 @@ import {
   getRecordingFileIssue,
   type RecordingFileIssue,
 } from "@/lib/meeting/recordingFilename";
+import { workspaceMemberDisplayName } from "@/lib/user/member-display";
 import { RecordingUploadErrorModal } from "@/components/meetings/RecordingUploadErrorModal";
 import { MEETING_TYPE_OPTIONS } from "@/lib/meetings/meeting-types";
 
@@ -127,9 +128,10 @@ export default function NewMeetingPage() {
 
       const opts = (rows as any[]).map((r) => {
         const u = Array.isArray(r.users) ? r.users[0] : r.users;
-        const name = typeof u?.name === "string" ? u.name.trim() : "";
+        const name = typeof u?.name === "string" ? u.name : "";
         const email = typeof u?.email === "string" ? u.email : "";
-        const label = name ? `${name} (${email})` : email || String(r.user_id);
+        const shown = workspaceMemberDisplayName(name, email);
+        const label = email ? `${shown} (${email})` : shown || String(r.user_id);
         return { user_id: r.user_id as string, label };
       });
       setMemberOptions(opts);

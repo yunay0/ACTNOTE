@@ -212,7 +212,7 @@ await supabase.rpc("set_member_role", {                          // owner only
 
 | `kind` | 트리거 | 내용 |
 |--------|--------|------|
-| `analysis_complete` | 분석 성공 | 작성자 + 액션 담당자 (중복 1건만) |
+| `analysis_complete` | 분석 성공 | 워크스페이스 멤버 전원 + 작성자·담당자 (user 단위 1건) |
 | `analysis_failed` | 분석 실패 | 작성자 |
 | `action_assigned` | A.U.D.N 결과 액션이 할당됨 (assignee_user_id 매칭 시) | 담당자 (자기 자신 제외) |
 

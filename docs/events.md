@@ -72,7 +72,7 @@ Modal 함수: `trigger_pipeline` → `run_pipeline_fn.spawn(...)` → `src.jobs.
    - 실패: `meetings.status='error'` + `error_message`(`[code:...]`) + `analysis_failed`
      알림 후 raise → **함수 전체 재시도**
 3. `meetings.status='ready'`
-4. `analysis_complete` 알림 (작성자 + 액션 담당자, 중복 1건; 메일은 Resend 직접)
+4. `analysis_complete` 알림 (워크스페이스 멤버 전원 + 작성자·담당자 user 단위 1건; 메일은 작성자에게만 설정 시 Resend/SMTP)
 
 > **재시도 비용 (decision #3):** Modal 은 step memoization 이 없어 재시도 시
 > STT·화자분리·LLM 을 처음부터 재실행/재과금한다. 멱등성은
