@@ -7,6 +7,7 @@ import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
+import { INVITE_EXPIRES_IN_DAYS } from "@/lib/workspace/invite-expiry";
 
 /** Supabase `workspace_members.role` */
 type DbRole = "owner" | "admin" | "member";
@@ -423,7 +424,7 @@ export default function WorkspaceSettingsPage() {
         p_workspace_id: wsId,
         p_email: email,
         p_role: "member",
-        p_expires_in_days: 7,
+        p_expires_in_days: INVITE_EXPIRES_IN_DAYS,
       });
 
       if (error) {

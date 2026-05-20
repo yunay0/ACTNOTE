@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Users, CheckCircle2, ArrowRight, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { WorkspaceAccessGate } from "@/components/workspace/WorkspaceAccessGate";
+import { WorkspaceAccessRequestSent } from "@/components/workspace/WorkspaceAccessRequestSent";
 
 interface WorkspaceInfo {
   id: string;
@@ -20,6 +22,9 @@ type PageState =
   | "joined"
   | "request_sent"
   | "request_pending"
+  | "invite_expired"
+  | "invite_inactive"
+  | "wrong_email"
   | "error";
 
 export default function InvitePage() {
@@ -33,6 +38,9 @@ export default function InvitePage() {
   const [isTokenMode, setIsTokenMode] = useState(false);
   const [requestMessage, setRequestMessage] = useState("");
   const [emailNotice, setEmailNotice] = useState<string | null>(null);
+  const [invitedEmailHint, setInvitedEmailHint] = useState("");
+  const [userDisplayName, setUserDisplayName] = useState("");
+  const [userEmail, setUserEmail] = useState("");
 
   useEffect(() => {
     async function checkInvite() {
@@ -45,52 +53,77 @@ export default function InvitePage() {
         return;
       }
 
-      // 1) Email-bound invite token
+      setUserEmail(user.email ?? "");
+      const meta = user.user_metadata as Record<string, unknown> | undefined;
+      const fromMeta =
+        (typeof meta?.full_name === "string" && meta.full_name) ||
+        (typeof meta?.name === "string" && meta.name) ||
+        "";
+      setUserDisplayName(fromMeta);
+
+      const token = typeof slug === "string" ? slug : "";
+
+      // 1) Email invite token — use RPC so RLS cannot hide the row from the invitee
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: inviteRow } = await (supabase as any)
-        .from("workspace_invites")
-        .select("workspace_id, status, expires_at, workspaces(id, name, slug)")
-        .eq("token", slug)
-        .maybeSingle();
+      const { data: rawPreview, error: prevErr } = await (supabase as any).rpc("preview_workspace_invite", {
+        p_token: token,
+      });
 
-      if (inviteRow) {
-        if (inviteRow.status !== "pending") {
+      if (!prevErr && rawPreview && typeof rawPreview === "object" && "ok" in rawPreview) {
+        const preview = rawPreview as {
+          ok: boolean;
+          reason?: string;
+          workspace?: WorkspaceInfo;
+          invite_status?: string;
+          invite_expired?: boolean;
+          invited_email?: string;
+          email_matches?: boolean;
+        };
+
+        if (preview.ok === true && preview.workspace) {
+          const ws = preview.workspace;
+          setWorkspace(ws);
+          setIsTokenMode(true);
+
+          if (preview.invite_status !== "pending") {
+            setPageState("invite_inactive");
+            return;
+          }
+          if (preview.invite_expired) {
+            setPageState("invite_expired");
+            return;
+          }
+          if (!preview.email_matches) {
+            setInvitedEmailHint(preview.invited_email ?? "");
+            setPageState("wrong_email");
+            return;
+          }
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: existing } = await (supabase as any)
+            .from("workspace_members")
+            .select("user_id")
+            .eq("workspace_id", ws.id)
+            .eq("user_id", user.id)
+            .maybeSingle();
+
+          setPageState(existing ? "already_member" : "token_found");
+          return;
+        }
+
+        if (preview.ok === false && preview.reason === "invalid_token") {
+          // fall through to workspace slug / join-request flow
+        } else {
           setPageState("not_found");
           return;
         }
-        const exp = inviteRow.expires_at ? new Date(inviteRow.expires_at as string) : null;
-        if (exp && exp.getTime() < Date.now()) {
-          setPageState("not_found");
-          return;
-        }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const ws: any = Array.isArray(inviteRow.workspaces)
-          ? inviteRow.workspaces[0]
-          : inviteRow.workspaces;
-        if (!ws) {
-          setPageState("not_found");
-          return;
-        }
-
-        setWorkspace(ws);
-        setIsTokenMode(true);
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: existing } = await (supabase as any)
-          .from("workspace_members")
-          .select("user_id")
-          .eq("workspace_id", ws.id)
-          .eq("user_id", user.id)
-          .single();
-        setPageState(existing ? "already_member" : "token_found");
-        return;
       }
 
-      // 2) Workspace slug link — owner approval (join request), not instant member insert
+      // 2) Workspace slug link — owner approval (join request), not token invite
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: previewRows, error: previewErr } = await (supabase as any).rpc(
         "public_workspace_preview_by_slug",
-        { p_slug: slug },
+        { p_slug: token },
       );
 
       if (previewErr || !previewRows?.length) {
@@ -155,7 +188,7 @@ export default function InvitePage() {
         const msgs: Record<string, string> = {
           invalid_token: "This invite link is invalid or has been revoked.",
           invite_revoked: "This invite has been cancelled.",
-          invite_expired: "This invite has expired (7 days).",
+          invite_expired: "This invite link has expired. Ask your workspace admin for a new invite.",
           invite_email_mismatch:
             "This invite was sent to a different email. Please log in with the correct account.",
         };
@@ -195,6 +228,51 @@ export default function InvitePage() {
     setJoining(false);
   }
 
+  const gateMode =
+    workspace && pageState === "found"
+      ? ("request_access" as const)
+      : workspace && pageState === "token_found"
+        ? ("invite_token" as const)
+        : workspace && pageState === "request_pending"
+          ? ("request_pending" as const)
+          : null;
+
+  if (gateMode && workspace) {
+    return (
+      <WorkspaceAccessGate
+        mode={gateMode}
+        workspaceName={workspace.name}
+        userDisplayName={userDisplayName}
+        userEmail={userEmail}
+        requestMessage={requestMessage}
+        onRequestMessageChange={setRequestMessage}
+        onPrimary={() => void handleJoinOrRequest()}
+        onReturnHome={() => router.push("/workspace/select")}
+        primaryLoading={joining}
+        optionalMessageEnabled={gateMode === "request_access"}
+      />
+    );
+  }
+
+  if (pageState === "request_sent" && workspace) {
+    const slugStr = typeof slug === "string" ? slug : "";
+    return (
+      <WorkspaceAccessRequestSent
+        workspaceName={workspace.name}
+        userDisplayName={userDisplayName}
+        userEmail={userEmail}
+        emailNotice={emailNotice}
+        onReturnHome={() => router.push("/workspace/select")}
+        onSignInDifferentAccount={async () => {
+          const supabase = createClient();
+          await supabase.auth.signOut();
+          const next = slugStr ? `/invite/${slugStr}` : "/workspace/select";
+          router.push(`/login?next=${encodeURIComponent(next)}`);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#0a2540] via-[#1e3a5f] to-[#0a2540] p-4">
       <div className="w-full max-w-md">
@@ -210,6 +288,66 @@ export default function InvitePage() {
             <div className="flex flex-col items-center gap-4 py-8">
               <Loader2 className="h-8 w-8 animate-spin text-[#ff6b35]" />
               <p className="text-sm text-[#64748b]">Loading invite...</p>
+            </div>
+          )}
+
+          {pageState === "invite_expired" && (
+            <div className="space-y-3 py-6 text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#f1f5f9]">
+                <Users className="h-7 w-7 text-[#94a3b8]" />
+              </div>
+              <h2 className="text-[18px] font-bold text-[#0a2540]">Invite expired</h2>
+              <p className="text-sm text-[#64748b]">
+                This invitation link is past its expiry date. Ask your workspace admin to send a new invite.
+              </p>
+              <button
+                onClick={() => router.push("/workspace/select")}
+                className="mt-2 text-sm font-semibold text-[#ff6b35] hover:underline"
+              >
+                Go to dashboard →
+              </button>
+            </div>
+          )}
+
+          {pageState === "invite_inactive" && (
+            <div className="space-y-3 py-6 text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#f1f5f9]">
+                <Users className="h-7 w-7 text-[#94a3b8]" />
+              </div>
+              <h2 className="text-[18px] font-bold text-[#0a2540]">Invite no longer valid</h2>
+              <p className="text-sm text-[#64748b]">
+                This link was already used or cancelled. If you still need access, ask for a new invitation.
+              </p>
+              <button
+                onClick={() => router.push("/workspace/select")}
+                className="mt-2 text-sm font-semibold text-[#ff6b35] hover:underline"
+              >
+                Go to dashboard →
+              </button>
+            </div>
+          )}
+
+          {pageState === "wrong_email" && (
+            <div className="space-y-3 py-6 text-center">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-50">
+                <Users className="h-7 w-7 text-amber-600" />
+              </div>
+              <h2 className="text-[18px] font-bold text-[#0a2540]">Wrong account</h2>
+              <p className="text-sm text-[#64748b]">
+                This invite was sent to <strong className="text-[#0a2540]">{invitedEmailHint || "another email"}</strong>
+                . Sign out and sign back in with that address to accept.
+              </p>
+              <button
+                onClick={async () => {
+                  const supabase = createClient();
+                  await supabase.auth.signOut();
+                  router.push(`/login?next=/invite/${slug}`);
+                }}
+                className="mx-auto mt-3 flex items-center justify-center rounded-xl px-6 py-2.5 text-sm font-bold text-white"
+                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+              >
+                Sign out and switch account
+              </button>
             </div>
           )}
 
@@ -248,110 +386,6 @@ export default function InvitePage() {
             </div>
           )}
 
-          {pageState === "request_pending" && workspace && (
-            <div className="space-y-3 py-6 text-center">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#fff4f0]">
-                <Users className="h-7 w-7 text-[#ff6b35]" />
-              </div>
-              <h2 className="text-[18px] font-bold text-[#0a2540]">Request pending</h2>
-              <p className="text-sm text-[#64748b]">
-                You already asked to join <strong>{workspace.name}</strong>. The workspace owner will review your
-                request.
-              </p>
-              <button
-                onClick={() => router.push("/workspace/select")}
-                className="mx-auto mt-3 flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-bold text-white"
-                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-              >
-                Go to dashboard <ArrowRight className="h-4 w-4" />
-              </button>
-            </div>
-          )}
-
-          {pageState === "request_sent" && workspace && (
-            <div className="space-y-3 py-6 text-center">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50">
-                <CheckCircle2 className="h-7 w-7 text-green-500" />
-              </div>
-              <h2 className="text-[18px] font-bold text-[#0a2540]">Request sent</h2>
-              <p className="text-sm text-[#64748b]">
-                The owner of <strong>{workspace.name}</strong> has been notified. You&apos;ll get access when they
-                approve your request in ACTNOTE.
-              </p>
-              {emailNotice && (
-                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs text-amber-950">
-                  {emailNotice}
-                </p>
-              )}
-              <button
-                onClick={() => router.push("/workspace/select")}
-                className="mx-auto mt-3 flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-bold text-white"
-                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-              >
-                Go to dashboard <ArrowRight className="h-4 w-4" />
-              </button>
-            </div>
-          )}
-
-          {(pageState === "found" || pageState === "token_found") && workspace && (
-            <div className="space-y-6">
-              <div className="space-y-2 text-center">
-                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#fff4f0]">
-                  <Users className="h-7 w-7 text-[#ff6b35]" />
-                </div>
-                <h2 className="text-[18px] font-bold text-[#0a2540]">
-                  {isTokenMode ? "You've been invited!" : "Request workspace access"}
-                </h2>
-                <p className="text-sm text-[#64748b]">
-                  {isTokenMode
-                    ? "Join the workspace to collaborate on meeting notes."
-                    : "You need the workspace owner to approve your access. They will receive an email with your request."}
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-4 text-center">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-[#94a3b8]">Workspace</p>
-                <p className="text-[17px] font-bold text-[#0a2540]">{workspace.name}</p>
-              </div>
-
-              {!isTokenMode && (
-                <div className="space-y-1">
-                  <label htmlFor="join-req-message" className="text-xs font-semibold text-[#64748b]">
-                    Message to owner (optional)
-                  </label>
-                  <textarea
-                    id="join-req-message"
-                    value={requestMessage}
-                    onChange={(e) => setRequestMessage(e.target.value)}
-                    rows={3}
-                    maxLength={500}
-                    placeholder="e.g. I'm on the design team for Project X…"
-                    className="w-full rounded-xl border-2 border-[#e2e8f0] px-3 py-2 text-sm text-[#0a2540] outline-none focus:border-[#2e5c8a]"
-                  />
-                </div>
-              )}
-
-              <button
-                onClick={() => void handleJoinOrRequest()}
-                disabled={joining}
-                className="flex h-12 w-full items-center justify-center gap-2 rounded-xl text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-              >
-                {joining ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <ArrowRight className="h-4 w-4" />
-                )}
-                {joining ? "Saving..." : isTokenMode ? "Join Workspace" : "Send request"}
-              </button>
-              <p className="text-center text-xs text-[#94a3b8]">
-                {isTokenMode
-                  ? "You'll be added as a member of this workspace."
-                  : "The owner can approve or reject this request from Workspace settings."}
-              </p>
-            </div>
-          )}
-
           {pageState === "joined" && workspace && (
             <div className="space-y-3 py-6 text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50">
@@ -375,7 +409,9 @@ export default function InvitePage() {
               <p className="text-sm text-[#64748b]">{errorMsg || "Unable to complete this action."}</p>
               <button
                 onClick={() =>
-                  setPageState(isTokenMode ? "token_found" : workspace ? "found" : "not_found")
+                  setPageState(
+                    isTokenMode ? "token_found" : workspace ? "found" : "not_found"
+                  )
                 }
                 className="text-sm font-semibold text-[#ff6b35] hover:underline"
               >

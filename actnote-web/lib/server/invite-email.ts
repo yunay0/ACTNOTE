@@ -1,4 +1,5 @@
 import { resolvePublicAppUrl } from "@/lib/server/public-app-url";
+import { INVITE_EXPIRES_IN_DAYS } from "@/lib/workspace/invite-expiry";
 
 export { resolvePublicAppUrl };
 
@@ -187,10 +188,11 @@ export function buildInviteEmailParts(opts: {
   const safeInviter = escapeHtml(inviterName);
   const href = encodeURI(inviteLink);
   const subject = `${inviterName} invited you to ${workspaceName} on ACTNOTE`;
+  const days = String(INVITE_EXPIRES_IN_DAYS);
   const html = `<p>You've been invited to join <b>${safeWs}</b> on ACTNOTE.</p>
 <p><a href="${href}">Accept Invitation</a></p>
-<p style="color:#94a3b8;font-size:12px">Invited by ${safeInviter}. This link expires in 7 days.</p>`;
-  const text = `${subject}\n\nAccept here:\n${inviteLink}\n\nInvited by ${inviterName}. This link expires in 7 days.`;
+<p style="color:#94a3b8;font-size:12px">Invited by ${safeInviter}. This link expires in ${days} days.</p>`;
+  const text = `${subject}\n\nAccept here:\n${inviteLink}\n\nInvited by ${inviterName}. This link expires in ${days} days.`;
   return {
     subject,
     html,
