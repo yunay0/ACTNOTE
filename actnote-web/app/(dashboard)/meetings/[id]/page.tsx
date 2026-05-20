@@ -9,9 +9,17 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
+import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { StatusBadge } from "@/components/meetings/StatusBadge";
+import {
+  SpeakerMappingSection,
+  type SpeakerCandidate,
+  type TranscriptLine,
+} from "@/components/meetings/SpeakerMappingSection";
+import { TranscriptViewer } from "@/components/meetings/TranscriptViewer";
 import { ProcessingProgress } from "@/components/meetings/ProcessingProgress";
 import { retryMeetingPipeline } from "@/lib/meetings/retry-pipeline";
+import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 import type { MeetingStatus } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 
@@ -27,6 +35,7 @@ interface MeetingRow {
   referenced_documents: string[] | null;
   audio_file_url: string | null;
   workspace_id: string;
+  created_by: string | null;
   error_message?: string | null;
   meeting_type: string | null;
   description: string | null;
@@ -125,7 +134,7 @@ function normalizeParticipants(raw: unknown): string[] {
         const p = JSON.parse(s) as unknown;
         if (Array.isArray(p)) {
           return p
-            .filter((x): x is string => typeof x === "string" && x.trim())
+            .filter((x): x is string => typeof x === "string" && Boolean(x.trim()))
             .map((x) => x.trim());
         }
       } catch {
@@ -142,29 +151,13 @@ function normalizeParticipants(raw: unknown): string[] {
   return out;
 }
 
-/** Align with new-meeting form + backend template aliases */
-const MEETING_TYPE_LABELS: Record<string, string> = {
-  default: "General",
-  other: "Other",
-  one_on_one: "1:1 Meeting",
-  "1on1": "1:1 Meeting",
-  standup: "Team Standup",
-  sprint: "Sprint",
-  project_review: "Project Review",
-  brainstorming: "Brainstorming",
-  client: "Client Meeting",
-  board: "Board Meeting",
-  all_hands: "All Hands",
-  workshop: "Workshop",
-  planning: "Planning",
-  retro: "Retro",
-};
-
 export default function MeetingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { memberships } = useWorkspaceContext();
 
   const [meeting, setMeeting] = useState<MeetingRow | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -179,6 +172,9 @@ export default function MeetingDetailPage() {
   const [editActionItems, setEditActionItems] = useState<ActionItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [saving, setSaving] = useState(false);
+  const [speakerCandidates, setSpeakerCandidates] = useState<Record<string, SpeakerCandidate[]>>({});
+  const [speakerMapping, setSpeakerMapping] = useState<Record<string, string>>({});
+  const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
 
   // 삭제 (STATUS-002)
   const [deleteModal, setDeleteModal] = useState(false);
@@ -214,11 +210,11 @@ export default function MeetingDetailPage() {
 
   const fetchMeeting = useCallback(async () => {
     const supabase = createClient();
-    const [mRes, dRes] = await Promise.all([
+    const [mRes, dRes, txRes] = await Promise.all([
       (supabase as any)
         .from("meetings")
         .select(
-          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id, error_message, description, meeting_type, participants, responsible_user_id"
+          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id, created_by, error_message, description, meeting_type, participants, responsible_user_id, ai_draft_notes"
         )
         .eq("id", id)
         .is("deleted_at", null)
@@ -229,6 +225,11 @@ export default function MeetingDetailPage() {
         .eq("meeting_id", id)
         .is("valid_until", null)
         .order("valid_from", { ascending: true }),
+      (supabase as any)
+        .from("transcripts")
+        .select("speaker_label, text, start_seconds")
+        .eq("meeting_id", id)
+        .order("start_seconds", { ascending: true }),
     ]);
 
     const { data: m, error } = mRes;
@@ -247,6 +248,7 @@ export default function MeetingDetailPage() {
     const mergedDecisions =
       tableDecisions.length > 0 ? tableDecisions : fallbackJson;
 
+    const createdByRaw = row.created_by;
     setMeeting({
       ...(m as MeetingRow),
       decisions: mergedDecisions.length ? mergedDecisions : null,
@@ -254,11 +256,78 @@ export default function MeetingDetailPage() {
       participants: normalizeParticipants(row.participants),
       meeting_type: typeof row.meeting_type === "string" ? row.meeting_type : null,
       description: typeof row.description === "string" ? row.description : null,
+      created_by:
+        createdByRaw != null && createdByRaw !== ""
+          ? String(createdByRaw)
+          : null,
       responsible_user_id:
         row.responsible_user_id != null && row.responsible_user_id !== ""
           ? String(row.responsible_user_id)
           : null,
     });
+
+    const draftRaw = row.ai_draft_notes;
+    let draftObj: Record<string, unknown> | null = null;
+    if (typeof draftRaw === "string" && draftRaw.trim()) {
+      try {
+        const p = JSON.parse(draftRaw) as unknown;
+        if (p && typeof p === "object" && !Array.isArray(p)) draftObj = p as Record<string, unknown>;
+      } catch {
+        draftObj = null;
+      }
+    } else if (draftRaw && typeof draftRaw === "object" && !Array.isArray(draftRaw)) {
+      draftObj = draftRaw as Record<string, unknown>;
+    }
+    const scRaw = draftObj?.speaker_candidates;
+    const smRaw = draftObj?.speaker_mapping;
+    const nextCandidates: Record<string, SpeakerCandidate[]> = {};
+    if (scRaw && typeof scRaw === "object" && !Array.isArray(scRaw)) {
+      for (const [label, arr] of Object.entries(scRaw as Record<string, unknown>)) {
+        const list: SpeakerCandidate[] = [];
+        if (Array.isArray(arr)) {
+          for (const c of arr) {
+            if (!c || typeof c !== "object") continue;
+            const o = c as Record<string, unknown>;
+            const uid = typeof o.user_id === "string" ? o.user_id : "";
+            if (!uid) continue;
+            const conf = typeof o.confidence === "number" ? o.confidence : Number(o.confidence);
+            if (!Number.isFinite(conf) || conf < 0.4) continue;
+            list.push({
+              user_id: uid,
+              name: typeof o.name === "string" ? o.name : "",
+              email: typeof o.email === "string" ? o.email : "",
+              confidence: conf,
+              reason: typeof o.reason === "string" ? o.reason : "",
+            });
+          }
+        }
+        list.sort((a, b) => b.confidence - a.confidence);
+        nextCandidates[label] = list;
+      }
+    }
+    setSpeakerCandidates(nextCandidates);
+    const nextMap: Record<string, string> = {};
+    if (smRaw && typeof smRaw === "object" && !Array.isArray(smRaw)) {
+      for (const [k, v] of Object.entries(smRaw as Record<string, unknown>)) {
+        if (typeof v === "string" && v.trim()) nextMap[k] = v.trim();
+      }
+    }
+    setSpeakerMapping(nextMap);
+
+    if (!txRes.error && Array.isArray(txRes.data)) {
+      setTranscriptLines(
+        (txRes.data as Record<string, unknown>[]).map((r) => ({
+          speaker_label: typeof r.speaker_label === "string" ? r.speaker_label : null,
+          text: typeof r.text === "string" ? r.text : "",
+          start_seconds:
+            typeof r.start_seconds === "number"
+              ? r.start_seconds
+              : parseFloat(String(r.start_seconds ?? "0")) || 0,
+        }))
+      );
+    } else {
+      setTranscriptLines([]);
+    }
 
     const { data: items } = await (supabase as any)
       .from("action_items")
@@ -278,6 +347,20 @@ export default function MeetingDetailPage() {
   useEffect(() => { fetchMeeting(); }, [fetchMeeting]);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!cancelled) setCurrentUserId(user?.id ?? null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (meeting?.approval_status === "published") setEditMode(false);
   }, [meeting?.approval_status]);
 
@@ -288,9 +371,9 @@ export default function MeetingDetailPage() {
   }, [meeting, fetchMeeting]);
 
   useEffect(() => {
-    if (!meeting?.workspace_id || !meeting.responsible_user_id) return;
+    if (!meeting?.workspace_id) return;
     void loadMembers(meeting.workspace_id);
-  }, [meeting?.workspace_id, meeting?.responsible_user_id, loadMembers]);
+  }, [meeting?.workspace_id, loadMembers]);
 
   async function handleRetryAnalysis() {
     if (!meeting) return;
@@ -310,6 +393,8 @@ export default function MeetingDetailPage() {
 
   function enterEditMode() {
     if (!meeting || meeting.approval_status === "published") return;
+    const role = memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role;
+    if (role !== "owner" && role !== "admin") return;
     setEditTitle(meeting.title ?? "");
     setEditSummary(meeting.summary ?? "");
     setEditDecisions((meeting.decisions ?? []).map((d) => d.content));
@@ -324,6 +409,8 @@ export default function MeetingDetailPage() {
 
   async function saveEdits() {
     if (!meeting || meeting.approval_status === "published") return;
+    const role = memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role;
+    if (role !== "owner" && role !== "admin") return;
     setSaving(true);
     const supabase = createClient();
 
@@ -409,6 +496,8 @@ export default function MeetingDetailPage() {
   // PUB-001: validate_meeting_for_publication RPC 사용
   async function handlePublishClick() {
     if (!meeting || publishing) return;
+    const role = memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role;
+    if (role !== "owner" && role !== "admin") return;
 
     const supabase = createClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -450,6 +539,8 @@ export default function MeetingDetailPage() {
 
   async function doPublish() {
     if (!meeting) return;
+    const role = memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role;
+    if (role !== "owner" && role !== "admin") return;
     setPublishing(true);
     setNotionWarningModal(false);
 
@@ -503,6 +594,13 @@ export default function MeetingDetailPage() {
 
   async function handleDelete() {
     if (!meeting) return;
+    const role = memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role ?? null;
+    const manage = role === "owner" || role === "admin";
+    const ownMeeting =
+      currentUserId != null &&
+      meeting.created_by != null &&
+      meeting.created_by === currentUserId;
+    if (!manage && !(role === "member" && ownMeeting)) return;
     setDeleteError(null);
     setDeleting(true);
     const supabase = createClient();
@@ -550,7 +648,22 @@ export default function MeetingDetailPage() {
   if (!meeting) return null;
 
   const isReady = meeting.status === "ready" || meeting.status === "published";
-  const canEdit = isReady && meeting.approval_status !== "published";
+  const myRole =
+    memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role ?? null;
+  /** 발행 RPC(`set_meeting_ready` / `publish_meeting`)과 동일: owner | admin */
+  const canManagePublication = myRole === "owner" || myRole === "admin";
+  const canEdit = isReady && meeting.approval_status !== "published" && canManagePublication;
+  const canPublish = canEdit;
+  /** DRAFT-010: any workspace member may confirm speaker labels while meeting is still draft */
+  const canMapSpeakers =
+    isReady && meeting.approval_status !== "published" && myRole != null;
+  /** docs/permissions.md: Owner는 전체, Member는 본인이 생성한 회의만 */
+  const canDeleteMeeting =
+    canManagePublication ||
+    (myRole === "member" &&
+      currentUserId != null &&
+      meeting.created_by != null &&
+      meeting.created_by === currentUserId);
   const dateStr = new Date(meeting.meeting_date ?? meeting.created_at).toLocaleDateString("en-US", {
     year: "numeric", month: "long", day: "numeric",
   });
@@ -698,7 +811,7 @@ export default function MeetingDetailPage() {
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </button>
                 )}
-                {isReady && meeting.approval_status !== "published" && !editMode && (
+                {canPublish && !editMode && (
                   <button onClick={handlePublishClick} disabled={publishing} className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60 transition-opacity" style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}>
                     {publishing ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" /> : <Send className="h-3.5 w-3.5" />}
                     Publish
@@ -707,6 +820,7 @@ export default function MeetingDetailPage() {
                 {meeting.approval_status === "published" && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-1.5 text-sm font-bold text-green-700">✅ Published</span>
                 )}
+                {canDeleteMeeting && (
                 <button
                   type="button"
                   onClick={() => {
@@ -717,6 +831,7 @@ export default function MeetingDetailPage() {
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-1.5 text-sm text-[#64748b]">
@@ -743,7 +858,7 @@ export default function MeetingDetailPage() {
                       </dt>
                       <dd className="mt-0.5 text-sm font-medium text-[#0a2540]">
                         {meeting.meeting_type
-                          ? MEETING_TYPE_LABELS[meeting.meeting_type] ?? meeting.meeting_type
+                          ? formatMeetingTypeLabel(meeting.meeting_type)
                           : "—"}
                       </dd>
                     </div>
@@ -825,6 +940,14 @@ export default function MeetingDetailPage() {
             )}
           </div>
 
+          {!isReady && transcriptLines.length > 0 && (
+            <TranscriptViewer
+              transcripts={transcriptLines}
+              speakerMapping={speakerMapping}
+              members={members}
+            />
+          )}
+
           {/* 편집 모드 저장/취소 바 */}
           {editMode && canEdit && (
             <div className="flex items-center justify-between rounded-xl border border-[#ff6b35]/30 bg-[#fff4f0] px-5 py-3">
@@ -859,6 +982,20 @@ export default function MeetingDetailPage() {
                   <EmptyNote text="Summary will appear here after AI processing completes." />
                 )}
               </Section>
+
+              {(Object.keys(speakerCandidates).length > 0 ||
+                transcriptLines.length > 0 ||
+                Object.keys(speakerMapping).length > 0) && (
+                <SpeakerMappingSection
+                  meetingId={meeting.id}
+                  speakerCandidates={speakerCandidates}
+                  initialMapping={speakerMapping}
+                  transcripts={transcriptLines}
+                  members={members}
+                  canEdit={canMapSpeakers}
+                  onSaved={fetchMeeting}
+                />
+              )}
 
               {/* 결정사항 (DRAFT-001) */}
               <Section icon={<CheckCircle2 className="h-4 w-4 text-[#2e5c8a]" />} title="Decisions">

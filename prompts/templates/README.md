@@ -2,13 +2,24 @@
 
 회의 유형(`meetings.meeting_type`)에 따라 LLM 추출 단계의 system prompt 를 분기.
 
+## v0.3 제품 UI (4종)
+
+신규 회의 업로드 폼에서 선택하는 값은 아래 4개만 노출한다 (`actnote-web/lib/meetings/meeting-types.ts`).
+
+| 저장값 (`meeting_type`) | 사용자에게 보이는 라벨 | 로드되는 템플릿 |
+|-------------------------|------------------------|-----------------|
+| `standup` | Team Standup | `standup.md` |
+| `project_review` | Project Review | `project_review.md` |
+| `one_on_one` | 1:1 | `one_on_one.md` |
+| `other` | Other | `default.md` (`other` 는 alias 로 `default` 와 동일) |
+
 ## 파일 = 템플릿
 
 | 파일 | 표준 type | 한국어/영어 alias |
 |------|-----------|------------------|
 | `default.md` | `default` | `general`, `기본`, `일반`, `other`, `기타` |
 | `one_on_one.md` | `one_on_one` | `1on1`, `1:1`, `oneonone` |
-| `standup.md` | `standup` | `sprint`, `sprint_planning`, `sprint_review`, `daily`, `데일리`, `스프린트` |
+| `standup.md` | `standup` | `team_standup`, `sprint`, `sprint_planning`, `sprint_review`, `daily`, `데일리`, `스프린트` |
 | `project_review.md` | `project_review` | `project_update`, `status_review` |
 | `brainstorming.md` | `brainstorming` | — |
 | `client.md` | `client` | `external`, `customer` |
@@ -18,7 +29,7 @@
 | `planning.md` | `planning` *(레거시)* | `기획`, `kickoff` |
 | `retro.md` | `retro` *(레거시)* | `회고`, `postmortem` |
 
-> **레거시 타입:** `planning` / `retro` 파일은 하위 호환을 위해 유지. 신규 회의는 위 9종 중 적합한 유형 사용 권장.
+> **레거시 타입:** `planning` / `retro` 등 추가 파일은 하위 호환·API 용으로 유지. **신규 사용자 경로**는 위 **v0.3 제품 UI (4종)** 만 사용.
 
 ## 폴백 규칙
 

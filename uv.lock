@@ -23,7 +23,6 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "inngest" },
     { name = "jiwer" },
     { name = "modal" },
     { name = "notion-client" },
@@ -46,7 +45,6 @@ requires-dist = [
     { name = "cryptography", specifier = ">=42.0.0" },
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "inngest", specifier = ">=0.5.0" },
     { name = "jiwer", specifier = ">=4.0.0" },
     { name = "modal", specifier = ">=0.64" },
     { name = "notion-client", specifier = ">=2.2.1" },
@@ -1298,30 +1296,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f3/49/3b30cad09e7771a4982d9975a8cbf64f00d4a1ececb53297f1d9a7be1b10/importlib_metadata-8.7.1.tar.gz", hash = "sha256:49fef1ae6440c182052f407c8d34a68f72efc36db9ca90dc0113398f2fdde8bb", size = 57107, upload-time = "2025-12-21T10:00:19.278Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/5e/f8e9a1d23b9c20a551a8a02ea3637b4642e22c2626e3a13a9a29cdea99eb/importlib_metadata-8.7.1-py3-none-any.whl", hash = "sha256:5a1f80bf1daa489495071efbb095d75a634cf28a8bc299581244063b53176151", size = 27865, upload-time = "2025-12-21T10:00:18.329Z" },
-]
-
-[[package]]
-name = "inngest"
-version = "0.5.18"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "jcs" },
-    { name = "pydantic" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c5/ce/56283a2f9d0ce80e47a37d4f66784f04b0067b668578205a4d09c206ccea/inngest-0.5.18.tar.gz", hash = "sha256:b41104ecd5bf3b733766db8107355f0edfbde42cff4b6196f1b6958f54155c88", size = 95297, upload-time = "2026-03-11T17:42:57.013Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/46/ffe9355a03da71b5a85f817da57f058fe98f33b883d8b201316a948e7c9e/inngest-0.5.18-py3-none-any.whl", hash = "sha256:7a584cb36448adfaa37e66192e545a30bad1bb5ec0ffd145b1126a8c72e4a0a6", size = 143711, upload-time = "2026-03-11T17:42:55.155Z" },
-]
-
-[[package]]
-name = "jcs"
-version = "0.2.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/47/e5/9d547f0d42ba00f68eec773aa7b2145e0c0335eb632cbaf519f480a429af/jcs-0.2.1.tar.gz", hash = "sha256:9f20360b2f3b0a410d65493b448f96306d80e37fb46283f3f4aa5db2c7c1472b", size = 6886, upload-time = "2022-04-10T14:41:24.904Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/d4/9a99bc15266a842bd14a1913afdb05182888ebab035666c1ce8a64537ca2/jcs-0.2.1-py3-none-any.whl", hash = "sha256:e23a3e1de60f832d33cd811bb9c3b3be79219cdf95f63b88f0972732c3fa8476", size = 7603, upload-time = "2022-04-10T14:41:23.207Z" },
 ]
 
 [[package]]

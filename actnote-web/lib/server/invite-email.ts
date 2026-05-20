@@ -197,3 +197,42 @@ export function buildInviteEmailParts(opts: {
     text,
   };
 }
+
+/** Email to workspace owner when a user submits a join request (slug / request access flow). */
+export function buildJoinRequestEmailParts(opts: {
+  settingsUrl: string;
+  workspaceName: string;
+  requesterName: string;
+  requesterEmail: string;
+  message?: string | null;
+}): InviteMailBody {
+  const { settingsUrl, workspaceName, requesterName, requesterEmail, message } = opts;
+  const safeWs = escapeHtml(workspaceName);
+  const safeName = escapeHtml(requesterName);
+  const safeEmail = escapeHtml(requesterEmail);
+  const href = encodeURI(settingsUrl);
+  const subject = `${requesterName} requested to join ${workspaceName} on ACTNOTE`;
+  let html = `<p><b>${safeName}</b> (${safeEmail}) asked to join <b>${safeWs}</b>.</p>
+<p><a href="${href}">Review in ACTNOTE workspace settings</a></p>`;
+  if (message && message.trim()) {
+    html += `<p style="margin-top:12px;padding:12px;background:#f8fafc;border-radius:8px;font-size:14px">${escapeHtml(
+      message.trim(),
+    )}</p>`;
+  }
+  html += `<p style="color:#94a3b8;font-size:12px">Open ACTNOTE to approve or reject this request.</p>`;
+  const textLines = [
+    subject,
+    "",
+    `${requesterName} <${requesterEmail}> requested access to ${workspaceName}.`,
+    message && message.trim() ? `Message: ${message.trim()}` : "",
+    "",
+    `Review: ${settingsUrl}`,
+    "",
+    "Open ACTNOTE to approve or reject this request.",
+  ].filter(Boolean);
+  return {
+    subject,
+    html,
+    text: textLines.join("\n"),
+  };
+}

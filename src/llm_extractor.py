@@ -1,9 +1,9 @@
 """Claude Sonnet 4.6으로 회의록에서 요약·결정·액션 아이템을 JSON으로 추출한다.
 
 회의 유형(meeting_type)에 따라 ``prompts/templates/<type>.md`` 를 system prompt 로 로드한다.
-지원 type: ``default``, ``one_on_one``, ``standup``, ``project_review``,
-           ``brainstorming``, ``client``, ``board``, ``all_hands``, ``workshop``,
-           ``planning``, ``retro`` (레거시 호환 유지).
+v0.3 제품 UI 기본 4종: ``standup`` (Team Standup), ``project_review``, ``one_on_one``, ``other`` → ``default`` 템플릿.
+그 외 지원 type: ``brainstorming``, ``client``, ``board``, ``all_hands``, ``workshop``,
+``planning``, ``retro`` (레거시·API 호환).
 미지원 / NULL 인 경우 자동으로 ``default`` 로 폴백한다 (MTG-004).
 """
 
@@ -58,6 +58,8 @@ _TYPE_ALIAS: dict[str, str] = {
     "일반": "default",
     "other": "default",
     "기타": "default",
+    # 스탠드업 (프론트 라벨 / 변형 키)
+    "team_standup": "standup",
     # 1:1
     "1on1": "one_on_one",
     "1:1": "one_on_one",

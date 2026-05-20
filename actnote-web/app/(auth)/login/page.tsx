@@ -7,6 +7,10 @@ import { createClient } from "@/lib/supabase/client";
 import { AuthMarketingPanel } from "@/components/auth/AuthMarketingPanel";
 import { englishFieldInvalidMessage, clearNativeValidity } from "@/lib/auth-native-validation";
 import { SUPPORT_EMAIL } from "@/lib/legal-links";
+import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
+import { startGoogleSignIn } from "@/lib/auth/start-google-sign-in";
+import { AuthLegalFooter } from "@/components/auth/AuthLegalFooter";
+import { GoogleMark } from "@/components/auth/GoogleMark";
 
 const PLACEHOLDER_EMAIL = "lucy@actnote.com";
 const PLACEHOLDER_PASSWORD = "Enter your password";
@@ -57,6 +61,7 @@ function ForgotPasswordModal({ open, onClose }: { open: boolean; onClose: () => 
 
 function LoginForm() {
   const searchParams = useSearchParams();
+  const returnTo = getSafeInternalReturnPath(searchParams.get("next"));
   const verified = searchParams.get("verified") === "1";
   const urlError = searchParams.get("error");
 
@@ -65,6 +70,7 @@ function LoginForm() {
   const [staySignedIn, setStaySignedIn] = useState(true);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   let queryBanner: { kind: "success" | "error"; text: string } | null = null;
@@ -103,7 +109,7 @@ function LoginForm() {
     if (!staySignedIn) {
       /* Persist session is handled by Supabase client; checkbox documents intent only for now. */
     }
-    window.location.assign("/workspace/select");
+    window.location.assign(returnTo ?? "/workspace/select");
   }
 
   return (
@@ -129,6 +135,35 @@ function LoginForm() {
             )}
 
             <form onSubmit={handleSubmit} className={`flex flex-col gap-4 ${queryBanner ? "mt-4" : "mt-6"}`}>
+              <button
+                type="button"
+                disabled={googleLoading || loading}
+                onClick={() => {
+                  setError(null);
+                  setGoogleLoading(true);
+                  void startGoogleSignIn(returnTo)
+                    .catch((e) => {
+                      setError(e instanceof Error ? e.message : "Google sign-in could not start.");
+                    })
+                    .finally(() => setGoogleLoading(false));
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white py-[14px] text-[15px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc] disabled:opacity-60"
+              >
+                {googleLoading ? (
+                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#0f172a] border-t-transparent" />
+                ) : (
+                  <>
+                    <GoogleMark />
+                    Continue with Google
+                  </>
+                )}
+              </button>
+
+              <div className="flex items-center gap-4">
+                <div className="h-px flex-1 bg-[#e2e8f0]" />
+                <span className="shrink-0 text-[13px] text-[#94a3b8]">or sign in with email</span>
+                <div className="h-px flex-1 bg-[#e2e8f0]" />
+              </div>
               <div className="flex flex-col gap-2">
                 <label htmlFor="login-email" className="text-sm font-bold text-[#0f172a]">
                   Email Address
@@ -201,7 +236,7 @@ function LoginForm() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || googleLoading}
                 className="w-full rounded-[10px] bg-[#ff6b35] py-[15px] text-base font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-60"
               >
                 {loading ? (
@@ -212,15 +247,16 @@ function LoginForm() {
               </button>
             </form>
 
-            <div className="mt-6 flex items-center gap-4">
-              <div className="h-px flex-1 bg-[#e2e8f0]" />
-              <span className="shrink-0 text-[13px] text-[#94a3b8]">or</span>
-              <div className="h-px flex-1 bg-[#e2e8f0]" />
+            <div className="mt-6">
+              <AuthLegalFooter />
             </div>
 
             <p className="mt-6 flex flex-wrap items-center justify-center gap-1 text-center text-sm text-[#475569]">
               Don&apos;t have an account?{" "}
-              <Link href="/signup" className="font-bold text-[#ff6b35] hover:underline">
+              <Link
+                href={returnTo ? `/signup?next=${encodeURIComponent(returnTo)}` : "/signup"}
+                className="font-bold text-[#ff6b35] hover:underline"
+              >
                 Sign up
               </Link>
             </p>

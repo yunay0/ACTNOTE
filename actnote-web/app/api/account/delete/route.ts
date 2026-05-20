@@ -56,6 +56,43 @@ export async function POST(request: Request) {
     );
   }
 
+  if (mode === "account_only") {
+    const { data: memberRows, error: listErr } = await admin
+      .from("workspace_members")
+      .select("workspace_id")
+      .eq("user_id", user.id);
+
+    if (listErr) {
+      console.error("[account/delete] list memberships:", listErr.message);
+      return NextResponse.json({ error: "Failed to verify workspaces" }, { status: 500 });
+    }
+
+    for (const row of memberRows ?? []) {
+      const wid = typeof row.workspace_id === "string" ? row.workspace_id : "";
+      if (!wid) continue;
+
+      const [{ data: wsRow }, { count: mc }] = await Promise.all([
+        admin.from("workspaces").select("owner_id").eq("id", wid).maybeSingle(),
+        admin
+          .from("workspace_members")
+          .select("*", { count: "exact", head: true })
+          .eq("workspace_id", wid),
+      ]);
+
+      const memberCount = mc ?? 0;
+      const oid = wsRow && typeof wsRow.owner_id === "string" ? wsRow.owner_id : null;
+      if (oid === user.id && memberCount > 1) {
+        return NextResponse.json(
+          {
+            error:
+              "You must transfer workspace ownership before you can delete your account while teammates still have access.",
+          },
+          { status: 409 },
+        );
+      }
+    }
+  }
+
   if (mode === "workspace_and_account") {
     if (!workspaceId) {
       return NextResponse.json({ error: "workspace_id is required for this mode" }, { status: 400 });

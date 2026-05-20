@@ -23,6 +23,71 @@ from src.storage import LocalStorage, StorageBackend, SupabaseStorage
 _console = Console()
 
 
+def _parse_ai_draft_notes_column(raw: object) -> dict | None:
+    """DB ``ai_draft_notes`` 컬럼(TEXT/JSON/이미 dict)을 dict 로 정규화."""
+    import json
+
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            p = json.loads(raw)
+            return p if isinstance(p, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _speaker_labels_from_aligned(aligned_segments: list[dict]) -> set[str]:
+    """Diarization 라벨 집합 (UNKNOWN 제외)."""
+    labels: set[str] = set()
+    for seg in aligned_segments:
+        sp = (seg.get("speaker") or "").strip()
+        if sp and sp != "UNKNOWN":
+            labels.add(sp)
+    return labels
+
+
+def _merge_preserved_speaker_mapping(
+    sb_client,
+    meeting_id: str,
+    extracted: dict,
+    aligned_segments: list[dict],
+) -> None:
+    """DRAFT-010: 재분석 시에도 이번 정렬 결과에 남아 있는 라벨에 한해 ``speaker_mapping`` 보존."""
+    labels = _speaker_labels_from_aligned(aligned_segments)
+    if not labels:
+        return
+    try:
+        resp = (
+            sb_client.table("meetings")
+            .select("ai_draft_notes")
+            .eq("id", meeting_id)
+            .single()
+            .execute()
+        )
+        prev = _parse_ai_draft_notes_column((resp.data or {}).get("ai_draft_notes"))
+    except Exception:
+        return
+    if not prev:
+        return
+    sm = prev.get("speaker_mapping")
+    if not isinstance(sm, dict):
+        return
+    preserved: dict[str, str] = {}
+    for k, v in sm.items():
+        key = str(k).strip()
+        if key not in labels or not isinstance(v, str):
+            continue
+        val = v.strip()
+        if val:
+            preserved[key] = val
+    if preserved:
+        extracted["speaker_mapping"] = preserved
+
+
 def _update_meeting(
     sb_client,
     meeting_id: str,
@@ -32,6 +97,8 @@ def _update_meeting(
 ) -> None:
     """meetings 테이블의 AI 추출 결과 컬럼을 UPDATE한다."""
     import json
+
+    _merge_preserved_speaker_mapping(sb_client, meeting_id, extracted, aligned_segments)
 
     duration: float | None = None
     if aligned_segments:

@@ -1,10 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/meetings";
+  const next = getSafeInternalReturnPath(searchParams.get("next")) ?? "/workspace/select";
 
   if (code) {
     const supabase = await createClient();

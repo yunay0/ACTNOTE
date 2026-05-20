@@ -158,14 +158,14 @@ await supabase.rpc("set_member_role", {                          // owner only
 
 | 컬럼 | 타입 | 용도 |
 |------|------|------|
-| `meeting_type` | TEXT | `'sprint' \| 'planning' \| 'retro' \| '1on1' \| 'default'`. **LLM 시스템 프롬프트가 이 값으로 분기** (MTG-004) |
+| `meeting_type` | TEXT | v0.3 UI: `standup` \| `project_review` \| `one_on_one` \| `other` (→ `default` 템플릿). 레거시 행은 `brainstorming` 등 기존 값 유지 가능. **MTG-004** LLM 프롬프트 분기 |
 | `description` | TEXT | 사용자 입력 메모 |
 | `responsible_user_id` | UUID | 회의 책임자 (`users(id) ON DELETE SET NULL`) |
 | `participants` | JSONB | `["이동욱", { "name": "유나", "email": "..." }]` 형식. 화자 후보 추측 (DRAFT-010) hint 로 사용 |
 
 **프론트:**
-- 업로드 폼에서 4개 모두 입력받기 (옵션 드롭다운: `default / sprint / planning / retro / 1on1` + 한국어 라벨 `기본 / 스프린트 / 기획 / 회고 / 1:1`)
-- 한국어 alias 도 백엔드가 자동 정규화 (`스프린트` → `sprint`)
+- 업로드 폼에서 Meeting type 4종 (`MEETING_TYPE_OPTIONS`, `lib/meetings/meeting-types.ts`)만 선택. 값은 `meetings.meeting_type`에 그대로 저장되고 파이프라인이 읽어 MTG-004 템플릿을 고른다.
+- 한국어 alias 도 백엔드가 자동 정규화 (`스프린트` → `standup` 등, `llm_extractor._TYPE_ALIAS`)
 - 미지원 / NULL → 자동 `default` 폴백 (안전)
 
 **전체 type 별 system prompt 차이:** [prompts/templates/README.md](../prompts/templates/README.md)
@@ -185,14 +185,22 @@ await supabase.rpc("set_member_role", {                          // owner only
       { "user_id": "uuid", "name": "유나",  "email": "...", "confidence": 0.45, "reason": "..." }
     ],
     "SPEAKER_01": []
+  },
+  "speaker_mapping": {
+    "SPEAKER_00": "<confirmed_user_uuid>",
+    "SPEAKER_01": "<confirmed_user_uuid>"
   }
 }
 ```
 
+**확정 저장 (v0.3):** 프론트가 `meetings.ai_draft_notes` JSON 을 파싱한 뒤 `speaker_mapping` 키를 병합해 다시 `JSON.stringify` 로 UPDATE 한다. **재분석 시:** 파이프라인 `_merge_preserved_speaker_mapping` 이 이번 diarization 에서 여전히 존재하는 화자 라벨에 한해 DB 에 있던 `speaker_mapping` 을 새 `ai_draft_notes` 에 다시 넣는다 (라벨이 바뀌면 해당 키는 자연히 빠짐).
+
 **프론트 UI 권장:**
 1. transcript 화자 라벨 옆에 dropdown — confidence 0.4 이상 후보들 표시
-2. 사용자가 1명 선택해 확정 → 별도 테이블 `meeting_speaker_mapping` 같은 곳에 저장 (스키마는 추후 협의)
+2. 사용자가 1명 선택해 확정 → ~~별도 테이블 `meeting_speaker_mapping`~~ → **동일 JSON 의 `speaker_mapping`** 에 저장 (meeting detail 페이지 구현됨)
 3. 확정되지 않은 라벨은 그대로 `SPEAKER_00` 유지
+
+**전사 스크립트 확인 (v0.3):** `transcripts` 에 행이 있으면 상태가 `ready`/`published` 가 아닐 때도 회의 상세에 **Transcript** 카드로 전체 전사를 스크롤 확인할 수 있다. 분석이 끝나면 동일 내용이 **Speakers & transcript** 블록 하단에도 표시된다.
 
 **안전:** `speaker_candidates` 가 **없거나 빈 dict** 일 수 있음 (멤버 0명, LLM 키 없음, 발화 부족). 항상 `?? {}` 로 가드.
 
@@ -293,7 +301,7 @@ Supabase SQL Editor 에서 **한 파일씩 순서대로** 실행:
 
 - [ ] 업로드 → `meetings.status` 가 `transcribing → ready` 로 진행
 - [ ] 일부러 깨진 `audio_path` → `meetings.status = 'error'` + `notifications.kind = 'analysis_failed'` 1건
-- [ ] `meeting_type='sprint'` 입력 후 분석 → 콘솔 로그 `type=sprint` 확인
+- [ ] `meeting_type='standup'` 저장 후 분석 → 워커가 `standup.md` 템플릿 로드 (콘솔/로그로 확인)
 - [ ] 같은 `meeting_id` 로 재분석 → `[reanalysis] cleanup` 라인 출력, 중복 row 없음
 - [ ] 발행 직전 Notion 미연동 → `validate_meeting_for_publication.missing` 에 `'notion_integration'` 포함
 - [ ] `set_member_role` 마지막 owner demote 시도 → `last_owner_cannot_be_demoted` 에러

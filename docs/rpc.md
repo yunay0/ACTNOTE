@@ -300,6 +300,8 @@ if (error) {
 
 기존 멤버를 워크스페이스에서 삭제(강퇴). **owner만**. 마이그레이션 `018_remove_member_rpc.sql` 후 사용 가능.
 
+> **v0.3 Next.js:** 웹 클라이언트는 이 RPC 대신 **§11** 의 `workspace_members` 직접 `DELETE` + `revoke_pending_invites_for_member` 를 사용한다. (동일 DB, 다른 진입점.)
+
 ```ts
 const { error } = await supabase.rpc("remove_workspace_member", {
   p_workspace_id: workspaceId,
@@ -321,6 +323,59 @@ if (error) {
 - 마지막 owner 는 삭제 불가 (`last_owner_cannot_be_removed`, `P0001`).
 - 대상 사용자에게 같은 워크스페이스로 발급된 **pending 초대도 함께 `revoked`** 처리 — 다시 초대하려면 새 토큰을 발급.
 - 회의(`meetings`) 등은 `workspace_id` 로 직접 묶여 있어 멤버 삭제만으로는 제거되지 않습니다. 본인 작성 회의의 처리 정책은 별 합의 사항.
+
+---
+
+## 10. 워크스페이스 가입 요청 (슬러그 링크 / 오너·admin 승인) — `migrations/026_workspace_join_requests.sql`
+
+이메일 초대 토큰(`create_invite` → `accept_invite`)과 별도로, **워크스페이스 슬러그 공유 링크**(`/invite/<slug>`)로 들어온 사용자는 **즉시 멤버가 되지 않고** `workspace_join_requests` 에 pending row 를 만든 뒤 owner/admin 이 승인한다.
+
+### `public_workspace_preview_by_slug(p_slug text)`
+
+비멤버는 RLS 때문에 `workspaces` 를 조회할 수 없어, 슬러그로 `id, name, slug` 만 노출하는 헬퍼. **authenticated** 만 실행.
+
+### `create_join_request(p_workspace_slug text, p_message text?)`
+
+가입 요청 생성. **authenticated**. 반환: `request_id`, `workspace_id`, `workspace_name`, `owner_email`, `owner_name` (오너에게 메일 보내기용). 이미 멤버면 `P0001` `already_a_member`, 동일 워크스페이스에 pending 이 있으면 `request_already_pending`, 슬러그 없으면 `P0002` `workspace_not_found`.
+
+### `review_join_request(p_request_id uuid, p_action text)`
+
+**owner/admin.** `p_action` 은 `approved` | `rejected`. 승인 시 `workspace_members` 에 `member` INSERT (ON CONFLICT DO NOTHING).
+
+### Next.js 라우트 (메일 포함)
+
+클라이언트는 RPC 직접 호출 대신 다음을 사용할 수 있다.
+
+- `POST /api/workspace/join-request` — body: `{ workspace_slug, message? }` — 내부에서 `create_join_request` + 오너에게 메일 (SMTP/Resend 설정 시).
+- `POST /api/workspace/join-request/[id]/review` — body: `{ action: "approved" | "rejected" }` — 내부에서 `review_join_request` + 신청자에게 결과 메일 (설정 시).
+
+### 목록 UI
+
+`list_*` RPC 없음. **owner/admin** 은 RLS 로 `workspace_join_requests` 를 `SELECT` (pending 등) + `users` 조인으로 표시한다.
+
+**신규 사용자:** `/invite/<slug>` 는 비로그인 시 `/login?next=/invite/<slug>` 로 보낸다. 슬러그(비토큰) 흐름에서 가입 요청은 위 `POST /api/workspace/join-request` 권장. 로그인/회원가입 완료 후 `next` 가 안전한 내부 경로일 때만 해당 URL로 돌아가 참여 요청을 이어갈 수 있다 (`lib/auth/safe-return-path.ts`).
+
+---
+
+## 11. 워크스페이스 멤버 제거 (v0.3 클라이언트 DELETE) — `migrations/027_workspace_members_client_delete.sql`
+
+멤버 **강퇴**는 `remove_workspace_member` RPC 가 아니라 **클라이언트에서 `workspace_members` 행 DELETE** 로 처리한다. RLS 정책 `workspace_members_delete_by_admin` 이 다음을 보장한다.
+
+- 호출자가 해당 워크스페이스 **admin/owner**
+- **본인 행** 삭제 불가
+- **`role = 'owner'` 인 행** 삭제 불가 (역할 조정은 `set_member_role` 후에만)
+
+### `revoke_pending_invites_for_member(p_workspace_id, p_target_user_id)`
+
+강퇴한 사용자 이메일과 같은 **pending** 초대를 `revoked` 로 정리한다. **admin/owner** 만. 클라이언트는 `DELETE workspace_members` 성공 직후 이 RPC 를 호출하는 것을 권장한다.
+
+```ts
+await supabase.from("workspace_members").delete().eq("workspace_id", ws).eq("user_id", targetId);
+await supabase.rpc("revoke_pending_invites_for_member", {
+  p_workspace_id: ws,
+  p_target_user_id: targetId,
+});
+```
 
 ---
 

@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { LandingSignInGoogleButton, LandingStartGoogleButton } from "@/components/landing/LandingGoogleAuth";
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL, supportMailtoHref } from "@/lib/legal-links";
 
 export default function LandingPage() {
@@ -19,12 +19,7 @@ function Nav() {
   return (
     <header className="flex h-[72px] shrink-0 items-center justify-between border-b border-[#e2e8f0] bg-white px-20">
       <Logo />
-      <Link
-        href="/login"
-        className="flex h-10 w-[120px] items-center justify-center rounded-lg border border-[#2e5c8a] text-sm font-bold text-[#1e3a5f] hover:bg-[#f8fafc] transition-colors"
-      >
-        Sign In
-      </Link>
+      <LandingSignInGoogleButton />
 
     </header>
   );
@@ -85,15 +80,7 @@ function LeftColumn() {
       </div>
 
       {/* CTA */}
-      <Link
-        href="/signup"
-        className="inline-flex w-fit items-center justify-center rounded-xl px-20 py-5 text-[17px] font-bold text-white shadow-[0px_8px_12px_rgba(255,107,53,0.3)] hover:opacity-90 transition-opacity"
-        style={{
-          background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)",
-        }}
-      >
-        Start ACTNOTE
-      </Link>
+      <LandingStartGoogleButton />
     </div>
   );
 }
