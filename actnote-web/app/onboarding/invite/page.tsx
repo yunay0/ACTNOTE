@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { INVITE_EXPIRES_IN_DAYS } from "@/lib/workspace/invite-expiry";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -106,7 +107,7 @@ export default function OnboardingInvitePage() {
           p_workspace_id: workspaceId,
           p_email: email,
           p_role: "member",
-          p_expires_in_days: 7,
+          p_expires_in_days: INVITE_EXPIRES_IN_DAYS,
         });
 
         if (invErr) {

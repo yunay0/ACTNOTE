@@ -147,14 +147,14 @@ const { data, error } = await supabase.rpc("revoke_meeting_publication", {
 
 ## 5. `create_invite(p_workspace_id, p_email, p_role, p_expires_in_days)` *(B-4-1)*
 
-워크스페이스 멤버 초대. **admin/owner만**. 마이그레이션 `016_workspace_invites.sql` 후 사용 가능.
+워크스페이스 멤버 초대. **admin/owner만**. 마이그레이션 `016` 기준 `p_expires_in_days` 는 **1..30** (선택 시 `028` 로 함수 정의만 동기화).
 
 ```ts
 const { data: invite, error } = await supabase.rpc("create_invite", {
   p_workspace_id: workspaceId,
   p_email: "newteam@example.com",
   p_role: "member",          // 'owner' | 'admin' | 'member'
-  p_expires_in_days: 7,      // 1..30 (기본 7)
+  p_expires_in_days: 30,     // 1..30 (앱은 `INVITE_EXPIRES_IN_DAYS` 와 동기)
 });
 if (error) {
   if (error.code === "42501") /* 권한 없음 */;
@@ -253,6 +253,28 @@ router.push(`/dashboard?ws=${workspace.id}`);
 ```
 
 **멱등:** 이미 수락한 token 을 다시 누르면 에러 없이 같은 workspace 반환. 이미 멤버인 사용자도 `workspace_members` 에 중복 INSERT 안 됨.
+
+---
+
+## 6.1 `preview_workspace_invite(p_token)` *(migrations/029, 030)*
+
+이메일 초대 링크(`/invite/<token>`)로 들어온 **로그인 사용자**가, RLS 없이 초대 메타를 확인할 때 사용한다. `workspace_invites` 는 RLS로 인해 JWT 이메일과 행의 `invited_email`이 맞지 않으면 **같은 토큰이어도 SELECT가 0건**이 될 수 있어, 이 RPC로 먼저 조회한다 (`SECURITY DEFINER`).
+
+**반환 (jsonb):**
+
+- 토큰 없음/불일치: `{ "ok": false, "reason": "invalid_token" }`
+- 유효 초대: `{ "ok": true, "workspace": { "id", "name", "slug" }, "invite_status", "invite_expired", "invited_email", "email_matches" }`
+  - `invited_email`: 정규화된 소문자 문자열
+  - `email_matches`: 호출자 JWT 이메일(소문자·trim)과 초대 대상 이메일 일치 여부
+
+프론트는 `invalid_token`일 때만 `public_workspace_preview_by_slug` 슬러그 폴백을 탄다.
+
+```ts
+const { data, error } = await supabase.rpc("preview_workspace_invite", {
+  p_token: tokenFromPath,
+});
+// error 42501 → 비로그인
+```
 
 ---
 
@@ -390,6 +412,7 @@ await supabase.rpc("revoke_pending_invites_for_member", {
 [수신자] 메일의 "초대 수락" 클릭 → /invite/<token>
     └─ 로그인 안 됐으면 → /login?next=/invite/<token>
     └─ 로그인 후
+        └─ supabase.rpc('preview_workspace_invite', { p_token })  ← RLS 우회로 초대 메타 확인
         └─ supabase.rpc('accept_invite', { p_token })
         └─ /dashboard?ws=<workspace_id>
 

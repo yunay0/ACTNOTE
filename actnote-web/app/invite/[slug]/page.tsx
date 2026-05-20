@@ -334,9 +334,8 @@ export default function InvitePage() {
               </div>
               <h2 className="text-[18px] font-bold text-[#0a2540]">Wrong account</h2>
               <p className="text-sm text-[#64748b]">
-                This invite was sent to{" "}
-                <strong className="text-[#0a2540]">{invitedEmailHint || "another email"}</strong>. Sign out and sign
-                back in with that address to accept.
+                This invite was sent to <strong className="text-[#0a2540]">{invitedEmailHint || "another email"}</strong>
+                . Sign out and sign back in with that address to accept.
               </p>
               <button
                 onClick={async () => {
