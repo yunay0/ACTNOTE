@@ -8,9 +8,7 @@ import { AuthMarketingPanel } from "@/components/auth/AuthMarketingPanel";
 import { englishFieldInvalidMessage, clearNativeValidity } from "@/lib/auth-native-validation";
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from "@/lib/legal-links";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
-import { startGoogleSignIn } from "@/lib/auth/start-google-sign-in";
 import { AuthLegalFooter } from "@/components/auth/AuthLegalFooter";
-import { GoogleMark } from "@/components/auth/GoogleMark";
 
 const PLACEHOLDER_FIRST = "Lucy";
 const PLACEHOLDER_LAST = "Lee";
@@ -39,7 +37,6 @@ function SignupForm() {
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [agreePrivacy, setAgreePrivacy] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
@@ -110,38 +107,11 @@ function SignupForm() {
           ) : (
             <>
               <h2 className="text-[28px] font-bold text-[#0f172a]">Create your account</h2>
-              <p className="mt-2 text-sm text-[#475569]">Start transforming your meetings into actions</p>
+              <p className="mt-2 text-sm text-[#475569]">
+                Sign up with email and password. Any address works, including Gmail.
+              </p>
 
               <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-[18px]">
-                <button
-                  type="button"
-                  disabled={googleLoading || loading}
-                  onClick={() => {
-                    setError(null);
-                    setGoogleLoading(true);
-                    void startGoogleSignIn(returnTo)
-                      .catch((e) => {
-                        setError(e instanceof Error ? e.message : "Google sign-up could not start.");
-                      })
-                      .finally(() => setGoogleLoading(false));
-                  }}
-                  className="flex w-full items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white py-[14px] text-[15px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc] disabled:opacity-60"
-                >
-                  {googleLoading ? (
-                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#0f172a] border-t-transparent" />
-                  ) : (
-                    <>
-                      <GoogleMark />
-                      Continue with Google
-                    </>
-                  )}
-                </button>
-
-                <div className="flex items-center gap-4">
-                  <div className="h-px flex-1 bg-[#e2e8f0]" />
-                  <span className="shrink-0 text-[13px] text-[#94a3b8]">or sign up with email</span>
-                  <div className="h-px flex-1 bg-[#e2e8f0]" />
-                </div>
                 <div className="flex gap-5">
                   <div className="flex flex-1 flex-col gap-2">
                     <label htmlFor="signup-first" className="text-sm font-bold text-[#0f172a]">
@@ -305,7 +275,7 @@ function SignupForm() {
 
                 <button
                   type="submit"
-                  disabled={loading || googleLoading}
+                  disabled={loading}
                   className="mt-1 w-full rounded-[10px] bg-[#ff6b35] py-[14px] text-base font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:opacity-60"
                 >
                   {loading ? (

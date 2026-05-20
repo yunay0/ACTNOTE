@@ -1,3 +1,7 @@
+/**
+ * Supabase Auth PKCE callback: exchanges ?code= for a session (e.g. email confirmation).
+ * Email/password sign-in does not use this route.
+ */
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
