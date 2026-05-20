@@ -170,11 +170,14 @@ def notify_analysis_complete(
     """분석 완료 알림 생성.
 
     수신자:
-    1. 회의 작성자 (meetings.created_by)
-    2. 액션 아이템 담당자 (action_items.assignee_user_id, not null)
-    중복 user_id는 1건만 생성.
+    1. 해당 워크스페이스의 모든 멤버 (workspace_members)
+    2. 회의 작성자 (meetings.created_by; 멤버 집합에 포함되면 1건만)
+    3. 액션 아이템 담당자 (assignee_user_id; 위와 동일하게 중복 제거)
 
-    작성자에게는 설정 허용 시 분석 완료 메일을 추가 발송한다.
+    멤버 전원에게 인앱 알림을 보내 초대된 member 도 owner 가 업로드한 회의
+    분석 완료를 볼 수 있다.
+
+    이메일은 기존과 같이 작성자(created_by) 한 명에게만, 설정이 켜져 있으면 발송한다.
 
     Returns:
         생성된 알림 개수.
@@ -213,10 +216,23 @@ def notify_analysis_complete(
         if row.get("assignee_user_id")
     }
 
+    members_resp = (
+        sb_client.table("workspace_members")
+        .select("user_id")
+        .eq("workspace_id", workspace_id)
+        .execute()
+    )
+    member_ids = {
+        str(row["user_id"])
+        for row in (members_resp.data or [])
+        if row.get("user_id")
+    }
+
     recipients: set[str] = set()
+    recipients.update(member_ids)
     if creator_id:
-        recipients.add(creator_id)
-    recipients.update(assignee_ids)
+        recipients.add(str(creator_id))
+    recipients.update(str(aid) for aid in assignee_ids)
 
     if not recipients:
         _log.warning("notify_analysis_complete: 수신자 없음 (meeting_id=%s)", meeting_id)
@@ -224,7 +240,7 @@ def notify_analysis_complete(
 
     notif_title = f"Analysis complete: {meeting_title}"
     notif_message = (
-        f"Your meeting notes are ready to review. "
+        f"Meeting notes are ready to review. "
         f"{action_count} action item(s) on this meeting."
     )
 
@@ -690,10 +706,25 @@ if __name__ == "__main__":
         "assignee_user_id": user_id,
     }).execute()
 
-    # --- notify_analysis_complete: 중복 방지로 1건만 생성 ---
+    # --- notify_analysis_complete: 워크스페이스 멤버 전원(중복 제거) ---
+    members_data = (
+        sb.table("workspace_members")
+        .select("user_id")
+        .eq("workspace_id", workspace_id)
+        .execute()
+    ).data or []
+    recipients_expected = {str(r["user_id"]) for r in members_data if r.get("user_id")}
+    # 작성자·담당자가 아직 멤버 테이블에 없으면 알림 로직과 동일하게 포함
+    uid_str = str(user_id)
+    recipients_expected.add(uid_str)
+    expected_count = len(recipients_expected)
+
     count = notify_analysis_complete(mid, workspace_id, sb)
-    assert count == 1, f"creator=assignee이므로 1건 기대, 실제={count}"
-    console.print(f"[green][OK][/] notify_analysis_complete → {count}건 (중복 방지)")
+    assert count == expected_count, (
+        f"멤버 전원 dedupe 기대 {expected_count}건, 실제={count} "
+        f"(TEST_WORKSPACE_ID 에 workspace_members 가 있는지 확인)"
+    )
+    console.print(f"[green][OK][/] notify_analysis_complete → {count}건 (workspace members deduped)")
 
     # DB 확인
     notifs = (
@@ -703,7 +734,7 @@ if __name__ == "__main__":
         .execute()
     ).data or []
     complete_notifs = [n for n in notifs if n["type"] == "analysis_complete"]
-    assert len(complete_notifs) == 1, f"expected 1, got {len(complete_notifs)}"
+    assert len(complete_notifs) == expected_count, f"expected {expected_count}, got {len(complete_notifs)}"
     assert complete_notifs[0]["is_read"] is False
     console.print(f"[green][OK][/] is_read=False 확인")
 

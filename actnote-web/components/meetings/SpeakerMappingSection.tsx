@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Mic2, Save } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { workspaceMemberDisplayName } from "@/lib/user/member-display";
 import { TranscriptViewer, type TranscriptLine } from "@/components/meetings/TranscriptViewer";
 
 export type SpeakerCandidate = {
@@ -198,7 +199,9 @@ export function SpeakerMappingSection(props: {
                     <option value="">Unmapped</option>
                     {members.map((m) => (
                       <option key={m.user_id} value={m.user_id}>
-                        {m.name?.trim() ? `${m.name} (${m.email})` : m.email}
+                        {m.email
+                          ? `${workspaceMemberDisplayName(m.name, m.email)} (${m.email})`
+                          : workspaceMemberDisplayName(m.name, m.email)}
                       </option>
                     ))}
                   </select>

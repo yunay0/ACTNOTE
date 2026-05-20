@@ -8,6 +8,10 @@ import { createClient } from "@/lib/supabase/client";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
 import { INVITE_EXPIRES_IN_DAYS } from "@/lib/workspace/invite-expiry";
+import {
+  workspaceMemberDisplayName,
+  workspaceMemberInitials,
+} from "@/lib/user/member-display";
 
 /** Supabase `workspace_members.role` */
 type DbRole = "owner" | "admin" | "member";
@@ -40,8 +44,10 @@ interface Member {
   dbRole: DbRole;
   /** Display tier: Owner = DB owner or admin. */
   role: UiRole;
-  name: string;
+  /** `users.name` (may be empty). */
+  profileName: string;
   email: string;
+  displayName: string;
   initials: string;
   gradient: string;
 }
@@ -70,13 +76,6 @@ const ROLE_STYLE: Record<UiRole, { label: string; bg: string; text: string }> = 
   /** Figma S-09-01: Member badge — blue on light blue */
   member: { label: "Member", bg: "bg-[#eff6ff]", text: "text-[#2e5c8a]" },
 };
-
-function getInitials(name: string, email: string): string {
-  if (name?.trim()) {
-    return name.trim().split(/\s+/).slice(0, 2).map((p) => p[0]?.toUpperCase() ?? "").join("");
-  }
-  return email.split("@")[0][0]?.toUpperCase() ?? "?";
-}
 
 export default function WorkspaceSettingsPage() {
   const router = useRouter();
@@ -178,16 +177,17 @@ export default function WorkspaceSettingsPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const list: Member[] = memberRows.map((row: any, idx: number) => {
         const u = Array.isArray(row.users) ? row.users[0] : row.users;
-        const name = u?.name ?? "";
-        const email = u?.email ?? "";
+        const profileName = typeof u?.name === "string" ? u.name : "";
+        const email = typeof u?.email === "string" ? u.email : "";
         const dbRole = parseDbRole(row.role as string);
         return {
           user_id: row.user_id,
           dbRole,
           role: toUiRole(dbRole),
-          name,
+          profileName,
           email,
-          initials: getInitials(name, email),
+          displayName: workspaceMemberDisplayName(profileName, email),
+          initials: workspaceMemberInitials(profileName, email),
           gradient: GRADIENTS[idx % GRADIENTS.length],
         };
       });
@@ -757,10 +757,10 @@ export default function WorkspaceSettingsPage() {
                     {/* Name / Email */}
                     <div className="flex-1 min-w-0">
                       <p className="text-[14px] font-bold text-[#0a2540] truncate">
-                        {m.name || m.email.split("@")[0]}
+                        {m.displayName}
                         {isSelf && <span className="ml-1.5 text-[11px] font-normal text-[#94a3b8]">(you)</span>}
                       </p>
-                      <p className="text-[12px] text-[#64748b] truncate">{m.email}</p>
+                      <p className="text-[12px] text-[#64748b] truncate">{m.email || "—"}</p>
                     </div>
 
                     {/* Role badge / dropdown (WS-003) */}

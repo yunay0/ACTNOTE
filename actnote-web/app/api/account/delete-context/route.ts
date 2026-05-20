@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import {
+  workspaceMemberDisplayName,
+  workspaceMemberInitials,
+} from "@/lib/user/member-display";
 
 export const runtime = "nodejs";
 
@@ -108,6 +112,53 @@ export async function GET(request: Request) {
     flow = "delete_account_only";
   }
 
+  /** Peers for "transfer owner" picker (delete-account flow); excludes current user. */
+  let eligibleMembers: {
+    userId: string;
+    role: "owner" | "admin" | "member";
+    displayName: string;
+    email: string;
+    initials: string;
+  }[] = [];
+
+  if (flow === "transfer_required") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: memberRows, error: listErr } = await (supabase as any)
+      .from("workspace_members")
+      .select("user_id, role, users(name, email)")
+      .eq("workspace_id", workspaceId)
+      .neq("user_id", user.id);
+
+    if (listErr) {
+      return NextResponse.json({ error: "Failed to load workspace members" }, { status: 500 });
+    }
+
+    const parseRole = (raw: string | null | undefined): "owner" | "admin" | "member" => {
+      if (raw === "owner" || raw === "admin" || raw === "member") return raw;
+      return "member";
+    };
+    const sortKey = (r: "owner" | "admin" | "member") =>
+      r === "owner" ? 0 : r === "admin" ? 1 : 2;
+
+    for (const row of memberRows ?? []) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const u: any = Array.isArray((row as any).users) ? (row as any).users[0] : (row as any).users;
+      const profileName = typeof u?.name === "string" ? u.name : "";
+      const rowEmail = typeof u?.email === "string" ? u.email : "";
+      const uid = (row as { user_id?: string }).user_id;
+      if (!uid) continue;
+      const dbRole = parseRole((row as { role?: string }).role);
+      eligibleMembers.push({
+        userId: uid,
+        role: dbRole,
+        displayName: workspaceMemberDisplayName(profileName, rowEmail),
+        email: rowEmail,
+        initials: workspaceMemberInitials(profileName, rowEmail),
+      });
+    }
+    eligibleMembers.sort((a, b) => sortKey(a.role) - sortKey(b.role));
+  }
+
   return NextResponse.json(
     {
       flow,
@@ -123,6 +174,7 @@ export async function GET(request: Request) {
         email: user.email ?? "",
         initials,
       },
+      ...(flow === "transfer_required" ? { eligibleMembers } : {}),
     },
     { headers: { "Cache-Control": "no-store" } }
   );

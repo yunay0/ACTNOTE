@@ -71,6 +71,8 @@ interface Member {
   user_id: string;
   name: string | null;
   email: string;
+  /** Profile name if set, else email local-part (for UI). */
+  displayName: string;
 }
 
 /** referenced_documents JSONB 는 배열이 아닌 문자열(JSON 문자열)·객체 등으로 올 수 있음 */
@@ -199,11 +201,16 @@ export default function MeetingDetailPage() {
 
     if (data) {
       setMembers(
-        (data as any[]).map((row) => ({
-          user_id: row.user_id,
-          name: row.users?.name ?? null,
-          email: typeof row.users?.email === "string" ? row.users.email : "",
-        }))
+        (data as any[]).map((row) => {
+          const name = row.users?.name ?? null;
+          const email = typeof row.users?.email === "string" ? row.users.email : "";
+          return {
+            user_id: row.user_id,
+            name,
+            email,
+            displayName: workspaceMemberDisplayName(name, email),
+          };
+        })
       );
     }
   }, []);
@@ -619,7 +626,7 @@ export default function MeetingDetailPage() {
     if (!meeting?.responsible_user_id) return null;
     const mem = members.find((x) => x.user_id === meeting.responsible_user_id);
     if (!mem) return null;
-    return mem.name ? `${mem.name} (${mem.email})` : mem.email;
+    return mem.email ? `${mem.displayName} (${mem.email})` : mem.displayName;
   }, [meeting?.responsible_user_id, members]);
 
   // ─── 로딩 / 에러 ────────────────────────────────────────────
@@ -1056,7 +1063,7 @@ export default function MeetingDetailPage() {
                                     ? {
                                         ...a,
                                         assignee_user_id: uid,
-                                        assignee: uid ? (m?.name ?? m?.email ?? null) : null,
+                                        assignee: uid ? (m?.displayName ?? m?.email ?? null) : null,
                                       }
                                     : a
                                 )
@@ -1067,7 +1074,8 @@ export default function MeetingDetailPage() {
                             <option value="">Unassigned</option>
                             {members.map((m) => (
                               <option key={m.user_id} value={m.user_id}>
-                                {m.name ?? m.email}
+                                {m.displayName}
+                                {m.email ? ` (${m.email})` : ""}
                               </option>
                             ))}
                           </select>
