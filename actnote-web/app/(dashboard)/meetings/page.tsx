@@ -22,17 +22,17 @@ const TABS: { id: Tab; label: string }[] = [
 
 const PAGE_SIZE = 10;
 
-/** 선택된 필터 탭 색을 MeetingCard 상태 배지와 맞춤 */
+/** 선택된 필터 탭 색을 MeetingCard 상태 배지와 맞춤 (Analyzing=초록, Draft=노랑, Published=파랑) */
 function tabActiveShellClasses(tabId: Tab): string {
   switch (tabId) {
     case "all":
       return "bg-[#f1f5f9] text-[#0a2540]";
     case "analyzing":
-      return "bg-[#fff4f0] text-[#ff6b35]";
+      return "bg-green-50 text-green-800";
     case "drafts":
-      return "bg-[#f0f4ff] text-[#2e5c8a]";
+      return "bg-amber-50 text-amber-900";
     case "published":
-      return "bg-[#f0fdf4] text-green-700";
+      return "bg-blue-50 text-blue-800";
     default:
       return "bg-[#f1f5f9] text-[#0a2540]";
   }
@@ -44,11 +44,11 @@ function tabCountBadgeClasses(tabId: Tab, isActive: boolean): string {
     case "all":
       return "bg-[#e2e8f0] text-[#64748b]";
     case "analyzing":
-      return "bg-[#ff6b35]/10 text-[#ff6b35]";
+      return "bg-green-100 text-green-800";
     case "drafts":
-      return "bg-[#2e5c8a]/10 text-[#2e5c8a]";
+      return "bg-amber-100 text-amber-900";
     case "published":
-      return "bg-green-100 text-green-700";
+      return "bg-blue-100 text-blue-800";
     default:
       return "bg-[#e2e8f0] text-[#64748b]";
   }
