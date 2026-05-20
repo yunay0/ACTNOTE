@@ -45,33 +45,29 @@ export default function InvitePage() {
         return;
       }
 
-      // 1) Email-bound invite token
+      // 1) Email-bound invite token — SECURITY DEFINER RPC bypasses RLS email-match constraint
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: inviteRow } = await (supabase as any)
-        .from("workspace_invites")
-        .select("workspace_id, status, expires_at, workspaces(id, name, slug)")
-        .eq("token", slug)
-        .maybeSingle();
+      const { data: previewData } = await (supabase as any).rpc("get_invite_preview", {
+        p_token: slug,
+      });
+      const invitePreview = Array.isArray(previewData) ? previewData[0] : previewData;
 
-      if (inviteRow) {
-        if (inviteRow.status !== "pending") {
+      if (invitePreview) {
+        if (invitePreview.status !== "pending") {
           setPageState("not_found");
           return;
         }
-        const exp = inviteRow.expires_at ? new Date(inviteRow.expires_at as string) : null;
+        const exp = invitePreview.expires_at ? new Date(invitePreview.expires_at as string) : null;
         if (exp && exp.getTime() < Date.now()) {
           setPageState("not_found");
           return;
         }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const ws: any = Array.isArray(inviteRow.workspaces)
-          ? inviteRow.workspaces[0]
-          : inviteRow.workspaces;
-        if (!ws) {
-          setPageState("not_found");
-          return;
-        }
 
+        const ws: WorkspaceInfo = {
+          id: invitePreview.workspace_id as string,
+          name: invitePreview.workspace_name as string,
+          slug: invitePreview.workspace_slug as string,
+        };
         setWorkspace(ws);
         setIsTokenMode(true);
 
@@ -81,7 +77,7 @@ export default function InvitePage() {
           .select("user_id")
           .eq("workspace_id", ws.id)
           .eq("user_id", user.id)
-          .single();
+          .maybeSingle();
         setPageState(existing ? "already_member" : "token_found");
         return;
       }
