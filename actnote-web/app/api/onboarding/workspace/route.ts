@@ -55,14 +55,21 @@ export async function POST(req: Request) {
   }
 
   if (!updated?.length) {
-    return NextResponse.json(
-      {
-        error:
-          "No workspace owned by this account was found. Ask your admin whether signup migrations ran.",
-      },
-      { status: 404 }
+    // Workspace was deleted — create a fresh one via SECURITY DEFINER RPC.
+    // Direct INSERT would hit workspace_members RLS chicken-and-egg (must already be a member).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: newId, error: createErr } = await (supabase as any).rpc(
+      "create_workspace_for_self",
+      { p_name: nameToSave }
     );
+    if (createErr) {
+      return NextResponse.json(
+        { error: createErr.message ?? "Failed to create workspace." },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json({ ok: true, id: newId as string });
   }
 
-  return NextResponse.json({ ok: true, id: updated[0]?.id });
+  return NextResponse.json({ ok: true, id: updated[0]?.id as string });
 }
