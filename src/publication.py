@@ -1,7 +1,7 @@
 """PUB-001: 회의록 승인 및 발행 워크플로우.
 
 상태 머신: draft → ready (사용자 검토 완료) → published (발행됨)
-권한: admin만 상태 변경 가능.
+권한: owner 또는 admin만 상태 변경 가능.
 
 Notion 연동은 메인2 — 이 모듈은 DB 상태 변경만 담당한다.
 """
@@ -43,7 +43,7 @@ class StateError(PublicationError):
 # ---------------------------------------------------------------------------
 
 def check_workspace_admin(user_id: str, workspace_id: str, sb_client) -> bool:
-    """user_id가 해당 워크스페이스의 admin인지 확인한다."""
+    """user_id가 해당 워크스페이스의 owner 또는 admin인지 확인한다."""
     resp = (
         sb_client.table("workspace_members")
         .select("role")
@@ -54,13 +54,13 @@ def check_workspace_admin(user_id: str, workspace_id: str, sb_client) -> bool:
     )
     if not resp.data:
         return False
-    return resp.data.get("role") == "admin"
+    return resp.data.get("role") in ("owner", "admin")
 
 
 def _require_admin(user_id: str, workspace_id: str, sb_client) -> None:
     if not check_workspace_admin(user_id, workspace_id, sb_client):
         raise PermissionError(
-            f"user_id={user_id!r}는 workspace {workspace_id!r}의 admin이 아닙니다."
+            f"user_id={user_id!r}는 workspace {workspace_id!r}의 owner/admin이 아닙니다."
         )
 
 
