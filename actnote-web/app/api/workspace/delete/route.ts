@@ -54,6 +54,23 @@ export async function POST(request: Request) {
     );
   }
 
+  // 다른 멤버가 있으면 삭제 차단 — 소유권 이전 후 멤버가 모두 나가야 삭제 가능
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { count: memberCount } = await (supabase as any)
+    .from("workspace_members")
+    .select("*", { count: "exact", head: true })
+    .eq("workspace_id", workspaceId);
+
+  if (memberCount && memberCount > 1) {
+    return NextResponse.json(
+      {
+        error: `Cannot delete workspace with ${memberCount} members. Remove all other members first, or transfer ownership and leave.`,
+        member_count: memberCount,
+      },
+      { status: 409 }
+    );
+  }
+
   let admin;
   try {
     admin = createServiceRoleClient();
