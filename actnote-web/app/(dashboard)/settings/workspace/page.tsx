@@ -112,6 +112,8 @@ export default function WorkspaceSettingsPage() {
   const [deleteWorkspaceInput, setDeleteWorkspaceInput] = useState("");
   const [deleteWorkspaceBusy, setDeleteWorkspaceBusy] = useState(false);
   const [deleteWorkspaceError, setDeleteWorkspaceError] = useState<string | null>(null);
+  const [leaveWorkspaceBusy, setLeaveWorkspaceBusy] = useState(false);
+  const [leaveWorkspaceError, setLeaveWorkspaceError] = useState<string | null>(null);
 
   /** Merged former DB `owner` + `admin`: edit settings, invite, remove members (not role RPC). */
   const isElevated = currentDbRole === "owner" || currentDbRole === "admin";
@@ -503,6 +505,30 @@ export default function WorkspaceSettingsPage() {
     setDeleteWorkspaceInput("");
     setDeleteWorkspaceError(null);
     setDeleteWorkspaceBusy(false);
+  }
+
+  async function handleLeaveWorkspace() {
+    if (!workspaceId) return;
+    setLeaveWorkspaceBusy(true);
+    setLeaveWorkspaceError(null);
+    const supabase = createClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any).rpc("leave_workspace", {
+      p_workspace_id: workspaceId,
+    });
+    if (error) {
+      const msg =
+        error.message?.includes("owner_cannot_leave")
+          ? "Transfer ownership to another member before leaving."
+          : error.message ?? "Could not leave workspace.";
+      setLeaveWorkspaceError(msg);
+      setLeaveWorkspaceBusy(false);
+      return;
+    }
+    clearStoredWorkspaceId();
+    await refreshWorkspaces();
+    router.push("/workspace/select");
+    router.refresh();
   }
 
   async function handleConfirmDeleteWorkspace() {
@@ -1003,7 +1029,34 @@ export default function WorkspaceSettingsPage() {
             </div>
           </section>
 
-          {/* Danger zone — Figma 106:5085, DB workspace owner only */}
+          {/* Leave Workspace — non-owner members only */}
+          {!isDbOwner && workspaceId && (
+            <section className="rounded-[12px] border-2 border-[#fee2e2] bg-[#fef2f2] pb-[30px] pl-[34px] pr-[22px] pt-[29px]">
+              <div className="flex flex-col gap-[20px]">
+                <div className="flex flex-col gap-1">
+                  <h2 className="text-[17px] font-bold text-[#0a2540]">Leave Workspace</h2>
+                  <p className="text-[14px] text-[#64748b]">
+                    Remove yourself from this workspace. You will lose access to all meetings and data.
+                  </p>
+                </div>
+                {leaveWorkspaceError && (
+                  <p className="text-[13px] text-red-600">{leaveWorkspaceError}</p>
+                )}
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => void handleLeaveWorkspace()}
+                    disabled={leaveWorkspaceBusy}
+                    className="h-11 rounded-lg bg-[#ef4444] px-6 text-[14px] font-bold text-white transition-colors hover:bg-[#dc2626] disabled:opacity-50"
+                  >
+                    {leaveWorkspaceBusy ? "Leaving…" : "Leave Workspace"}
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Danger zone — DB workspace owner only */}
           {isDbOwner && (
             <section className="rounded-[12px] border-2 border-[#fee2e2] bg-[#fef2f2] pb-[30px] pl-[34px] pr-[22px] pt-[29px]">
               <div className="flex flex-col gap-[30px]">
@@ -1014,12 +1067,18 @@ export default function WorkspaceSettingsPage() {
                     <p>All meetings, notes, and member access will be permanently deleted.</p>
                     <p className="pt-0 font-bold text-[#0a2540]">This action cannot be undone.</p>
                   </div>
+                  {members.length > 1 && (
+                    <p className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[13px] text-amber-800">
+                      ⚠ {members.length} members are in this workspace. Transfer ownership and have all other members leave before deleting.
+                    </p>
+                  )}
                 </div>
                 <div className="flex justify-end pt-2.5">
                   <button
                     type="button"
                     onClick={openDeleteWorkspaceModal}
-                    className="h-11 rounded-lg bg-[#ef4444] px-6 text-[14px] font-bold text-white transition-colors hover:bg-[#dc2626]"
+                    disabled={members.length > 1}
+                    className="h-11 rounded-lg bg-[#ef4444] px-6 text-[14px] font-bold text-white transition-colors hover:bg-[#dc2626] disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Delete Workspace
                   </button>
