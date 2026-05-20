@@ -147,14 +147,14 @@ const { data, error } = await supabase.rpc("revoke_meeting_publication", {
 
 ## 5. `create_invite(p_workspace_id, p_email, p_role, p_expires_in_days)` *(B-4-1)*
 
-워크스페이스 멤버 초대. **admin/owner만**. 마이그레이션 `016` + `028_invite_expiry_extend.sql` 후 사용 가능.
+워크스페이스 멤버 초대. **admin/owner만**. 마이그레이션 `016` 기준 `p_expires_in_days` 는 **1..30** (선택 시 `028` 로 함수 정의만 동기화).
 
 ```ts
 const { data: invite, error } = await supabase.rpc("create_invite", {
   p_workspace_id: workspaceId,
   p_email: "newteam@example.com",
   p_role: "member",          // 'owner' | 'admin' | 'member'
-  p_expires_in_days: 90,     // 1..365 (기본 90, 앱은 `INVITE_EXPIRES_IN_DAYS` 와 동기)
+  p_expires_in_days: 30,     // 1..30 (앱은 `INVITE_EXPIRES_IN_DAYS` 와 동기)
 });
 if (error) {
   if (error.code === "42501") /* 권한 없음 */;

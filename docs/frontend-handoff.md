@@ -110,7 +110,7 @@ const { data: invite, error } = await supabase.rpc("create_invite", {
   p_workspace_id: wsId,
   p_email: invitee@example.com,
   p_role: "member",        // 'admin' | 'member'
-  p_expires_in_days: 90, // 1..365 — 앱 상수 `INVITE_EXPIRES_IN_DAYS` 권장
+  p_expires_in_days: 30, // 1..30 — 앱 상수 `INVITE_EXPIRES_IN_DAYS` 권장
 });
 
 // 2) 백엔드 헬퍼 endpoint 에 위임 → 한국어 본문 + Resend 발송

@@ -1,4 +1,4 @@
--- Extend workspace email invite lifetime: default 90 days, allow up to 365 days.
+-- create_invite: keep invite TTL aligned with product default (30 days, max 30).
 -- Apply after 016_workspace_invites.sql (replaces create_invite only).
 
 BEGIN;
@@ -7,7 +7,7 @@ CREATE OR REPLACE FUNCTION create_invite(
     p_workspace_id   uuid,
     p_email          text,
     p_role           text DEFAULT 'member',
-    p_expires_in_days int DEFAULT 90
+    p_expires_in_days int DEFAULT 30
 )
 RETURNS workspace_invites
 LANGUAGE plpgsql
@@ -43,8 +43,8 @@ BEGIN
             USING ERRCODE = 'P0001';
     END IF;
 
-    IF p_expires_in_days < 1 OR p_expires_in_days > 365 THEN
-        RAISE EXCEPTION 'expires_in_days must be 1..365 (got %)', p_expires_in_days
+    IF p_expires_in_days < 1 OR p_expires_in_days > 30 THEN
+        RAISE EXCEPTION 'expires_in_days must be 1..30 (got %)', p_expires_in_days
             USING ERRCODE = 'P0001';
     END IF;
 
