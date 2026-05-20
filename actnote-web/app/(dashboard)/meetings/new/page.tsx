@@ -9,8 +9,11 @@ import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import {
   allowedRecordingExtensionsLabel,
   fileAcceptAttribute,
-  validateRecordingFileName,
+  formatRecordingSizeMbDecimal,
+  getRecordingFileIssue,
+  type RecordingFileIssue,
 } from "@/lib/meeting/recordingFilename";
+import { RecordingUploadErrorModal } from "@/components/meetings/RecordingUploadErrorModal";
 
 const MAX_SIZE_MB = 50;
 
@@ -36,6 +39,9 @@ export default function NewMeetingPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [alertMsg, setAlertMsg] = useState<string | null>(null);
+  const [recordingUploadIssue, setRecordingUploadIssue] = useState<RecordingFileIssue | null>(
+    null
+  );
   const [loading, setLoading] = useState(false);
   const [processingModal, setProcessingModal] = useState(false);
   const [doneModal, setDoneModal] = useState(false);
@@ -159,29 +165,26 @@ export default function NewMeetingPage() {
     setParticipantInput("");
   }
 
-  function handleFileSelect(f: File) {
-    const nameErr = validateRecordingFileName(f.name);
-    if (nameErr) {
-      setAlertMsg(nameErr);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      return;
-    }
-    if (f.size > MAX_SIZE_MB * 1024 * 1024) {
-      setAlertMsg(`File size exceeds ${MAX_SIZE_MB}MB limit. Please choose a smaller file.`);
+  const handleFileSelect = useCallback((f: File) => {
+    const issue = getRecordingFileIssue(f, MAX_SIZE_MB);
+    if (issue) {
+      setRecordingUploadIssue(issue);
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
     setFile(f);
-    if (!title) setTitle(f.name.replace(/\.(mp3|m4a|wav|mp4|mov)$/i, ""));
-  }
+    setTitle((prev) => (prev.trim() ? prev : f.name.replace(/\.(mp3|m4a|wav|mp4|mov)$/i, "")));
+  }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const dropped = e.dataTransfer.files[0];
-    if (dropped) handleFileSelect(dropped);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title]);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragging(false);
+      const dropped = e.dataTransfer.files[0];
+      if (dropped) handleFileSelect(dropped);
+    },
+    [handleFileSelect]
+  );
 
   async function handleSubmit() {
     if (!title.trim() || !datetime || !file) {
@@ -200,9 +203,9 @@ export default function NewMeetingPage() {
       setAlertMsg("Please select a responsible person for this meeting.");
       return;
     }
-    const nameErrSubmit = validateRecordingFileName(file.name);
-    if (nameErrSubmit) {
-      setAlertMsg(nameErrSubmit);
+    const fileIssue = getRecordingFileIssue(file, MAX_SIZE_MB);
+    if (fileIssue) {
+      setRecordingUploadIssue(fileIssue);
       return;
     }
     setLoading(true);
@@ -374,6 +377,18 @@ export default function NewMeetingPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {recordingUploadIssue && (
+        <RecordingUploadErrorModal
+          issue={recordingUploadIssue}
+          onDismiss={() => setRecordingUploadIssue(null)}
+          onUploadAgain={() => {
+            setRecordingUploadIssue(null);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            requestAnimationFrame(() => fileInputRef.current?.click());
+          }}
+        />
       )}
 
       {/* Alert modal */}
@@ -601,7 +616,7 @@ export default function NewMeetingPage() {
                     </div>
                     <p className="text-xs text-[#94a3b8]">
                       {uploadProgress < 100
-                        ? `${(file!.size * uploadProgress / 100 / 1024 / 1024).toFixed(1)} MB / ${(file!.size / 1024 / 1024).toFixed(1)} MB`
+                        ? `${formatRecordingSizeMbDecimal((file!.size * uploadProgress) / 100)} / ${formatRecordingSizeMbDecimal(file!.size)}`
                         : "Processing..."}
                     </p>
                   </div>
@@ -609,7 +624,7 @@ export default function NewMeetingPage() {
                   <div className="flex flex-col items-center gap-2">
                     <span className="text-3xl">🎵</span>
                     <p className="text-sm font-semibold text-[#0a2540]">{file.name}</p>
-                    <p className="text-xs text-[#94a3b8]">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
+                    <p className="text-xs text-[#94a3b8]">{formatRecordingSizeMbDecimal(file.size)}</p>
                   </div>
                 ) : (
                   <>

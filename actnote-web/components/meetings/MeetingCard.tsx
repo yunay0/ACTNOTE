@@ -20,10 +20,10 @@ interface MeetingCardProps {
 }
 
 const STATUS_STYLE: Record<string, { bg: string; dot: string; text: string; label: string }> = {
-  analyzing: { bg: "bg-[#fff4f0]", dot: "bg-[#ff6b35] animate-pulse", text: "text-[#ff6b35]", label: "Analyzing" },
-  draft:     { bg: "bg-[#f0f4ff]", dot: "bg-[#2e5c8a]",               text: "text-[#2e5c8a]", label: "Draft" },
-  published: { bg: "bg-[#f0fdf4]", dot: "bg-green-500",               text: "text-green-700", label: "Published" },
-  error:     { bg: "bg-red-50",    dot: "bg-red-500",                  text: "text-red-600",   label: "Error" },
+  analyzing: { bg: "bg-green-50", dot: "bg-green-500 animate-pulse", text: "text-green-700", label: "Analyzing" },
+  draft:     { bg: "bg-amber-50", dot: "bg-amber-500",               text: "text-amber-900", label: "Draft" },
+  published: { bg: "bg-blue-50",   dot: "bg-blue-500",               text: "text-blue-800",  label: "Published" },
+  error:     { bg: "bg-red-50",    dot: "bg-red-500",                text: "text-red-600",   label: "Error" },
 };
 
 function getStatusKey(meeting: Meeting): string {
