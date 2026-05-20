@@ -6,29 +6,31 @@
 
 ---
 
-## 현재 상태 스냅샷 (2026-05-16)
+## 현재 상태 스냅샷 (2026-05-20)
 
 
-| 트랙           | 상태                         | 목표            |
-| ------------ | -------------------------- | ------------- |
-| **0.3v MVP** | 프론트 통합 진행 중, 버그 수정 필요      | 5/22 1차 서버 배포 |
-| **0.5v 메인2** | 백엔드 ~90% 완료, 프론트 와이어프레임 대기 | 6/4 PJ2 발표    |
+| 트랙           | 상태                                     | 목표            |
+| ------------ | ---------------------------------------- | ------------- |
+| **0.3v MVP** | ✅ 배포 완료·파이프라인 동작 확인. 이메일(Resend) 제거 검토 중 | 5/22 1차 서버 배포 |
+| **0.5v 메인2** | 백엔드 ~90% 완료, 프론트 UI 일부 구현, 와이어프레임 수령 대기 | 6/4 PJ2 발표    |
 
 
-- **백엔드 (Python):** 파이프라인·Notion 연동·알림·워크스페이스 관리 전 완료
-- **프론트 (Next.js):** 기본 라우트·UI 구조 완성, Resend 이메일 미발송 버그 수정 필요
-- **TC 발견 주요 이슈:** 초대 메일(Resend)·이메일 알림 환경, 액션 개수 변동 등 → 진행 상황은 `docs/v0.3.md` 참조 (필수 폼·Contact Support 일부 코드 반영됨).
+- **백엔드 (Python):** 파이프라인·Notion 연동·알림·워크스페이스 관리 전 완료. `temperature=0` 적용(액션 안정화). `023_action_dirty_flag.sql` 추가.
+- **프론트 (Next.js):** 기본 라우트·UI 구조 완성. 필수값 validation·Contact Support·이탈 팝업·탭 색상 코드 반영 완료.
+- **남은 핵심 작업:** Resend 이메일 알림 제거 또는 대체 결정 (TC 이슈 #1·#2). 0.5v 프론트 UI 구현.
+- **TC 발견 이슈 현황:** 이슈 #3·#4·#5 완료. 이슈 #1(초대 메일)·#2(이메일 알림) — Resend 제거 방향 검토 중.
 
 ---
 
-## 배포 현황 (2026-05-18)
+## 배포 현황 (2026-05-20)
 
 
 | 구성요소               | 상태        | 위치                                                                                  |
 | ------------------ | --------- | ----------------------------------------------------------------------------------- |
 | **프론트 (Next.js)**  | ✅ 배포 완료   | https://actnote-web.vercel.app (Vercel)                                             |
 | **Modal GPU 화자분리** | ✅ 배포 완료   | `actnote-diarization` — https://modal.com/apps/ttojo6/main/deployed/actnote-diarization |
-| **백엔드 파이프라인 (Python)** | 🆕 Modal 전환 (코드 완료, 배포 필요) | `actnote-pipeline` — `modal deploy src/modal_app.py` |
+| **백엔드 파이프라인 (Python)** | ✅ 배포 완료·동작 확인 | `actnote-pipeline` — Modal 웹 엔드포인트 + Vercel 환경변수 등록 완료 |
+| **Supabase 마이그레이션** | ✅ 실행 완료 | `014`~`023` 총 11개 순서대로 실행 완료 |
 
 
 - **Inngest 완전 제거 → Modal 서버리스**(2026-05-18). 로컬 워커/`serve_worker.py` 없음. 동욱 PC·별도 서버 불필요.
@@ -80,7 +82,8 @@
 - **A.U.D.N 사이클**: 액션 아이템 ADD/UPDATE/DELETE/NOOP 자동 결정
 - **Bi-temporal**: 결정사항·액션 변경 이력 시간 추적
 - **CRAG (Corrective RAG)**: 이전 회의 컨텍스트 자동 주입
-- **회의유형별 system prompt 분기**: sprint/planning/retro/1on1/default 5종
+- **회의유형별 system prompt 분기**: 11종 (default/one_on_one/standup/project_review/brainstorming/client/board/all_hands/workshop/planning/retro)
+- **temperature=0**: LLM 추출 결정론적 실행 (액션 개수 안정화)
 
 ---
 
@@ -137,8 +140,8 @@ Actnote/                    ← 레포 루트 = 백엔드 (Python)
 │   ├── storage.py          ← Supabase Storage / Local 추상화
 │   └── workspace_cleanup.py← 고아 회의 정리 (6h cron)
 ├── scripts/                ← 벤치마크·로컬 실행 도구
-├── migrations/             ← Supabase SQL (001~022, 22개)
-├── prompts/templates/      ← 회의유형별 LLM 프롬프트 (5종 .md)
+├── migrations/             ← Supabase SQL (001~023, 23개)
+├── prompts/templates/      ← 회의유형별 LLM 프롬프트 (11종 .md)
 ├── output/                 ← 파이프라인 결과 로컬 저장
 └── docs/                   ← 개발 문서
 
@@ -330,26 +333,40 @@ cd actnote-web && npx tsc --noEmit
 
 ---
 
-## 메인 1단계 완료 기능 (2026-05-10)
+## 완료 기능 누적 목록 (2026-05-20 기준)
 
 
-| 기능 ID             | 모듈 / 산출물                                                                           | 마이그레이션 |
-| ----------------- | ---------------------------------------------------------------------------------- | ------ |
-| MTG-002           | `meetings` 메타 4개 컬럼 (meeting_type, description, responsible_user_id, participants) | `014`  |
-| MTG-004           | `prompts/templates/<type>.md` + `llm_extractor` 분기                                 | —      |
-| DRAFT-005         | `src/assignee_matcher.py`                                                          | —      |
-| DRAFT-010         | `src/speaker_matcher.py` (`ai_draft_notes.speaker_candidates`)                     | —      |
-| PUB-001           | RPC 4종 (`validate/set_ready/publish/revoke`)                                       | `015`  |
-| INTEG-001/003/005 | `notion_sync.py` + Modal `run_publish_fn` (`/api/trigger-publish`)                  | —      |
-| INTEG-002 (OAuth) | `exchange_notion_code` + `docs/notion-oauth.md`                                    | —      |
-| NOTI-001          | `notify_action_assigned` + `email_notifier.py` (Resend 직접; Inngest 제거)            | —      |
-| SEC-006 (초대)      | RPC 3종 (`create_invite/accept_invite/revoke_invite`)                               | `016`  |
-| SEC-006 (역할)      | `set_member_role` RPC + `002` 트리거 정합성 보정                                           | `017`  |
-| WS-004 (강퇴)       | `remove_workspace_member` RPC                                                      | `018`  |
-| 재분석 멱등성           | `_cleanup_for_reanalysis()` in `pipeline.py`                                       | —      |
-| 워커 에러 상태          | `_run_pipeline_full` try/except + `analysis_failed` 알림                             | —      |
-| 워커 에러 분류          | `src/error_classifier.py` → `meetings.error_message` `[code:...]` prefix           | —      |
-| 고아 회의 정리          | Modal cron `cleanup_orphans_fn` (6h) + `src/workspace_cleanup.py`                  | —      |
+| 기능 ID             | 모듈 / 산출물                                                                           | 마이그레이션 | 완료일 |
+| ----------------- | ---------------------------------------------------------------------------------- | ------ | --- |
+| MTG-002           | `meetings` 메타 4개 컬럼 (meeting_type, description, responsible_user_id, participants) | `014`  | 5/10 |
+| MTG-004           | `prompts/templates/<type>.md` + `llm_extractor` 분기 (11종, temperature=0)          | —      | 5/10 |
+| DRAFT-001         | `[id]/page.tsx` 편집 모드 (요약·결정·액션 수정)                                               | —      | 5/20 |
+| DRAFT-002         | `llm_extractor.extract()` summary 필드 + `[id]/page.tsx` AI Summary 섹션             | —      | 5/10 |
+| DRAFT-003/004     | `llm_extractor.extract()` decisions + action_items                                | —      | 5/10 |
+| DRAFT-005         | `src/assignee_matcher.py` + `[id]/page.tsx` 드롭다운                                  | —      | 5/10 |
+| DRAFT-006         | `src/pipeline.py` [4.5/6] Notion 문서 검색 (백엔드만)                                    | —      | 5/10 |
+| DRAFT-010         | `src/speaker_matcher.py` (`ai_draft_notes.speaker_candidates`)                     | —      | 5/10 |
+| PUB-001           | RPC 4종 (`validate/set_ready/publish/revoke`)                                       | `015`  | 5/10 |
+| PUB-002           | `src/publication.py` + `src/notion_sync.py` Notion 티켓 생성 (백엔드만)                  | —      | 5/10 |
+| INTEG-001/003/005 | `notion_sync.py` + Modal `run_publish_fn` (`/api/trigger-publish`)                  | —      | 5/10 |
+| INTEG-002 (OAuth) | `exchange_notion_code` + `docs/notion-oauth.md`                                    | —      | 5/10 |
+| NOTI-001          | `notify_action_assigned` + `email_notifier.py` (SMTP/Resend; Inngest 제거)          | —      | 5/10 |
+| SEC-001           | `src/policy.py` + `migrations/008` (옵트아웃 정책)                                      | `008`  | 5/10 |
+| SEC-006 (초대)      | RPC 3종 (`create_invite/accept_invite/revoke_invite`)                               | `016`  | 5/10 |
+| SEC-006 (역할)      | `set_member_role` RPC + `002` 트리거 정합성 보정                                           | `017`  | 5/10 |
+| SEC-009           | `src/encryption.py` (Fernet) + `integrations.access_token_encrypted`               | `012`  | 5/10 |
+| WS-004 (강퇴)       | `remove_workspace_member` RPC                                                      | `018`  | 5/10 |
+| CONTEXT-001       | `src/crag.py` + `migrations/011` `search_meeting_chunks` RPC                      | `011`  | 5/10 |
+| CAP-001           | `new/page.tsx` XHR 업로드 + progress bar + 파일 검증                                     | —      | 5/20 |
+| STATUS-001/002    | `meetings/page.tsx` 목록·탭·삭제 (softDelete)                                          | `019`  | 5/20 |
+| UX-001            | `new/page.tsx` `safeNavigate()` + 이탈 확인 팝업                                        | —      | 5/20 |
+| UX-003/004/005    | 필수값 validation + 탭 색상 + 에러 화면 메타정보                                                | —      | 5/20 |
+| 재분석 멱등성           | `_cleanup_for_reanalysis()` in `pipeline.py`                                       | —      | 5/10 |
+| 워커 에러 상태          | `jobs.run_meeting_pipeline` try/except + `analysis_failed` 알림                     | —      | 5/10 |
+| 워커 에러 분류          | `src/error_classifier.py` → `meetings.error_message` `[code:...]` prefix           | —      | 5/10 |
+| 고아 회의 정리          | Modal cron `cleanup_orphans_fn` (6h) + `src/workspace_cleanup.py`                  | —      | 5/10 |
+| embeddings dirty flag | `023_action_dirty_flag.sql` + 트리거 `trg_action_items_mark_dirty`           | `023`  | 5/20 |
+| Inngest → Modal   | `src/modal_app.py` + `src/jobs.py` (코드 완료, 배포 필요)                                 | —      | 5/18 |
 
 
 새 모듈 import 위치 (메인2 작업자용):
@@ -367,16 +384,16 @@ from src.notion_sync import exchange_notion_code, complete_notion_oauth
 
 ## 알려진 이슈 + 백로그
 
-### TC 발견 이슈 (5/16 기준)
+### TC 발견 이슈 (2026-05-20 기준)
 
 
-| 번호  | 증상                                | 분류      | 담당  |
-| --- | --------------------------------- | ------- | --- |
-| 1   | 초대 메일 발송 오류 → Member 계정 생성 불가     | 🔴 즉시(운영: Resend) | 공동  |
-| 2   | 이메일 알림 미발송 (인앱 알림은 정상)            | 🔴 즉시   | 공동  |
-| 3   | 필수값 미입력 시에도 분석 버튼 활성화             | ✅ 코드 반영 | B   |
-| 4   | [Contact Support] 버튼 클릭 시 이메일 미연결 | ✅ 코드 반영 | B   |
-| 5   | 액션아이템 개수 분석마다 변동                  | 🟡 배포 전 | A   |
+| 번호  | 증상                                | 분류      | 담당  | 상태 |
+| --- | --------------------------------- | ------- | --- | --- |
+| 1   | 초대 메일 발송 오류 → Member 계정 생성 불가     | 🔴 즉시(운영: Resend/SMTP) | 공동  | 미해결 — 환경변수 설정 필요 |
+| 2   | 이메일 알림 미발송 (인앱 알림은 정상)            | 🔴 즉시   | 공동  | 미해결 — 환경변수 설정 필요 |
+| 3   | 필수값 미입력 시에도 분석 버튼 활성화             | ✅ 코드 반영 완료 | B   | `canSubmit` useMemo + disabled 적용됨 |
+| 4   | [Contact Support] 버튼 클릭 시 이메일 미연결 | ✅ 코드 반영 완료 | B   | `pipeline-error-copy.ts` Gmail 딥링크 구현됨 |
+| 5   | 액션아이템 개수 분석마다 변동                  | 🟡 배포 후 재검증 | A   | `temperature=0` 코드 반영됨 |
 
 
 상세 내용 및 우선순위 → `docs/v0.3.md`
@@ -387,11 +404,15 @@ from src.notion_sync import exchange_notion_code, complete_notion_oauth
 - **재분석 멱등성** (해결 — 2026-05-10, B-5-3): `_cleanup_for_reanalysis()` 자동 호출
 - **Inngest 화자분리 타임아웃** (해결 — 2026-05-18): CPU pyannote 30분+ → 타임아웃(500). Modal GPU 오프로딩(`actnote-diarization`) + pyannote 4.x 정합.
 - **Inngest 완전 제거 → Modal 서버리스** (코드 완료 — 2026-05-18): `src/worker.py`/`serve_worker.py` 삭제, `src/jobs.py`+`src/modal_app.py` 신설. CPU/GPU 함수 분리(비용). 프론트 `/api/trigger-*` 가 인증 후 Modal 웹 엔드포인트 호출(공유 시크릿). **남은 작업: `modal deploy` 2종 + Modal Secret 등록 + 프론트 env URL 설정 (동욱).**
+- **필수값 validation** (코드 반영 — 2026-05-20): `new/page.tsx` `canSubmit` useMemo + `disabled={!canSubmit}` 적용됨. TC 이슈 #3 해결.
+- **Contact Support 연결** (코드 반영 — 2026-05-20): `pipeline-error-copy.ts` + `ProcessingProgress.tsx`에서 Gmail 딥링크 우선, `mailto:` 폴백. TC 이슈 #4 해결.
+- **LLM temperature=0** (코드 반영 — 2026-05-20): `llm_extractor._call_messages()`에서 `temperature=0` 설정됨. TC 이슈 #5 배포 후 재검증 필요.
+- **embeddings dirty flag** (완료 — 2026-05-20): `023_action_dirty_flag.sql` 추가. `action_items` 변경 시 `embeddings_dirty=TRUE` 자동 마킹.
 
 ### 인프라 백로그
 
-- GPU 서버 도입 (5/22~5/24)
-- ~~Modal 전환 검토~~ / ~~워커 Railway 배포~~ → **Inngest 제거·Modal 서버리스 전환 코드 완료 (2026-05-18)**. 배포만 남음.
+- ~~GPU 서버 도입~~ → **Modal GPU `actnote-diarization` 배포 완료 (2026-05-18)**
+- ~~Modal 전환 검토~~ / ~~워커 Railway 배포~~ → **Inngest 제거·Modal 서버리스 전환 코드 완료 (2026-05-18)**. **`modal deploy src/modal_app.py` 배포 필요 (2026-05-20 현재 미배포).**
 - **재시도 = 전체 재실행/재과금** (decision #3, 의도적): Modal `retries=3` 은 step memoization 이 없어 실패 재시도 시 STT·화자분리·LLM 을 처음부터 재과금. 멱등성은 `_cleanup_for_reanalysis()` 가 보장(중복 derived 없음)하나 비용은 중복. 체크포인트 최적화는 보류 — `src/jobs.py` docstring 참조.
 - Modal CPU 함수 timeout(현재 3600s) ↔ 웹 엔드포인트 150s + 동시성 상한(`max_containers`, 대시보드) 정합 측정 필요 (회의 길이별 벤치마크 후 확정).
 - 비용 산정 + 모델 업그레이드 (5/25~5/27) — Modal CPU+GPU 시간 과금분 포함.
