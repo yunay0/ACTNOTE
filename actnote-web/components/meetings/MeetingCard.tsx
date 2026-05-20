@@ -10,6 +10,7 @@ import {
   supportContactOpensInNewTab,
   supportEmailAddress,
 } from "@/lib/meetings/pipeline-error-copy";
+import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 
 interface MeetingCardProps {
   meeting: Meeting;
@@ -39,23 +40,6 @@ function formatMeetingDateTime(iso: string) {
     timeStyle: "short",
   });
 }
-
-const MEETING_TYPE_LABELS: Record<string, string> = {
-  default: "General",
-  other: "Other",
-  one_on_one: "1:1 Meeting",
-  "1on1": "1:1 Meeting",
-  standup: "Team Standup",
-  sprint: "Sprint",
-  project_review: "Project Review",
-  brainstorming: "Brainstorming",
-  client: "Client Meeting",
-  board: "Board Meeting",
-  all_hands: "All Hands",
-  workshop: "Workshop",
-  planning: "Planning",
-  retro: "Retro",
-};
 
 export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: MeetingCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -214,9 +198,9 @@ export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: M
           <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
           {style.label}
         </span>
-        {meeting.meeting_type && MEETING_TYPE_LABELS[meeting.meeting_type] && (
+        {meeting.meeting_type?.trim() && (
           <span className="rounded-[6px] bg-[#f8fafc] border border-[#e2e8f0] px-2 py-0.5 text-[11px] text-[#64748b] font-medium">
-            {MEETING_TYPE_LABELS[meeting.meeting_type]}
+            {formatMeetingTypeLabel(meeting.meeting_type)}
           </span>
         )}
       </div>

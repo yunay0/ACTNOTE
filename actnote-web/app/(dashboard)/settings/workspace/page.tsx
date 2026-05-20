@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { X, Copy, Check, Link2, ChevronDown } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
@@ -45,6 +45,17 @@ interface Member {
   gradient: string;
 }
 
+interface JoinRequestRow {
+  id: string;
+  workspace_id: string;
+  requester_id: string;
+  requester_email: string;
+  requester_name: string | null;
+  message: string | null;
+  status: string;
+  created_at: string;
+}
+
 const GRADIENTS = [
   "linear-gradient(135deg, #2e5c8a 0%, #1e3a5f 100%)",
   "linear-gradient(135deg, #4285f4 0%, #34a853 100%)",
@@ -68,7 +79,9 @@ function getInitials(name: string, email: string): string {
 
 export default function WorkspaceSettingsPage() {
   const router = useRouter();
-  const { workspaceId: activeWorkspaceId, refreshWorkspaces } = useWorkspaceContext();
+  const searchParams = useSearchParams();
+  const { workspaceId: activeWorkspaceId, refreshWorkspaces, setCurrentWorkspace, memberships } =
+    useWorkspaceContext();
   const [workspaceName, setWorkspaceName] = useState("");
   const [savedName, setSavedName] = useState("");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
@@ -93,6 +106,8 @@ export default function WorkspaceSettingsPage() {
   const [inviteShareCopied, setInviteShareCopied] = useState(false);
   const [inviteNoticeCode, setInviteNoticeCode] = useState<string | null>(null);
   const [meetingCount, setMeetingCount] = useState(0);
+  const [joinRequests, setJoinRequests] = useState<JoinRequestRow[]>([]);
+  const [joinReqBusy, setJoinReqBusy] = useState<string | null>(null);
   const [deleteWorkspaceModalOpen, setDeleteWorkspaceModalOpen] = useState(false);
   const [deleteWorkspaceInput, setDeleteWorkspaceInput] = useState("");
   const [deleteWorkspaceBusy, setDeleteWorkspaceBusy] = useState(false);
@@ -109,6 +124,7 @@ export default function WorkspaceSettingsPage() {
   const loadWorkspace = useCallback(async () => {
     if (!activeWorkspaceId) {
       setMeetingCount(0);
+      setJoinRequests([]);
       setLoading(false);
       return;
     }
@@ -178,6 +194,39 @@ export default function WorkspaceSettingsPage() {
       setMembers(list);
     }
 
+    const canSeeJoinRequests = myDb === "owner" || myDb === "admin";
+    if (canSeeJoinRequests) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: jrRows, error: jrErr } = await (supabase as any)
+        .from("workspace_join_requests")
+        .select("id, workspace_id, requester_id, message, status, created_at, users ( name, email )")
+        .eq("workspace_id", ws.id)
+        .eq("status", "pending")
+        .order("created_at", { ascending: false });
+      if (jrErr) {
+        console.warn("[workspace settings] join requests:", jrErr.message);
+        setJoinRequests([]);
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mapped: JoinRequestRow[] = (jrRows ?? []).map((row: any) => {
+          const u = Array.isArray(row.users) ? row.users[0] : row.users;
+          return {
+            id: row.id as string,
+            workspace_id: row.workspace_id as string,
+            requester_id: row.requester_id as string,
+            requester_email: (u?.email as string) ?? "",
+            requester_name: (u?.name as string | null) ?? null,
+            message: (row.message as string | null) ?? null,
+            status: row.status as string,
+            created_at: row.created_at as string,
+          };
+        });
+        setJoinRequests(mapped);
+      }
+    } else {
+      setJoinRequests([]);
+    }
+
     setLoading(false);
   }, [activeWorkspaceId]);
 
@@ -185,6 +234,30 @@ export default function WorkspaceSettingsPage() {
     setLoading(true);
     loadWorkspace();
   }, [loadWorkspace]);
+
+  /** Owner email deep link: /settings/workspace?workspace=<uuid>&join=requests */
+  useEffect(() => {
+    const wsParam = searchParams.get("workspace");
+    const joinFocus = searchParams.get("join") === "requests";
+    if (!wsParam?.trim()) return;
+    const targetId = wsParam.trim();
+    if (!memberships.some((m) => m.workspace_id === targetId)) return;
+
+    if (targetId !== activeWorkspaceId) {
+      setCurrentWorkspace(targetId);
+      return;
+    }
+
+    if (joinFocus) {
+      requestAnimationFrame(() =>
+        document.getElementById("join-requests-section")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        })
+      );
+      router.replace("/settings/workspace", { scroll: false });
+    }
+  }, [activeWorkspaceId, memberships, searchParams, setCurrentWorkspace, router]);
 
   async function handleSaveName() {
     if (!workspaceId) return;
@@ -212,12 +285,26 @@ export default function WorkspaceSettingsPage() {
   async function handleRemoveMember(userId: string) {
     if (!workspaceId || !isElevated) return;
     setRemoving(userId);
+    const supabase = createClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (createClient() as any)
+    const { error } = await (supabase as any)
       .from("workspace_members")
       .delete()
       .eq("workspace_id", workspaceId)
       .eq("user_id", userId);
+    if (error) {
+      setRoleError(error.message || "Could not remove member.");
+      setRemoving(null);
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: revErr } = await (supabase as any).rpc("revoke_pending_invites_for_member", {
+      p_workspace_id: workspaceId,
+      p_target_user_id: userId,
+    });
+    if (revErr) {
+      console.warn("revoke_pending_invites_for_member:", revErr.message);
+    }
     setMembers((prev) => prev.filter((m) => m.user_id !== userId));
     setRemoving(null);
   }
@@ -249,6 +336,50 @@ export default function WorkspaceSettingsPage() {
       await loadWorkspace();
     }
     setRoleChanging(null);
+  }
+
+  async function handleApproveJoinRequest(requestId: string) {
+    if (!workspaceId || !isElevated) return;
+    setJoinReqBusy(requestId);
+    setRoleError(null);
+    try {
+      const res = await fetch(`/api/workspace/join-request/${requestId}/review`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "approved" }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setRoleError(body.error ?? "Could not approve request.");
+        return;
+      }
+      await loadWorkspace();
+    } finally {
+      setJoinReqBusy(null);
+    }
+  }
+
+  async function handleRejectJoinRequest(requestId: string) {
+    if (!workspaceId || !isElevated) return;
+    setJoinReqBusy(requestId);
+    setRoleError(null);
+    try {
+      const res = await fetch(`/api/workspace/join-request/${requestId}/review`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "rejected" }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setRoleError(body.error ?? "Could not reject request.");
+        return;
+      }
+      await loadWorkspace();
+    } finally {
+      setJoinReqBusy(null);
+    }
   }
 
   function handleCopyLink() {
@@ -749,14 +880,75 @@ export default function WorkspaceSettingsPage() {
             )}
           </section>
 
+          {/* Join requests — owner/admin (review_join_request RPC) */}
+          {isElevated && (
+            <section
+              id="join-requests-section"
+              className="rounded-[12px] border border-[#e2e8f0] bg-white p-[33px]"
+            >
+              <div className="mb-6 space-y-1">
+                <h2 className="text-[17px] font-bold text-[#0a2540]">Join requests</h2>
+                <p className="text-[13px] text-[#64748b]">
+                  People who used your workspace invite link (without a personal email token) asked to join. Approve or
+                  reject below.
+                </p>
+              </div>
+              {joinRequests.length === 0 ? (
+                <p className="text-[13px] text-[#94a3b8]">No pending requests.</p>
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {joinRequests.map((jr) => (
+                    <li
+                      key={jr.id}
+                      className="flex flex-col gap-2 rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[14px] font-bold text-[#0a2540]">
+                          {jr.requester_name?.trim() || jr.requester_email.split("@")[0]}
+                        </p>
+                        <p className="truncate text-[12px] text-[#64748b]">{jr.requester_email}</p>
+                        {jr.message && (
+                          <p className="mt-1 text-[12px] leading-snug text-[#475569]">&ldquo;{jr.message}&rdquo;</p>
+                        )}
+                        <p className="mt-0.5 text-[11px] text-[#94a3b8]">
+                          Requested {new Date(jr.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          type="button"
+                          disabled={joinReqBusy === jr.id}
+                          onClick={() => void handleRejectJoinRequest(jr.id)}
+                          className="h-9 rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[12px] font-bold text-[#64748b] hover:bg-[#fef2f2] hover:border-red-200 hover:text-red-600 disabled:opacity-50"
+                        >
+                          Reject
+                        </button>
+                        <button
+                          type="button"
+                          disabled={joinReqBusy === jr.id}
+                          onClick={() => void handleApproveJoinRequest(jr.id)}
+                          className="h-9 rounded-lg px-4 text-[12px] font-bold text-white disabled:opacity-50"
+                          style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+                        >
+                          {joinReqBusy === jr.id ? "…" : "Approve"}
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+
           {/* Invite Link (elevated) */}
           {isElevated && (
             <section className="rounded-[12px] border border-[#e2e8f0] bg-white p-[33px]">
               <div className="mb-5">
                 <h2 className="text-[17px] font-bold text-[#0a2540]">Invite Link</h2>
                 <p className="text-[13px] text-[#64748b]">
-                  Open join link (any logged-in user can join as a member). For a specific person and email, use Invite by
-                  Email above — or share the personal link shown if email delivery is unavailable.
+                  Share this URL so teammates can request access. Each request must be approved by the workspace owner
+                  here. For a specific person, use Invite by Email above (token invite) — or copy the personal link if
+                  email delivery is unavailable.
                 </p>
               </div>
               <div className="flex items-center gap-2 rounded-lg border-2 border-[#e2e8f0] bg-[#f8fafc] px-4 py-3">
@@ -773,7 +965,9 @@ export default function WorkspaceSettingsPage() {
                   {linkCopied ? <><Check className="h-3.5 w-3.5 text-green-500" /> Copied!</> : <><Copy className="h-3.5 w-3.5" /> Copy</>}
                 </button>
               </div>
-              <p className="mt-2 text-[11px] text-[#94a3b8]">This link allows anyone with access to join as a member.</p>
+              <p className="mt-2 text-[11px] text-[#94a3b8]">
+                Opening this link lets a signed-in user submit a join request; it does not add them until you approve.
+              </p>
             </section>
           )}
 

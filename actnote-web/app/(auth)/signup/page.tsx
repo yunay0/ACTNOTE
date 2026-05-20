@@ -1,11 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AuthMarketingPanel } from "@/components/auth/AuthMarketingPanel";
 import { englishFieldInvalidMessage, clearNativeValidity } from "@/lib/auth-native-validation";
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from "@/lib/legal-links";
+import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
+import { startGoogleSignIn } from "@/lib/auth/start-google-sign-in";
+import { AuthLegalFooter } from "@/components/auth/AuthLegalFooter";
+import { GoogleMark } from "@/components/auth/GoogleMark";
 
 const PLACEHOLDER_FIRST = "Lucy";
 const PLACEHOLDER_LAST = "Lee";
@@ -23,7 +28,10 @@ function passwordMeetsPolicy(p: string): boolean {
 const inputCls =
   "w-full rounded-[10px] border-2 border-[#e2e8f0] px-[18px] py-[14px] text-[15px] text-[#0f172a] placeholder-[#94a3b8] outline-none transition-colors focus:border-[#2e5c8a]";
 
-export default function SignupPage() {
+function SignupForm() {
+  const searchParams = useSearchParams();
+  const returnTo = getSafeInternalReturnPath(searchParams.get("next"));
+  const loginHref = returnTo ? `/login?next=${encodeURIComponent(returnTo)}` : "/login";
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -31,6 +39,7 @@ export default function SignupPage() {
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [agreePrivacy, setAgreePrivacy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
@@ -69,7 +78,7 @@ export default function SignupPage() {
     }
 
     if (data.session) {
-      window.location.assign("/workspace/select");
+      window.location.assign(returnTo ?? "/workspace/select");
       return;
     }
 
@@ -94,7 +103,7 @@ export default function SignupPage() {
                 <br />
                 After verifying, come back and <strong>sign in with your password</strong>.
               </p>
-              <Link href="/login" className="mt-6 inline-block text-sm font-bold text-[#ff6b35] hover:underline">
+              <Link href={loginHref} className="mt-6 inline-block text-sm font-bold text-[#ff6b35] hover:underline">
                 Sign in
               </Link>
             </div>
@@ -104,6 +113,35 @@ export default function SignupPage() {
               <p className="mt-2 text-sm text-[#475569]">Start transforming your meetings into actions</p>
 
               <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-[18px]">
+                <button
+                  type="button"
+                  disabled={googleLoading || loading}
+                  onClick={() => {
+                    setError(null);
+                    setGoogleLoading(true);
+                    void startGoogleSignIn(returnTo)
+                      .catch((e) => {
+                        setError(e instanceof Error ? e.message : "Google sign-up could not start.");
+                      })
+                      .finally(() => setGoogleLoading(false));
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white py-[14px] text-[15px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc] disabled:opacity-60"
+                >
+                  {googleLoading ? (
+                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#0f172a] border-t-transparent" />
+                  ) : (
+                    <>
+                      <GoogleMark />
+                      Continue with Google
+                    </>
+                  )}
+                </button>
+
+                <div className="flex items-center gap-4">
+                  <div className="h-px flex-1 bg-[#e2e8f0]" />
+                  <span className="shrink-0 text-[13px] text-[#94a3b8]">or sign up with email</span>
+                  <div className="h-px flex-1 bg-[#e2e8f0]" />
+                </div>
                 <div className="flex gap-5">
                   <div className="flex flex-1 flex-col gap-2">
                     <label htmlFor="signup-first" className="text-sm font-bold text-[#0f172a]">
@@ -203,8 +241,9 @@ export default function SignupPage() {
                 </div>
 
                 <div className="flex flex-col gap-3 pt-1">
-                  <label className="flex cursor-pointer gap-3">
+                  <div className="flex gap-3">
                     <input
+                      id="agree-terms"
                       type="checkbox"
                       checked={agreeTerms}
                       required
@@ -217,20 +256,22 @@ export default function SignupPage() {
                       className="mt-0.5 size-[18px] shrink-0 rounded border border-[#767676] accent-[#ff6b35]"
                     />
                     <span className="text-sm leading-relaxed text-[#475569]">
-                      I agree to the{" "}
+                      <label htmlFor="agree-terms" className="cursor-pointer">
+                        I agree to the{" "}
+                      </label>
                       <a
                         href={TERMS_OF_SERVICE_URL}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="font-bold text-[#ff6b35] hover:underline"
-                        onClick={(e) => e.stopPropagation()}
                       >
                         Terms of Service
                       </a>
                     </span>
-                  </label>
-                  <label className="flex cursor-pointer gap-3">
+                  </div>
+                  <div className="flex gap-3">
                     <input
+                      id="agree-privacy"
                       type="checkbox"
                       checked={agreePrivacy}
                       required
@@ -243,18 +284,19 @@ export default function SignupPage() {
                       className="mt-0.5 size-[18px] shrink-0 rounded border border-[#767676] accent-[#ff6b35]"
                     />
                     <span className="text-sm leading-relaxed text-[#475569]">
-                      I agree to the{" "}
+                      <label htmlFor="agree-privacy" className="cursor-pointer">
+                        I agree to the{" "}
+                      </label>
                       <a
                         href={PRIVACY_POLICY_URL}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="font-bold text-[#ff6b35] hover:underline"
-                        onClick={(e) => e.stopPropagation()}
                       >
                         Privacy Policy
                       </a>
                     </span>
-                  </label>
+                  </div>
                 </div>
 
                 {error && (
@@ -263,7 +305,7 @@ export default function SignupPage() {
 
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || googleLoading}
                   className="mt-1 w-full rounded-[10px] bg-[#ff6b35] py-[14px] text-base font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:opacity-60"
                 >
                   {loading ? (
@@ -274,9 +316,13 @@ export default function SignupPage() {
                 </button>
               </form>
 
+              <div className="mt-6">
+                <AuthLegalFooter />
+              </div>
+
               <p className="mt-6 flex flex-wrap items-center justify-center gap-1 text-center text-sm text-[#475569]">
                 Already have an account?{" "}
-                <Link href="/login" className="font-bold text-[#ff6b35] hover:underline">
+                <Link href={loginHref} className="font-bold text-[#ff6b35] hover:underline">
                   Sign in
                 </Link>
               </p>
@@ -285,5 +331,19 @@ export default function SignupPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-screen items-center justify-center bg-[#f8fafc] text-[#64748b]">
+          Loading…
+        </div>
+      }
+    >
+      <SignupForm />
+    </Suspense>
   );
 }

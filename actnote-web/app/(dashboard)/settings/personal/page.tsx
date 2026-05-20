@@ -64,6 +64,8 @@ type DeleteModalState =
   | { open: false }
   | { open: true; phase: "loading" }
   | { open: true; phase: "transfer" }
+  /** You are the only workspace member / DB owner — explain before the destructive confirm (v0.3). */
+  | { open: true; phase: "sole_owner_gate"; ctx: AccountDeleteContext }
   | {
       open: true;
       phase: "destructive";
@@ -73,7 +75,7 @@ type DeleteModalState =
 
 export default function PersonalSettingsPage() {
   const router = useRouter();
-  const { workspaceId, memberships } = useWorkspaceContext();
+  const { workspaceId, memberships, hydrated } = useWorkspaceContext();
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
@@ -218,6 +220,10 @@ export default function PersonalSettingsPage() {
   }
 
   async function openDeleteAccountFlow() {
+    if (!hydrated) {
+      setDeleteError("Still loading your workspaces. Please wait a moment and try again.");
+      return;
+    }
     const wid = workspaceId ?? memberships[0]?.workspace_id ?? null;
     if (!wid) {
       setDeleteError("No workspace is selected. Choose a workspace from the sidebar.");
@@ -226,9 +232,16 @@ export default function PersonalSettingsPage() {
     setDeleteError(null);
     setDeleteConfirmInput("");
     setDeleteModal({ open: true, phase: "loading" });
+    const ac = new AbortController();
+    const t = window.setTimeout(() => ac.abort(), 25_000);
     try {
       const res = await fetch(
-        `/api/account/delete-context?workspace_id=${encodeURIComponent(wid)}`
+        `/api/account/delete-context?workspace_id=${encodeURIComponent(wid)}`,
+        {
+          credentials: "include",
+          cache: "no-store",
+          signal: ac.signal,
+        }
       );
       const data = (await res.json()) as AccountDeleteContext & {
         flow?: string;
@@ -239,20 +252,37 @@ export default function PersonalSettingsPage() {
         setDeleteModal({ open: false });
         return;
       }
+      const flow = data.flow;
+      if (flow !== "transfer_required" && flow !== "delete_workspace_and_account" && flow !== "delete_account_only") {
+        setDeleteError("Invalid server response. Try again.");
+        setDeleteModal({ open: false });
+        return;
+      }
+      if (!data.workspace || !data.profile) {
+        setDeleteError("Invalid server response. Try again.");
+        setDeleteModal({ open: false });
+        return;
+      }
       const ctx: AccountDeleteContext = {
         workspace: data.workspace,
         profile: data.profile,
       };
-      if (data.flow === "transfer_required") {
+      if (flow === "transfer_required") {
         setDeleteModal({ open: true, phase: "transfer" });
-      } else if (data.flow === "delete_workspace_and_account") {
-        setDeleteModal({ open: true, phase: "destructive", variant: "full", ctx });
+      } else if (flow === "delete_workspace_and_account") {
+        setDeleteModal({ open: true, phase: "sole_owner_gate", ctx });
       } else {
         setDeleteModal({ open: true, phase: "destructive", variant: "account_only", ctx });
       }
-    } catch {
-      setDeleteError("Network error. Try again.");
+    } catch (e) {
+      const msg =
+        e instanceof DOMException && e.name === "AbortError"
+          ? "Request timed out. Check your connection and try again."
+          : "Network error. Try again.";
+      setDeleteError(msg);
       setDeleteModal({ open: false });
+    } finally {
+      window.clearTimeout(t);
     }
   }
 
@@ -315,7 +345,7 @@ export default function PersonalSettingsPage() {
             if (
               e.target === e.currentTarget &&
               deleteModal.open &&
-              deleteModal.phase === "transfer"
+              (deleteModal.phase === "transfer" || deleteModal.phase === "sole_owner_gate")
             ) {
               closeDeleteModal();
             }
@@ -325,6 +355,58 @@ export default function PersonalSettingsPage() {
             <div className="flex w-full max-w-md flex-col items-center gap-4 rounded-[16px] bg-white p-10 shadow-xl">
               <span className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
               <p className="text-[14px] font-medium text-[#64748b]">Checking your workspace…</p>
+            </div>
+          )}
+
+          {deleteModal.phase === "sole_owner_gate" && (
+            <div className="w-full max-w-lg rounded-[16px] bg-white p-8 shadow-xl">
+              <div className="mb-6 flex gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#eff6ff]">
+                  <span className="text-xl leading-none text-[#2e5c8a]" aria-hidden>
+                    ℹ️
+                  </span>
+                </div>
+                <div className="min-w-0 space-y-1">
+                  <h3 className="text-[17px] font-bold text-[#0a2540]">You are the only workspace member</h3>
+                  <p className="text-[13px] leading-relaxed text-[#64748b]">
+                    This workspace has no other teammates. To delete your ACTNOTE account, the workspace{" "}
+                    <span className="font-semibold text-[#0a2540]">{deleteModal.ctx.workspace.name}</span> and its
+                    meetings will be removed as part of the same step—after you confirm below.
+                  </p>
+                </div>
+              </div>
+              <p className="mb-8 text-[13px] leading-relaxed text-[#0a2540]">
+                If you expected other owners or members here, check Workspace settings or contact support before
+                continuing.
+              </p>
+              {deleteError && (
+                <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
+                  {deleteError}
+                </div>
+              )}
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeDeleteModal}
+                  className="h-11 rounded-xl border-2 border-[#e2e8f0] px-5 text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDeleteModal({
+                      open: true,
+                      phase: "destructive",
+                      variant: "full",
+                      ctx: deleteModal.ctx,
+                    })
+                  }
+                  className="h-11 rounded-xl bg-[#ef4444] px-5 text-[14px] font-bold text-white shadow-sm hover:bg-[#dc2626]"
+                >
+                  Continue to delete workspace & account
+                </button>
+              </div>
             </div>
           )}
 
@@ -738,11 +820,12 @@ export default function PersonalSettingsPage() {
               <div className="flex justify-end pt-2.5">
                 <button
                   type="button"
+                  disabled={!hydrated}
                   onClick={() => {
                     setDeleteError(null);
                     void openDeleteAccountFlow();
                   }}
-                  className="h-11 shrink-0 rounded-lg bg-[#ef4444] px-6 text-[14px] font-bold text-white transition-colors hover:bg-[#dc2626]"
+                  className="h-11 shrink-0 rounded-lg bg-[#ef4444] px-6 text-[14px] font-bold text-white transition-colors hover:bg-[#dc2626] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Delete My Account
                 </button>

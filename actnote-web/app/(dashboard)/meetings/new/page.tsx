@@ -14,6 +14,7 @@ import {
   type RecordingFileIssue,
 } from "@/lib/meeting/recordingFilename";
 import { RecordingUploadErrorModal } from "@/components/meetings/RecordingUploadErrorModal";
+import { MEETING_TYPE_OPTIONS } from "@/lib/meetings/meeting-types";
 
 const MAX_SIZE_MB = 50;
 
@@ -189,6 +190,10 @@ export default function NewMeetingPage() {
   async function handleSubmit() {
     if (!title.trim() || !datetime || !file) {
       setAlertMsg("Please fill in all required fields: Meeting Title, Date & Time, and Recording.");
+      return;
+    }
+    if (!parseDatetimeLocal(datetime)) {
+      setAlertMsg("Please select a valid date and time for the meeting.");
       return;
     }
     if (!meetingType.trim()) {
@@ -486,6 +491,7 @@ export default function NewMeetingPage() {
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="Enter meeting title"
+                    required
                     className={inputCls}
                   />
                 </Field>
@@ -494,13 +500,14 @@ export default function NewMeetingPage() {
                   <select
                     value={meetingType}
                     onChange={(e) => setMeetingType(e.target.value)}
+                    required
                     className={`${inputCls} cursor-pointer appearance-none bg-[length:12px_8px] bg-[right_18px_center] bg-no-repeat pr-10`}
                     style={{
                       backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2364748b' d='M6 8 .07.59 1.43-.82 6 4.88 10.57-.81 11.93.59z'/%3E%3C/svg%3E")`,
                     }}
                   >
                     <option value="">Select meeting type</option>
-                    {MEETING_TYPES.map(({ value, label }) => (
+                    {MEETING_TYPE_OPTIONS.map(({ value, label }) => (
                       <option key={value} value={value}>
                         {label}
                       </option>
@@ -514,6 +521,7 @@ export default function NewMeetingPage() {
                       type="datetime-local"
                       value={datetime}
                       onChange={(e) => setDatetime(e.target.value)}
+                      required
                       aria-label="Meeting date and time"
                       lang="en-US"
                       className="peer absolute inset-0 z-10 min-h-[52px] w-full cursor-pointer opacity-0"
@@ -560,6 +568,31 @@ export default function NewMeetingPage() {
                       ))}
                     </div>
                   )}
+                </Field>
+
+                <Field label="Responsible person" required>
+                  <select
+                    value={responsibleUserId ?? ""}
+                    onChange={(e) => setResponsibleUserId(e.target.value || null)}
+                    required
+                    disabled={!membersLoaded || memberOptions.length === 0}
+                    className={`${inputCls} cursor-pointer appearance-none bg-[length:12px_8px] bg-[right_18px_center] bg-no-repeat pr-10`}
+                    style={{
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2364748b' d='M6 8 .07.59 1.43-.82 6 4.88 10.57-.81 11.93.59z'/%3E%3C/svg%3E")`,
+                    }}
+                  >
+                    <option value="" disabled>
+                      Select responsible person
+                    </option>
+                    {memberOptions.map((o) => (
+                      <option key={o.user_id} value={o.user_id}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[12px] leading-[19.5px] text-[#64748b]">
+                    Must be a workspace member; accountable for review and publication.
+                  </p>
                 </Field>
 
                 <Field label="Description (Optional)">
@@ -735,21 +768,6 @@ const TIPS = [
 
 const inputCls =
   "w-full rounded-[10px] border-2 border-[#e2e8f0] bg-white px-[18px] py-[14px] text-[15px] text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10";
-
-/** Stored `meetings.meeting_type` — normalized by backend `llm_extractor._resolve_template_name`. */
-const MEETING_TYPES = [
-  { value: "one_on_one", label: "1:1 Meeting" },
-  { value: "standup", label: "Team Standup" },
-  { value: "project_review", label: "Project Review" },
-  { value: "brainstorming", label: "Brainstorming" },
-  { value: "client", label: "Client Meeting" },
-  { value: "board", label: "Board Meeting" },
-  { value: "all_hands", label: "All Hands" },
-  { value: "workshop", label: "Workshop" },
-  { value: "other", label: "Other" },
-];
-
-/** datetime-local (`YYYY-MM-DDTHH:mm`, local) → Date */
 function parseDatetimeLocal(value: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value.trim());
   if (!m) return null;

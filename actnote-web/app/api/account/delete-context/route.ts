@@ -10,7 +10,7 @@ export type AccountDeleteFlow =
 
 /**
  * 현재 워크스페이스 기준 계정 삭제 UI 분기용 컨텍스트.
- * - DB `owner` 이며 멤버 2명 이상 → 소유권 이전 필요
+ * - `workspaces.owner_id` 가 본인 이고 멤버 2명 이상 → 소유권 이전(transfer) 모달
  * - 멤버 1명(본인만) → 워크스페이스 + 계정 삭제 안내
  * - 그 외 → 계정만 삭제(타 워크스페이스 멤버십은 삭제 시 함께 정리됨)
  */
@@ -44,6 +44,17 @@ export async function GET(request: Request) {
   const myRole = typeof mem.role === "string" ? mem.role : "member";
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: ws, error: wsLookupErr } = await (supabase as any)
+    .from("workspaces")
+    .select("name, owner_id")
+    .eq("id", workspaceId)
+    .maybeSingle();
+
+  if (wsLookupErr || !ws) {
+    return NextResponse.json({ error: "Workspace not found" }, { status: 404 });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { count: memberCountRaw, error: cErr } = await (supabase as any)
     .from("workspace_members")
     .select("*", { count: "exact", head: true })
@@ -64,12 +75,7 @@ export async function GET(request: Request) {
 
   const meetingCount = meetingCountRaw ?? 0;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: ws } = await (supabase as any)
-    .from("workspaces")
-    .select("name")
-    .eq("id", workspaceId)
-    .maybeSingle();
+  const ownerId = typeof ws.owner_id === "string" ? ws.owner_id : null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: profile } = await (supabase as any)
@@ -89,8 +95,12 @@ export async function GET(request: Request) {
       .map((p: string) => p[0]?.toUpperCase() ?? "")
       .join("") || displayName[0]?.toUpperCase() || "?";
 
+  /** 워크스페이스 레코드의 owner_id 기준 (역할 문자열과 불일치해도 계정 삭제 분기 안전). */
+  const mustTransferOwnership =
+    ownerId !== null && ownerId === user.id && memberCount > 1;
+
   let flow: AccountDeleteFlow;
-  if (myRole === "owner" && memberCount > 1) {
+  if (mustTransferOwnership) {
     flow = "transfer_required";
   } else if (memberCount === 1) {
     flow = "delete_workspace_and_account";
@@ -98,19 +108,22 @@ export async function GET(request: Request) {
     flow = "delete_account_only";
   }
 
-  return NextResponse.json({
-    flow,
-    workspace: {
-      id: workspaceId,
-      name: (ws?.name as string) || "Workspace",
-      memberCount,
-      meetingCount,
-      myRole,
+  return NextResponse.json(
+    {
+      flow,
+      workspace: {
+        id: workspaceId,
+        name: (ws.name as string) || "Workspace",
+        memberCount,
+        meetingCount,
+        myRole,
+      },
+      profile: {
+        displayName,
+        email: user.email ?? "",
+        initials,
+      },
     },
-    profile: {
-      displayName,
-      email: user.email ?? "",
-      initials,
-    },
-  });
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }
