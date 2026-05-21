@@ -287,27 +287,26 @@ export default function WorkspaceSettingsPage() {
   }
 
   async function handleRemoveMember(userId: string) {
-    if (!workspaceId || !isElevated) return;
+    if (!workspaceId || !isDbOwner) return;
     setRemoving(userId);
     const supabase = createClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase as any)
-      .from("workspace_members")
-      .delete()
-      .eq("workspace_id", workspaceId)
-      .eq("user_id", userId);
-    if (error) {
-      setRoleError(error.message || "Could not remove member.");
-      setRemoving(null);
-      return;
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: revErr } = await (supabase as any).rpc("revoke_pending_invites_for_member", {
+    const { error } = await (supabase as any).rpc("remove_workspace_member", {
       p_workspace_id: workspaceId,
       p_target_user_id: userId,
     });
-    if (revErr) {
-      console.warn("revoke_pending_invites_for_member:", revErr.message);
+    if (error) {
+      const msg =
+        error.message === "last_owner_cannot_be_removed"
+          ? "Cannot remove the last owner."
+          : error.message === "cannot_remove_self"
+          ? "Cannot remove yourself."
+          : error.code === "42501"
+          ? "Only the workspace owner can remove members."
+          : error.message || "Could not remove member.";
+      setRoleError(msg);
+      setRemoving(null);
+      return;
     }
     setMembers((prev) => prev.filter((m) => m.user_id !== userId));
     setRemoving(null);
@@ -824,7 +823,6 @@ export default function WorkspaceSettingsPage() {
               {members.map((m) => {
                 const style = ROLE_STYLE[m.role];
                 const isSelf = m.user_id === currentUserId;
-                /* Allow changing another user even if they show Owner (fixes duplicate-owner stuck UI). */
                 const canChangeRole = isDbOwner && !isSelf;
 
                 return (
@@ -873,7 +871,7 @@ export default function WorkspaceSettingsPage() {
                     )}
 
                     {/* Remove button (owner only; cannot remove owner) */}
-                    {isElevated && !isSelf && m.dbRole !== "owner" && (
+                    {isDbOwner && !isSelf && m.dbRole !== "owner" && (
                       <button
                         onClick={() => handleRemoveMember(m.user_id)}
                         disabled={removing === m.user_id}

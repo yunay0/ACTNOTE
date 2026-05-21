@@ -1,0 +1,2 @@
+-- 025_fix_meetings_update_rls.sql 에서 이미 처리됨 (번호 충돌 수정).
+-- 이 파일은 no-op.

@@ -1,0 +1,2 @@
+-- 033_fix_owner_transfer.sql 로 이동됨 (번호 충돌 수정).
+-- 이 파일은 no-op. 실제 내용은 033_fix_owner_transfer.sql 참조.

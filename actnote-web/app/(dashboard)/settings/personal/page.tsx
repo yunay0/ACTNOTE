@@ -131,6 +131,8 @@ export default function PersonalSettingsPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
+  const [transferSelectedUserId, setTransferSelectedUserId] = useState<string | null>(null);
+  const [transferBusy, setTransferBusy] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -400,6 +402,7 @@ export default function PersonalSettingsPage() {
       setTransferBusy(false);
       return;
     }
+    // set_member_role(025~)이 owner 승격 시 기존 owner를 자동 강등하므로 별도 self-demote 불필요.
 
     await refreshWorkspaces();
     setTransferBusy(false);
