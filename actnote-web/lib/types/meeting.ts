@@ -102,6 +102,3 @@ export function getProcessingProgress(status: MeetingStatus): number {
   if (idx === -1) return 0;
   return Math.round((idx / (PROCESSING_STEPS.length - 1)) * 100);
 }
-
-/** 모크 처리 완료까지 걸리는 시간 (ms) — 데모용 15초 */
-export const MOCK_PROCESSING_MS = 15_000;

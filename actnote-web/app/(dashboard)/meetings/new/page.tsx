@@ -49,7 +49,18 @@ export default function NewMeetingPage() {
   const [doneModal, setDoneModal] = useState(false);
   const [leaveModal, setLeaveModal] = useState(false);
   const [pendingNavTarget, setPendingNavTarget] = useState<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pipelineMeetingIdRef = useRef<string | null>(null);
+  const pipelinePollStartedAtRef = useRef<number | null>(null);
+
+  const stopPipelinePoll = useCallback(() => {
+    if (pollIntervalRef.current != null) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    pipelineMeetingIdRef.current = null;
+    pipelinePollStartedAtRef.current = null;
+  }, []);
 
   const [memberOptions, setMemberOptions] = useState<{ user_id: string; label: string }[]>([]);
   const [responsibleUserId, setResponsibleUserId] = useState<string | null>(null);
@@ -146,6 +157,8 @@ export default function NewMeetingPage() {
     };
   }, [workspaceId]);
 
+  useEffect(() => () => stopPipelinePoll(), [stopPipelinePoll]);
+
   // 헤더 백버튼 대신 사용할 safe navigate
   function safeNavigate(href: string) {
     if (isDirty) {
@@ -158,6 +171,9 @@ export default function NewMeetingPage() {
 
   function confirmLeave() {
     setLeaveModal(false);
+    stopPipelinePoll();
+    setProcessingModal(false);
+    setDoneModal(false);
     if (pendingNavTarget) router.push(pendingNavTarget);
   }
 
@@ -330,10 +346,60 @@ export default function NewMeetingPage() {
 
       setLoading(false);
       setProcessingModal(true);
-      timerRef.current = setTimeout(() => {
-        setProcessingModal(false);
-        setDoneModal(true);
-      }, 15_000);
+      setDoneModal(false);
+      stopPipelinePoll();
+      pipelineMeetingIdRef.current = meetingId;
+      pipelinePollStartedAtRef.current = Date.now();
+
+      const POLL_MS = 4000;
+      const MAX_WAIT_MS = 45 * 60 * 1000;
+
+      const pollOnce = async () => {
+        const id = pipelineMeetingIdRef.current;
+        const started = pipelinePollStartedAtRef.current;
+        if (!id || started == null) return;
+
+        if (Date.now() - started > MAX_WAIT_MS) {
+          stopPipelinePoll();
+          setProcessingModal(false);
+          setAlertMsg(
+            "Analysis is still running. Open Meetings to see live progress — it may take several more minutes."
+          );
+          return;
+        }
+
+        const sb = createClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data, error } = await (sb as any)
+          .from("meetings")
+          .select("status, error_message")
+          .eq("id", id)
+          .maybeSingle();
+
+        if (error || !data) return;
+
+        const s = data.status as string;
+        if (s === "ready" || s === "published") {
+          stopPipelinePoll();
+          setProcessingModal(false);
+          setDoneModal(true);
+          return;
+        }
+        if (s === "error") {
+          stopPipelinePoll();
+          setProcessingModal(false);
+          const em =
+            typeof data.error_message === "string" && data.error_message.trim() ?
+              data.error_message
+            : "Analysis failed. Open the meeting from Meetings for details or retry.";
+          setAlertMsg(em);
+        }
+      };
+
+      void pollOnce();
+      pollIntervalRef.current = setInterval(() => {
+        void pollOnce();
+      }, POLL_MS);
 
     } catch (err) {
       setAlertMsg(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
@@ -342,13 +408,11 @@ export default function NewMeetingPage() {
   }
 
   function closeAndGo() {
-    if (timerRef.current) clearTimeout(timerRef.current);
+    stopPipelinePoll();
     setProcessingModal(false);
     setDoneModal(false);
     router.push("/meetings");
   }
-
-  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-white">

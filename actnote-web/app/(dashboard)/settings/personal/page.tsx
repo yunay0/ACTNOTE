@@ -384,6 +384,7 @@ export default function PersonalSettingsPage() {
     const wid = ctx.workspace.id;
     const targetId = transferSelectedUserId;
 
+    // Single RPC (033+): promoting target to owner demotes all other owners (including caller) to member.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: promoteErr } = await (supabase as any).rpc("set_member_role", {
       p_workspace_id: wid,

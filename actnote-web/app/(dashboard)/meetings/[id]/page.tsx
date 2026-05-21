@@ -22,6 +22,7 @@ import { retryMeetingPipeline } from "@/lib/meetings/retry-pipeline";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 import type { MeetingStatus } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
+import { workspaceMemberDisplayName } from "@/lib/user/member-display";
 
 interface MeetingRow {
   id: string;
@@ -194,25 +195,35 @@ export default function MeetingDetailPage() {
 
   const loadMembers = useCallback(async (wsId: string) => {
     const supabase = createClient();
-    const { data } = await (supabase as any)
+    const { data, error } = await (supabase as any)
       .from("workspace_members")
       .select("user_id, users(name, email)")
       .eq("workspace_id", wsId);
 
-    if (data) {
-      setMembers(
-        (data as any[]).map((row) => {
-          const name = row.users?.name ?? null;
-          const email = typeof row.users?.email === "string" ? row.users.email : "";
-          return {
-            user_id: row.user_id,
-            name,
-            email,
-            displayName: workspaceMemberDisplayName(name, email),
-          };
-        })
-      );
+    if (error) {
+      console.error("[meeting detail] loadMembers:", error.message);
+      setMembers([]);
+      return;
     }
+    if (!data?.length) {
+      setMembers([]);
+      return;
+    }
+
+    setMembers(
+      (data as { user_id: string; users: unknown }[]).map((row) => {
+        const u = Array.isArray(row.users) ? row.users[0] : row.users;
+        const uo = u && typeof u === "object" ? (u as Record<string, unknown>) : null;
+        const name = typeof uo?.name === "string" ? uo.name : null;
+        const email = typeof uo?.email === "string" ? uo.email : "";
+        return {
+          user_id: row.user_id,
+          name,
+          email,
+          displayName: workspaceMemberDisplayName(name, email),
+        };
+      })
+    );
   }, []);
 
   const fetchMeeting = useCallback(async () => {

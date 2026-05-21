@@ -5,8 +5,8 @@ import { createServiceRoleClient } from "@/lib/supabase/service-role";
 export const runtime = "nodejs";
 
 /**
- * Workspace DB `owner`만 워크스페이스 행을 삭제한다 (CASCADE로 관련 데이터 정리).
- * 관리자(admin)는 삭제 불가 — 소유권 이전 후 진행하도록 설정 화면에서 안내.
+ * Workspace DB `owner`만 워크스페이스 행을 삭제한다 (CASCADE로 관련 데이터·다른 멤버 멤버십까지 정리).
+ * 멤버 수와 무관 — 확인 문자열 DELETE 일치 시 service role 로 삭제.
  */
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -51,23 +51,6 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Only the workspace owner can delete this workspace." },
       { status: 403 }
-    );
-  }
-
-  // 다른 멤버가 있으면 삭제 차단 — 소유권 이전 후 멤버가 모두 나가야 삭제 가능
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { count: memberCount } = await (supabase as any)
-    .from("workspace_members")
-    .select("*", { count: "exact", head: true })
-    .eq("workspace_id", workspaceId);
-
-  if (memberCount && memberCount > 1) {
-    return NextResponse.json(
-      {
-        error: `Cannot delete workspace with ${memberCount} members. Remove all other members first, or transfer ownership and leave.`,
-        member_count: memberCount,
-      },
-      { status: 409 }
     );
   }
 

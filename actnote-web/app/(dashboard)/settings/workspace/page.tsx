@@ -112,6 +112,9 @@ export default function WorkspaceSettingsPage() {
   const [deleteWorkspaceInput, setDeleteWorkspaceInput] = useState("");
   const [deleteWorkspaceBusy, setDeleteWorkspaceBusy] = useState(false);
   const [deleteWorkspaceError, setDeleteWorkspaceError] = useState<string | null>(null);
+  const [leaveWorkspaceModalOpen, setLeaveWorkspaceModalOpen] = useState(false);
+  const [leaveWorkspaceBusy, setLeaveWorkspaceBusy] = useState(false);
+  const [leaveWorkspaceError, setLeaveWorkspaceError] = useState<string | null>(null);
 
   /** Merged former DB `owner` + `admin`: edit settings, invite, remove members (not role RPC). */
   const isElevated = currentDbRole === "owner" || currentDbRole === "admin";
@@ -535,6 +538,33 @@ export default function WorkspaceSettingsPage() {
     }
   }
 
+  async function handleConfirmLeaveWorkspace() {
+    if (!workspaceId) return;
+    setLeaveWorkspaceBusy(true);
+    setLeaveWorkspaceError(null);
+    try {
+      const res = await fetch("/api/workspace/leave", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace_id: workspaceId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setLeaveWorkspaceError(data.error ?? "Could not leave workspace.");
+        return;
+      }
+      clearStoredWorkspaceId();
+      setLeaveWorkspaceModalOpen(false);
+      await refreshWorkspaces();
+      router.push("/workspace/select");
+      router.refresh();
+    } catch {
+      setLeaveWorkspaceError("Network error. Try again.");
+    } finally {
+      setLeaveWorkspaceBusy(false);
+    }
+  }
+
   const deleteWorkspaceConfirmValid = deleteWorkspaceInput.trim() === "DELETE";
 
   if (loading) {
@@ -656,6 +686,58 @@ export default function WorkspaceSettingsPage() {
                 className="rounded-[10px] bg-[#ef4444] px-6 py-[14px] text-[15px] font-bold text-white hover:bg-[#dc2626] disabled:cursor-not-allowed disabled:opacity-50 sm:whitespace-nowrap"
               >
                 {deleteWorkspaceBusy ? "Deleting…" : "Delete Workspace"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {leaveWorkspaceModalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 px-4 py-8 backdrop-blur-sm"
+          role="presentation"
+        >
+          <div className="relative w-full max-w-md rounded-2xl bg-white p-7 shadow-xl">
+            <button
+              type="button"
+              onClick={() => {
+                setLeaveWorkspaceModalOpen(false);
+                setLeaveWorkspaceError(null);
+              }}
+              className="absolute right-4 top-4 text-[#94a3b8] hover:text-[#64748b]"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <h2 className="pr-8 text-[17px] font-bold text-[#0a2540]">Leave this workspace?</h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-[#64748b]">
+              You will lose access to this workspace&apos;s meetings and settings. You can join again if
+              someone invites you.
+            </p>
+            {leaveWorkspaceError && (
+              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
+                {leaveWorkspaceError}
+              </div>
+            )}
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                disabled={leaveWorkspaceBusy}
+                onClick={() => {
+                  setLeaveWorkspaceModalOpen(false);
+                  setLeaveWorkspaceError(null);
+                }}
+                className="h-11 rounded-xl border-2 border-[#e2e8f0] px-5 text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={leaveWorkspaceBusy}
+                onClick={() => void handleConfirmLeaveWorkspace()}
+                className="h-11 rounded-xl bg-[#0a2540] px-5 text-[14px] font-bold text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {leaveWorkspaceBusy ? "Leaving…" : "Leave workspace"}
               </button>
             </div>
           </div>
@@ -1002,6 +1084,29 @@ export default function WorkspaceSettingsPage() {
               </span>
             </div>
           </section>
+
+          {/* Leave workspace — members & admins (not DB owner) */}
+          {!isDbOwner && (
+            <section className="rounded-[12px] border border-[#e2e8f0] bg-white p-[33px]">
+              <h2 className="text-[17px] font-bold text-[#0a2540]">Leave workspace</h2>
+              <p className="mt-1 text-[13px] text-[#64748b]">
+                Remove yourself from this team. Your account stays active; you can join another workspace or
+                accept a new invite later.
+              </p>
+              <div className="mt-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLeaveWorkspaceError(null);
+                    setLeaveWorkspaceModalOpen(true);
+                  }}
+                  className="h-11 rounded-lg border-2 border-[#e2e8f0] px-6 text-[14px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc]"
+                >
+                  Leave workspace
+                </button>
+              </div>
+            </section>
+          )}
 
           {/* Danger zone — Figma 106:5085, DB workspace owner only */}
           {isDbOwner && (
