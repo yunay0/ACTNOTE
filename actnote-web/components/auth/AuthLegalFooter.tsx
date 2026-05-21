@@ -3,13 +3,13 @@ import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from "@/lib/legal-links";
 /** Compact Terms + Privacy links for auth screens (same destinations as marketing site footer). */
 export function AuthLegalFooter() {
   return (
-    <p className="text-center text-[12px] leading-relaxed text-[#94a3b8]">
-      By continuing you agree to our{" "}
+    <p className="text-center text-[12px] leading-[1.73] text-[#64748b]">
+      By continuing, you agree to our{" "}
       <a
         href={TERMS_OF_SERVICE_URL}
         target="_blank"
         rel="noopener noreferrer"
-        className="font-semibold text-[#ff6b35] hover:underline"
+        className="font-medium text-[#ff6b35] hover:underline"
       >
         Terms of Service
       </a>{" "}
@@ -18,7 +18,7 @@ export function AuthLegalFooter() {
         href={PRIVACY_POLICY_URL}
         target="_blank"
         rel="noopener noreferrer"
-        className="font-semibold text-[#ff6b35] hover:underline"
+        className="font-medium text-[#ff6b35] hover:underline"
       >
         Privacy Policy
       </a>
