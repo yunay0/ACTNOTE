@@ -17,6 +17,16 @@ function isSupabaseConfigured(): boolean {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Supabase OAuth 코드가 allowlist 실패로 루트에 떨어질 때 /auth/callback 으로 포워딩
+  if (pathname === "/" && request.nextUrl.searchParams.has("code")) {
+    const callbackUrl = request.nextUrl.clone();
+    callbackUrl.pathname = "/auth/callback";
+    if (!callbackUrl.searchParams.has("next")) {
+      callbackUrl.searchParams.set("next", "/workspace/select");
+    }
+    return NextResponse.redirect(callbackUrl);
+  }
+
   const isAuthPage =
     pathname.startsWith("/login") || pathname.startsWith("/signup");
   const isApiRoute = pathname.startsWith("/api/");
