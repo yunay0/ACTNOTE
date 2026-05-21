@@ -22,7 +22,8 @@ export function AuthSocialChrome({ redirectAfterAuth }: AuthSocialChromeProps) {
     const supabase = createClient();
     const next =
       redirectAfterAuth.startsWith("/") ? redirectAfterAuth : `/${redirectAfterAuth}`;
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+    const appOrigin = process.env.NEXT_PUBLIC_APP_URL ?? window.location.origin;
+    const redirectTo = `${appOrigin}/auth/callback?next=${encodeURIComponent(next)}`;
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
