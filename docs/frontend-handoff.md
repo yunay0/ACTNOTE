@@ -290,6 +290,7 @@ Supabase SQL Editor 에서 **한 파일씩 순서대로** 실행:
 | `migrations/016_workspace_invites.sql` | 초대 테이블 + RPC 3개 | ✅ 실행 |
 | `migrations/017_member_role_rpc.sql` | role CHECK + 002 트리거 정합성 + `set_member_role` | ✅ 실행 |
 | `migrations/018_remove_member_rpc.sql` | 워크스페이스 멤버 강퇴 `remove_workspace_member` | ✅ 실행 |
+| `migrations/034_workspace_members_leave_self_rls.sql` | 멤버 본인 탈퇴 RLS (`POST /api/workspace/leave`) | ✅ 실행 |
 
 각 마이그레이션은 **`BEGIN/COMMIT` 트랜잭션 + `IF NOT EXISTS`/`CREATE OR REPLACE`** 로 재실행 안전.
 
@@ -307,6 +308,7 @@ Supabase SQL Editor 에서 **한 파일씩 순서대로** 실행:
 - [ ] `set_member_role` 마지막 owner demote 시도 → `last_owner_cannot_be_demoted` 에러
 - [ ] 초대 메일 → `RESEND_API_KEY` 설정 시 실제 발송, 미설정 시 콘솔 dry-run
 - [ ] `remove_workspace_member` 호출 → 대상 멤버 제거·pending 초대 revoke
+- [ ] 설정에서 **Leave workspace** (비 owner 멤버) → `POST /api/workspace/leave` 성공 후 목록에서 제외 (034 적용 필요, 상세는 `docs/rpc.md`)
 
 ---
 

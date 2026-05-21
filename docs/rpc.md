@@ -402,6 +402,19 @@ await supabase.rpc("revoke_pending_invites_for_member", {
 
 ---
 
+## 워크스페이스 자발적 탈퇴 (Leave) — `/api/workspace/leave` · `034_workspace_members_leave_self_rls.sql`
+
+호출자가 **스스로** 해당 워크스페이스를 떠난다. **member / admin** 만 가능. **`role = owner` 인 사용자**는 소유권 이전 또는 워크스페이스 삭제 후 처리해야 하며 서버가 **409** 로 안내한다.
+
+운영 진입점:
+
+- **Next Route Handler:** `POST /api/workspace/leave` — JSON `{ workspace_id }`. 서버 `createServerClient`(세션 사용자)가 `workspace_members` 를 **SELECT 로 역할 확인 후 DELETE**(본인 행만).
+- **RLS:** `workspace_members_leave_self` (`user_id = auth.uid() AND role <> 'owner'`) 가 있어야 DELETE 가 통과한다. 마이그레이션: `034_workspace_members_leave_self_rls.sql`.
+
+> **참고:** `leave_workspace(p_workspace_id)` RPC (`030_leave_workspace_rpc.sql`) 와 비즈니스 규칙은 같지만, PostgREST “스키마 캐시에 함수 없음” 문제를 피하기 위해 웹은 **RPC 대신 DELETE** 를 사용한다. DB 에 030 만 있고 034 가 없으면 웹에서 탈퇴할 수 없다.
+
+---
+
 ## 워크스페이스 초대 — 프론트 흐름 요약
 
 ```
