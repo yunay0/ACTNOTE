@@ -10,7 +10,7 @@ type AuthSocialChromeProps = {
 };
 
 /**
- * Figma S-02-01 (134:8689): Google OAuth, "or" divider, then compact terms line.
+ * Figma S-02-01 (137:11440): Google OAuth, "or" divider, terms (no email/password).
  */
 export function AuthSocialChrome({ redirectAfterAuth }: AuthSocialChromeProps) {
   const [busy, setBusy] = useState(false);
@@ -25,7 +25,7 @@ export function AuthSocialChrome({ redirectAfterAuth }: AuthSocialChromeProps) {
     const appOrigin = process.env.NEXT_PUBLIC_APP_URL ?? window.location.origin;
     const redirectTo = `${appOrigin}/auth/callback?next=${encodeURIComponent(next)}`;
 
-    const { error } = await supabase.auth.signInWithOAuth({
+    const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo,
@@ -35,8 +35,17 @@ export function AuthSocialChrome({ redirectAfterAuth }: AuthSocialChromeProps) {
     if (error) {
       setOauthError(error.message);
       setBusy(false);
+      return;
     }
-    /* Redirect leaves the page; busy stays true intentionally. */
+
+    /* Supabase may return a URL without auto-navigating; required for PKCE in some setups. */
+    if (data?.url) {
+      window.location.assign(data.url);
+      return;
+    }
+
+    setOauthError("Could not start Google sign-in. Check Supabase Auth redirect URLs.");
+    setBusy(false);
   }
 
   return (

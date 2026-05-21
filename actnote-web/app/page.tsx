@@ -86,7 +86,7 @@ function LeftColumn() {
 
       {/* CTA */}
       <Link
-        href="/signup"
+        href="/login"
         className="inline-flex w-fit items-center justify-center gap-2 rounded-lg px-20 py-5 text-[17px] font-bold text-white shadow-[0px_8px_12px_rgba(255,107,53,0.3)] transition-opacity hover:opacity-90"
         style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
       >

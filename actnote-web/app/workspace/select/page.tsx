@@ -30,6 +30,7 @@ function WorkspaceSelectInner() {
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [choices, setChoices] = useState<WorkspaceMembership[]>([]);
+  const [pickerEmail, setPickerEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -115,6 +116,7 @@ function WorkspaceSelectInner() {
 
       if (!cancelled) {
         setChoices(list);
+        setPickerEmail(user.email ?? null);
         setLoading(false);
       }
     }
@@ -177,6 +179,7 @@ function WorkspaceSelectInner() {
   return (
     <WorkspaceAccountPicker
       memberships={choices}
+      userEmail={pickerEmail}
       onPickWorkspace={choose}
       onUseAnotherAccount={handleUseAnotherAccount}
       onCancel={handleCancel}

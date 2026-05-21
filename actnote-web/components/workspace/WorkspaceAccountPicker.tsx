@@ -19,7 +19,8 @@ function initialsFromName(name: string): string {
   return t.slice(0, 2).toUpperCase();
 }
 
-function subtitleForMembership(m: WorkspaceMembership): string {
+/** Second line when email unavailable (slug / role). */
+function fallbackSubtitle(m: WorkspaceMembership): string {
   const slug = (m.workspace.slug ?? "").trim();
   if (slug) return `@${slug}`;
   const role = m.role.trim();
@@ -29,16 +30,19 @@ function subtitleForMembership(m: WorkspaceMembership): string {
 
 type WorkspaceAccountPickerProps = {
   memberships: WorkspaceMembership[];
+  /** Signed-in user email (Google) — matches Figma subline under each “account”. */
+  userEmail: string | null;
   onPickWorkspace: (workspaceId: string) => void;
   onUseAnotherAccount: () => void | Promise<void>;
   onCancel: () => void;
 };
 
 /**
- * Figma 134:8767 — post-auth workspace choice styled like account picker rows.
+ * Figma 137:11899 — post-auth workspace choice (same chrome as Google account picker).
  */
 export function WorkspaceAccountPicker({
   memberships,
+  userEmail,
   onPickWorkspace,
   onUseAnotherAccount,
   onCancel,
@@ -49,7 +53,7 @@ export function WorkspaceAccountPicker({
       role="presentation"
     >
       <div
-        className="w-full max-w-[480px] rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
+        className="w-full max-w-[480px] rounded-[16px] bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
         role="dialog"
         aria-labelledby="workspace-picker-title"
         aria-describedby="workspace-picker-description"
@@ -75,67 +79,70 @@ export function WorkspaceAccountPicker({
 
         <div className="h-[9px] shrink-0" aria-hidden />
 
-        <ul className="flex flex-col gap-[9px]">
-          {memberships.map((m, idx) => {
-            const initials = initialsFromName(m.workspace.name || "Workspace");
-            const bgStyle = AVATAR_GRADIENTS[idx % AVATAR_GRADIENTS.length];
-            const title = (m.workspace.name || "Workspace").trim() || "Workspace";
+        <div className="mx-auto w-full max-w-[394px]">
+          <ul className="flex flex-col gap-[9px]">
+            {memberships.map((m, idx) => {
+              const initials = initialsFromName(m.workspace.name || "Workspace");
+              const bgStyle = AVATAR_GRADIENTS[idx % AVATAR_GRADIENTS.length];
+              const title = (m.workspace.name || "Workspace").trim() || "Workspace";
+              const subline = (userEmail ?? "").trim() || fallbackSubtitle(m);
 
-            return (
-              <li key={m.workspace_id}>
-                <button
-                  type="button"
-                  onClick={() => onPickWorkspace(m.workspace_id)}
-                  className="flex w-full items-center gap-3 rounded-xl bg-[#f1f5f9] px-4 py-2.5 text-left transition-opacity hover:bg-[#e2e8f0]"
-                >
-                  <div
-                    className="flex size-12 shrink-0 items-center justify-center rounded-full text-[18px] font-bold text-white"
-                    style={{ backgroundImage: bgStyle }}
-                    aria-hidden
+              return (
+                <li key={m.workspace_id}>
+                  <button
+                    type="button"
+                    onClick={() => onPickWorkspace(m.workspace_id)}
+                    className="flex w-full items-center gap-3 rounded-[12px] bg-[#f1f5f9] px-4 py-2.5 text-left transition-colors hover:bg-[#e2e8f0]"
                   >
-                    {initials}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[15px] font-bold text-[#0a2540]">{title}</p>
-                    <p className="truncate text-[12.5px] text-[#64748b]">
-                      {subtitleForMembership(m)}
-                    </p>
-                  </div>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+                    <div
+                      className="flex size-12 shrink-0 items-center justify-center rounded-full text-[18px] font-bold text-white"
+                      style={{ backgroundImage: bgStyle }}
+                      aria-hidden
+                    >
+                      {initials}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[15px] font-bold text-[#0a2540]">{title}</p>
+                      <p className="truncate text-[12.5px] text-[#64748b]">{subline}</p>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
 
-        <div className="h-[9px] shrink-0" aria-hidden />
-        <div className="h-[9px] shrink-0" aria-hidden />
+          <div className="h-[9px] shrink-0" aria-hidden />
+          <div className="h-[9px] shrink-0" aria-hidden />
 
-        <button
-          type="button"
-          onClick={() => void onUseAnotherAccount()}
-          className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-left transition-colors hover:bg-[#f8fafc]"
-        >
-          <div
-            className="flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-[#64748b]"
-            aria-hidden
+          <button
+            type="button"
+            onClick={() => void onUseAnotherAccount()}
+            className="flex w-full items-center gap-3 rounded-[12px] px-4 py-2.5 text-left transition-colors hover:bg-[#f8fafc]"
           >
-            <span className="pb-0.5 text-2xl font-normal leading-none text-[#64748b]">+</span>
-          </div>
-          <div className="px-1">
-            <p className="text-[15px] font-bold text-[#0a2540]">Use another account</p>
-          </div>
-        </button>
+            <div
+              className="flex size-12 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-[#64748b]"
+              aria-hidden
+            >
+              <span className="pb-0.5 text-2xl font-normal leading-none text-[#64748b]">+</span>
+            </div>
+            <div className="px-[5px]">
+              <p className="text-[15px] font-bold text-[#0a2540]">Use another account</p>
+            </div>
+          </button>
+        </div>
 
         <div className="h-[9px] shrink-0" aria-hidden />
         <div className="h-[9px] shrink-0" aria-hidden />
 
-        <button
-          type="button"
-          onClick={onCancel}
-          className="flex h-[52px] w-full items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] bg-white text-[16px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc]"
-        >
-          Cancel
-        </button>
+        <div className="mx-auto w-full max-w-[396px]">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex h-[52px] w-full items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] bg-white text-[16px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc]"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );
