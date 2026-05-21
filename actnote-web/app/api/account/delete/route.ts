@@ -135,6 +135,39 @@ export async function POST(request: Request) {
     }
   }
 
+  // ── public.users 정리 ────────────────────────────────────────────────
+  // auth.users ↔ public.users 사이에 FK CASCADE 없음.
+  // deleteUser 만 호출하면 public.users·workspace_members 등 DB 데이터가 잔존한다.
+  // 해결: non-cascade FK 를 NULL 처리 → public.users 삭제(cascade: workspace_members 등)
+  //       → auth.users 삭제 순서로 진행.
+  const nullifyResults = await Promise.all([
+    admin.from("workspaces").update({ owner_id: null }).eq("owner_id", user.id),
+    admin.from("meetings").update({ created_by: null }).eq("created_by", user.id),
+    admin.from("meetings").update({ approved_by: null }).eq("approved_by", user.id),
+    admin.from("transcripts").update({ speaker_user_id: null }).eq("speaker_user_id", user.id),
+    admin.from("action_items").update({ assignee_user_id: null }).eq("assignee_user_id", user.id),
+    admin.from("integrations").update({ connected_by: null }).eq("connected_by", user.id),
+  ]);
+
+  for (const r of nullifyResults) {
+    if (r.error) {
+      console.warn("[account/delete] nullify FK:", r.error.message);
+    }
+  }
+
+  const { error: publicUserErr } = await admin
+    .from("users")
+    .delete()
+    .eq("id", user.id);
+
+  if (publicUserErr) {
+    console.error("[account/delete] public.users delete:", publicUserErr.message);
+    return NextResponse.json(
+      { error: publicUserErr.message || "Failed to delete user data." },
+      { status: 500 }
+    );
+  }
+
   const { error } = await admin.auth.admin.deleteUser(user.id);
 
   if (error) {
