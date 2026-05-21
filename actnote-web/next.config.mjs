@@ -62,16 +62,6 @@ const nextConfig = {
       },
     ],
   },
-  async redirects() {
-    return [
-      {
-        source: "/:path*",
-        has: [{ type: "host", value: "www.actnote.xyz" }],
-        destination: "https://actnote.xyz/:path*",
-        permanent: true,
-      },
-    ];
-  },
 };
 
 export default nextConfig;
