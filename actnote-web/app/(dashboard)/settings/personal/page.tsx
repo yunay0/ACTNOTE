@@ -382,6 +382,7 @@ export default function PersonalSettingsPage() {
     const wid = ctx.workspace.id;
     const targetId = transferSelectedUserId;
 
+    // Single RPC (033+): promoting target to owner demotes all other owners (including caller) to member.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: promoteErr } = await (supabase as any).rpc("set_member_role", {
       p_workspace_id: wid,
@@ -395,24 +396,6 @@ export default function PersonalSettingsPage() {
           : promoteErr.code === "42501"
             ? "Only the workspace owner can transfer ownership."
             : promoteErr.message || "Could not transfer ownership.";
-      setDeleteError(msg);
-      setTransferBusy(false);
-      return;
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: demoteErr } = await (supabase as any).rpc("set_member_role", {
-      p_workspace_id: wid,
-      p_target_user_id: user.id,
-      p_new_role: "member",
-    });
-    if (demoteErr) {
-      const msg =
-        demoteErr.message === "last_owner_cannot_be_demoted"
-          ? "Ownership was assigned, but we could not update your role. Open Workspace settings or contact support."
-          : demoteErr.code === "42501"
-            ? "Could not finalize the transfer. Open Workspace settings."
-            : demoteErr.message || "Could not finalize ownership transfer.";
       setDeleteError(msg);
       setTransferBusy(false);
       return;

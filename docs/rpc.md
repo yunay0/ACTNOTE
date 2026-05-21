@@ -290,7 +290,7 @@ await supabase.rpc("revoke_invite", { p_invite_id: inviteId });
 
 ## 8. `set_member_role(p_workspace_id, p_target_user_id, p_new_role)` *(B-4-3)*
 
-기존 멤버의 역할을 변경. **owner만**. 마이그레이션 `017_member_role_rpc.sql` 후 사용 가능.
+기존 멤버의 역할을 변경. **owner만**. 마이그레이션 `017` + **`033_set_member_role_single_owner`** 후 단일 owner 규칙이 완성된다.
 
 ```ts
 const { data: member, error } = await supabase.rpc("set_member_role", {
@@ -309,10 +309,11 @@ if (error) {
 ```
 
 **규칙:**
-- 호출자는 owner 여야 함 → 다른 owner 가 새 owner 를 임명할 수 있음
-- 같은 역할로 set 하면 노옵 (NOOP) — 그대로 row 반환
-- 마지막 owner 를 admin/member 로 demote 시도 → `last_owner_cannot_be_demoted` (`P0001`)
-- 새 role 이 `owner` 면 `workspaces.owner_id` 도 함께 갱신 (단일 owner 모델)
+- 호출자는 owner 여야 함
+- **`p_new_role = 'owner'`** 인 경우: 같은 워크스페이스의 **다른 모든 `role = 'owner'` 행을 먼저 `member`로 내린 뒤** 대상을 `owner`로 올리고 `workspaces.owner_id = p_target_user_id` 로 맞춤 (이전에는 이전 owner 가 그대로 남아 owner 가 둘 이상이 될 수 있었음 — 033에서 수정)
+- `owner` 가 아닌 역할로 변경하는 경우, 강등 대상이 `workspaces.owner_id` 와 같으면 남은 owner 한 명으로 `owner_id` 를 옮김
+- `p_new_role` 이 `owner` 가 아닌 경우에만: 대상 역할이 이미 같으면 노옵 (NOOP). `owner` 승격은 항상 **다른 owner 정리 + owner_id 동기화**를 수행 (이미 유일 owner 면 DB 상 거의 변화 없음)
+- 마지막 한 명의 owner 를 admin/member 로 demote 시도 → `last_owner_cannot_be_demoted` (`P0001`)
 
 > 017 마이그레이션은 002 트리거의 멤버 역할 정합성 버그도 함께 정정합니다 (기존 `workspaces.owner_id` 사용자가 `member` 로 잘못 들어가있던 케이스를 `owner` 로 자동 승격).
 
