@@ -1,6 +1,6 @@
 "use client";
 
-/** Left branding column — Figma S-02-01 (134:8691–8715). */
+/** Left branding column — Figma S-02-01 (137:11442). */
 
 const FEATURES = [
   { icon: "🎙️", text: "AI-powered transcription & summary" },
