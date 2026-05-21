@@ -111,7 +111,7 @@ function SignupForm() {
             <p className="text-[15px] leading-normal text-[#64748b]">Create your account to continue to ACTNOTE</p>
           </div>
 
-          <AuthSocialChrome />
+          <AuthSocialChrome redirectAfterAuth={returnTo ?? "/workspace/select"} />
 
           <div className="-mt-1 flex flex-col gap-6">
             <form onSubmit={handleSubmit} className="flex flex-col gap-[18px]">

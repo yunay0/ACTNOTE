@@ -9,8 +9,6 @@ import { AuthSocialChrome } from "@/components/auth/AuthSocialChrome";
 import { englishFieldInvalidMessage, clearNativeValidity } from "@/lib/auth-native-validation";
 import { SUPPORT_EMAIL } from "@/lib/legal-links";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
-import { AuthLegalFooter } from "@/components/auth/AuthLegalFooter";
-
 const PLACEHOLDER_EMAIL = "lucy@actnote.com";
 const PLACEHOLDER_PASSWORD = "Enter your password";
 
@@ -118,7 +116,7 @@ function LoginForm() {
           <p className="text-[15px] leading-normal text-[#64748b]">Sign in to continue to ACTNOTE</p>
         </div>
 
-        <AuthSocialChrome />
+        <AuthSocialChrome redirectAfterAuth={returnTo ?? "/workspace/select"} />
 
         <div className="-mt-1 flex flex-col gap-6">
           {queryBanner && (
@@ -216,8 +214,6 @@ function LoginForm() {
               )}
             </button>
           </form>
-
-          <AuthLegalFooter />
 
           <p className="flex flex-wrap items-center justify-center gap-1 text-center text-sm text-[#475569]">
             Don&apos;t have an account?{" "}

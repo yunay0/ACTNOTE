@@ -8,7 +8,7 @@ type AuthSplitShellProps = {
 };
 
 /**
- * Figma S-02-01: centered card with left brand gradient + white form column.
+ * Figma S-02-01 (134:8689): centered card with left brand gradient + white form column.
  * Stacks vertically below `lg`; side-by-side on large screens.
  */
 export function AuthSplitShell({ children }: AuthSplitShellProps) {
