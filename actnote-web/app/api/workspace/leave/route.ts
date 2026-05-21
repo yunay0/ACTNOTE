@@ -5,7 +5,9 @@ export const runtime = "nodejs";
 
 /**
  * Caller leaves the workspace (removes their workspace_members row).
- * DB owner cannot leave via this route — use ownership transfer or delete workspace.
+ * Uses RLS policy `workspace_members_leave_self` (migration 034) — does not rely on
+ * optional `leave_workspace` RPC from migration 030.
+ * DB owner row cannot leave — transfer ownership or delete the workspace first.
  */
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -24,31 +26,74 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const workspaceId = typeof body.workspace_id === "string" ? body.workspace_id.trim() : "";
+  const workspaceId =
+    typeof body.workspace_id === "string" ? body.workspace_id.trim() : "";
   if (!workspaceId) {
     return NextResponse.json({ error: "workspace_id is required" }, { status: 400 });
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (supabase as any).rpc("leave_workspace", {
-    p_workspace_id: workspaceId,
-  });
+  const {
+    data: membership,
+    error: membershipError,
+  } = await supabase
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", user.id)
+    .maybeSingle();
 
-  if (error) {
-    const msg = error.message ?? "Could not leave workspace.";
-    if (msg.includes("owner_cannot_leave")) {
-      return NextResponse.json(
-        {
-          error:
-            "Workspace owners cannot leave this way. Transfer ownership or delete the workspace.",
-        },
-        { status: 409 }
-      );
-    }
-    if (msg.includes("not_a_member")) {
-      return NextResponse.json({ error: "You are not a member of this workspace." }, { status: 403 });
-    }
+  if (membershipError) {
+    return NextResponse.json(
+      {
+        error:
+          membershipError.message ??
+          "Could not verify workspace membership.",
+      },
+      { status: 400 },
+    );
+  }
+
+  if (!membership) {
+    return NextResponse.json(
+      { error: "You are not a member of this workspace." },
+      { status: 403 },
+    );
+  }
+
+  if (membership.role === "owner") {
+    return NextResponse.json(
+      {
+        error:
+          "Workspace owners cannot leave this way. Transfer ownership or delete the workspace.",
+      },
+      { status: 409 },
+    );
+  }
+
+  const { data: removed, error: deleteError } = await supabase
+    .from("workspace_members")
+    .delete()
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", user.id)
+    .select("user_id");
+
+  if (deleteError) {
+    const msg = deleteError.message ?? "Could not leave workspace.";
     return NextResponse.json({ error: msg }, { status: 400 });
+  }
+
+  if (!removed?.length) {
+    console.error(
+      "[api/workspace/leave] DELETE affected 0 rows (non-owner); apply migrations/034_workspace_members_leave_self_rls.sql if needed.",
+      { workspace_id: workspaceId, user_id: user.id },
+    );
+    return NextResponse.json(
+      {
+        error:
+          "We couldn't complete leaving this workspace. Please try again later or contact support.",
+      },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json({ ok: true });
