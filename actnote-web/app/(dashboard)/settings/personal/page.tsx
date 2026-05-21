@@ -131,6 +131,8 @@ export default function PersonalSettingsPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
+  const [transferSelectedUserId, setTransferSelectedUserId] = useState<string | null>(null);
+  const [transferBusy, setTransferBusy] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -399,24 +401,7 @@ export default function PersonalSettingsPage() {
       setTransferBusy(false);
       return;
     }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: demoteErr } = await (supabase as any).rpc("set_member_role", {
-      p_workspace_id: wid,
-      p_target_user_id: user.id,
-      p_new_role: "member",
-    });
-    if (demoteErr) {
-      const msg =
-        demoteErr.message === "last_owner_cannot_be_demoted"
-          ? "Ownership was assigned, but we could not update your role. Open Workspace settings or contact support."
-          : demoteErr.code === "42501"
-            ? "Could not finalize the transfer. Open Workspace settings."
-            : demoteErr.message || "Could not finalize ownership transfer.";
-      setDeleteError(msg);
-      setTransferBusy(false);
-      return;
-    }
+    // set_member_role(025~)이 owner 승격 시 기존 owner를 자동 강등하므로 별도 self-demote 불필요.
 
     await refreshWorkspaces();
     setTransferBusy(false);
