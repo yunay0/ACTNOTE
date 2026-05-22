@@ -1147,9 +1147,11 @@ export default function MeetingDetailPage() {
                 )}
               </Section>
 
-              {(Object.keys(speakerCandidates).length > 0 ||
-                transcriptLines.length > 0 ||
-                Object.keys(speakerMapping).length > 0) && (
+              {/* 화자 매핑: 오너만 접근 (docs/permissions.md §2 "화자 정보 편집") */}
+              {canMapSpeakers &&
+                (Object.keys(speakerCandidates).length > 0 ||
+                  transcriptLines.length > 0 ||
+                  Object.keys(speakerMapping).length > 0) && (
                 <SpeakerMappingSection
                   ref={speakerMappingRef}
                   meetingId={meeting.id}

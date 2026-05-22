@@ -1,10 +1,11 @@
 """파이프라인 예외 → 사용자 노출용 에러 카테고리 분류.
 
 기획 와이어 case 1/2/3/6 에 대응:
-    - FILE_RETRIEVAL_FAILED : Storage/프로젝트 쿼터 등으로 파일 자체를 가져올 수 없음 (case 6 — 고객센터 유도)
-    - DOWNLOAD_FAILED : 오디오 다운로드/파일 손상 (case 1)
-    - MODEL_API_FAILED : 외부 모델 API 실패 (case 2 — 사용자에게는 "서버 문제")
-    - DB_PUSH_FAILED   : Supabase DB INSERT/UPDATE 실패 (case 3 — 사용자에게는 "네트워크 확인")
+    - STORAGE_FULL    : Storage/프로젝트 쿼터 등으로 파일 자체를 가져올 수 없음 (case 6 — 고객센터 유도)
+    - FILE_NOT_FOUND  : 오디오 파일 없음·손상·포맷 오류 (case 1)
+    - MODEL_API_FAILED: 외부 모델 API 실패 (case 2 — 사용자에게는 "서버 문제")
+    - NETWORK_ERROR   : DB/스토리지 연결 실패, 타임아웃 (case 3 네트워크 — "연결 확인")
+    - DB_PUSH_ERROR   : Supabase DB INSERT/UPDATE 실패 — RLS·제약 등 (case 3 DB — "다시 시도")
     - PIPELINE_INTERNAL: 그 외 워커 내부 예외 (분류 보강 전 폴백)
 
 워커가 catch 한 예외를 ``classify_pipeline_error`` 로 분류해 ``[code:CODE] message`` 형식의
@@ -16,16 +17,17 @@ from __future__ import annotations
 
 from typing import Final
 
-CODE_FILE_RETRIEVAL_FAILED: Final = "FILE_RETRIEVAL_FAILED"
-CODE_DOWNLOAD_FAILED: Final = "DOWNLOAD_FAILED"
+CODE_STORAGE_FULL: Final = "STORAGE_FULL"
+CODE_FILE_NOT_FOUND: Final = "FILE_NOT_FOUND"
 CODE_MODEL_API_FAILED: Final = "MODEL_API_FAILED"
-CODE_DB_PUSH_FAILED: Final = "DB_PUSH_FAILED"
+CODE_NETWORK_ERROR: Final = "NETWORK_ERROR"
+CODE_DB_PUSH_ERROR: Final = "DB_PUSH_ERROR"
 CODE_NO_AUDIO_OR_SILENT: Final = "NO_AUDIO_OR_SILENT"
 CODE_PIPELINE_INTERNAL: Final = "PIPELINE_INTERNAL"
 
 
 # case 6: 재시도로 해결 어려운 Storage/쿼터/프로젝트 한도 (고객센터 문의 유도)
-_FILE_RETRIEVAL_HINTS = (
+_STORAGE_FULL_HINTS = (
     "413",
     "payload too large",
     "quota",
@@ -70,6 +72,15 @@ _MODEL_API_HINTS = (
     "modal",
 )
 
+# case 3 (네트워크 연결): 재시도로 해결 가능한 일시적 연결 오류
+_NETWORK_HINTS = (
+    "could not connect",
+    "connection refused",
+    "timeout",
+    "timed out",
+)
+
+# case 3 (DB): RLS·제약·권한 등 DB 레벨 오류 — 네트워크가 아닌 DB/설정 문제
 _DB_PUSH_HINTS = (
     "postgrest",
     "pgrst",
@@ -78,13 +89,9 @@ _DB_PUSH_HINTS = (
     "violates foreign key",
     "row level security",
     "permission denied for table",
-    "could not connect",
-    "connection refused",
-    "timeout",
-    "timed out",
 )
 
-_DOWNLOAD_HINTS = (
+_FILE_NOT_FOUND_HINTS = (
     "filenotfound",
     "no such file",
     "could not open",
@@ -114,14 +121,18 @@ def classify_pipeline_error(exc: BaseException) -> str:
 
     if any(h in msg for h in _NO_AUDIO_HINTS):
         return CODE_NO_AUDIO_OR_SILENT
-    if any(h in msg for h in _FILE_RETRIEVAL_HINTS):
-        return CODE_FILE_RETRIEVAL_FAILED
+    # MODEL_API를 STORAGE_FULL 앞에 체크: "insufficient_quota" 같은 API 과금 에러가
+    # _STORAGE_FULL_HINTS의 "quota" 키워드에 잘못 매칭되는 것을 방지
     if any(h in msg for h in _MODEL_API_HINTS):
         return CODE_MODEL_API_FAILED
+    if any(h in msg for h in _STORAGE_FULL_HINTS):
+        return CODE_STORAGE_FULL
+    if any(h in msg for h in _NETWORK_HINTS):
+        return CODE_NETWORK_ERROR
     if any(h in msg for h in _DB_PUSH_HINTS):
-        return CODE_DB_PUSH_FAILED
-    if any(h in msg for h in _DOWNLOAD_HINTS):
-        return CODE_DOWNLOAD_FAILED
+        return CODE_DB_PUSH_ERROR
+    if any(h in msg for h in _FILE_NOT_FOUND_HINTS):
+        return CODE_FILE_NOT_FOUND
     return CODE_PIPELINE_INTERNAL
 
 
@@ -142,6 +153,7 @@ if __name__ == "__main__":
         RuntimeError("storage quota exceeded for project"),
         FileNotFoundError("audio not found at /tmp/x.wav"),
         RuntimeError("openai.APIError: insufficient_quota"),
+        RuntimeError("connection refused to supabase"),
         RuntimeError("postgrest.APIResponseError: duplicate key value"),
         RuntimeError("something we did not anticipate"),
     ]
