@@ -41,6 +41,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "not published yet" }, { status: 400 });
   }
 
+  // 발행은 오너/admin만 가능
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: member } = await (supabase as any)
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", meeting.workspace_id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!member || !["owner", "admin"].includes(member.role as string)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   try {
     const res = await fetch(modalUrl, {
       method: "POST",
