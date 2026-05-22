@@ -1159,7 +1159,7 @@ export default function MeetingDetailPage() {
                                 )
                               );
                             }}
-                            className={`flex-1 min-w-0 basis-1/2 h-9 rounded-xl border bg-white px-3 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35] ${accentSelect}`}
+                            className={`flex-[7] min-w-0 h-9 rounded-xl border bg-white px-3 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35] ${accentSelect}`}
                           >
                             <option value="">Unassigned</option>
                             {members.map((m) => (
@@ -1184,7 +1184,7 @@ export default function MeetingDetailPage() {
                                 )
                               );
                             }}
-                            className={`flex-1 min-w-0 basis-1/2 h-9 rounded-xl border bg-white px-3 text-sm tabular-nums text-[#0a2540] outline-none placeholder:text-[#94a3b8] focus:border-[#ff6b35] ${accentDue}`}
+                            className={`flex-[3] min-w-0 shrink-0 h-9 rounded-xl border bg-white px-3 text-sm tabular-nums text-[#0a2540] outline-none placeholder:text-[#94a3b8] focus:border-[#ff6b35] ${accentDue}`}
                           />
                         </div>
                       </div>

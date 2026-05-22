@@ -129,79 +129,55 @@ def _load_template(name: str) -> str:
     return text
 
 
-_SYSTEM_PROMPT_BASE_FALLBACK = (
-    "You are an expert PM assistant. Extract structured information from meeting transcripts.\n"
-    "CRITICAL RULES:\n\n"
-    "Output ONLY valid JSON. No markdown, no explanations.\n"
-    "Only extract action items explicitly stated or strongly implied.\n"
-    "If assignee is unclear, set to null. Never guess.\n"
-    "If due_date is not mentioned, set to null. Never invent dates.\n"
-    "Confidence (0.0-1.0): how certain this is a real action item.\n\n"
-    "0.9+: Explicit assignment with clear ownership\n"
-    "0.7-0.9: Strong implication, owner inferred\n"
-    "0.5-0.7: Possible action item, ambiguous\n"
-    "<0.5: Don't include\n\n"
-    "Title: max 50 chars, English only\n"
-    "Summary: 3-5 sentences\n\n"
-    "[Decisions — required JSON array]\n"
-    "Fill \"decisions\" with every explicit group agreement, approved choice, or resolved question "
-    "(one short English sentence each).\n"
-    "If the transcript contains no clear decisions, output [].\n"
-    "Never omit the \"decisions\" key; never use null.\n\n"
-    "[Atomic Decomposition 원칙]\n"
-    "액션 아이템 추출 시 반드시 다음 5가지 원자 사실로 분해하세요:\n"
-    "- content: 무엇을 할 것인지 (동사+목적어 형태로 명확하게)\n"
-    "- assignee: 누가 할 것인지 (발화에서 명시된 경우만, 없으면 null)\n"
-    "- due_date: 언제까지 할 것인지 (발화에서 명시된 경우만, 없으면 null)\n"
-    "- depends_on: 선행 조건이 있는지 (있으면 관련 액션 내용 요약, 없으면 null)\n"
-    "- confidence: 이게 진짜 액션인지 확신 (0.0~1.0)\n\n"
-    "transcript에 명시적으로 등장한 내용만 추출하세요.\n"
-    "추론하거나 일반 상식을 동원하지 마세요.\n"
-    "명시적이지 않으면 confidence < 0.7로 표시하세요.\n\n"
-    "[관련 문서 언급 추출 / Referenced Document Detection]\n\n"
-    "회의 중 언급된 문서, 자료, 참조 항목을 식별하세요.\n"
-    "Identify documents, materials, or references mentioned in the meeting.\n\n"
-    "추출 대상 (Extract):\n"
-    "- 문서 종류 / Document types:\n"
-    "  PRD, spec, brief, proposal, memo, report, 기획서, 명세서, 제안서, 보고서\n"
-    "- 디자인 / Design:\n"
-    "  design, mockup, wireframe, prototype, 시안, 목업, 디자인, 프로토타입\n"
-    "- 데이터·분석 / Data & Analysis:\n"
-    "  data, analysis, dashboard, report, 자료, 분석, 리포트, 통계\n"
-    "- 코드·레포 / Code & Repo:\n"
-    "  code, repo, repository, branch, PR, 코드, 레포, 브랜치\n"
-    "- 일반 참조 / General references:\n"
-    "  file, attachment, link, reference, 파일, 첨부, 링크\n\n"
-    "참조 패턴 (Reference patterns):\n"
-    '- "지난번 X" / "last X" / "previous X"\n'
-    '- "X v2" / "X version 2" / "X 두 번째"\n'
-    '- "X 문서" / "X document"\n'
-    '- "위에 언급한 X" / "the X mentioned above"\n'
-    '- "팀 X" / "team X"\n\n'
-    "추출 형식:\n"
-    "- 3~5단어 이내 키워드로 추출 (검색 쿼리로 사용)\n"
-    "- 발화에 명시적으로 등장한 것만 (추론 금지)\n"
-    "- 일반화 금지 (\"회의 자료\" 같은 일반 명사는 제외)\n"
-    "- 최대 10개\n\n"
-    "좋은 예시: \"PRD v2\", \"Q3 roadmap\", \"프로젝트 기획서\", \"와이어프레임 v3\"\n"
-    "나쁜 예시: \"문서\" (너무 일반적), \"회의 자료\" (모호함), \"지난주에 본 거\" (구체적이지 않음)\n\n"
-    "Output schema:\n"
-    "{\n"
-    '  "title": "...",\n'
-    '  "summary": "...",\n'
-    '  "decisions": ["..."],\n'
-    '  "action_items": [\n'
-    "    {\n"
-    '      "content": "...",\n'
-    '      "assignee": "name or null",\n'
-    '      "due_date": "YYYY-MM-DD or null",\n'
-    '      "depends_on": "prior action summary or null",\n'
-    '      "confidence": 0.85\n'
-    "    }\n"
-    "  ],\n"
-    '  "referenced_documents": ["기획서 v2", "PRD 수정 건"]\n'
-    "}\n"
-)
+_OUTPUT_LANGUAGE_RULE = """## PRODUCT OUTPUT LANGUAGE (mandatory)
+
+Actnote displays **English-only** copy in the UI. Every human-readable JSON field MUST be written in **English**:
+
+`title`, `summary`, each `decisions[]` string, each `action_items[].content`, each `depends_on`, each `referenced_documents[]` phrase.
+
+- If speakers use another language, **translate faithfully** into clear professional English. Do NOT copy non-English prose into those fields (except unavoidable non-Latin proper nouns when no standard English form exists).
+- Keep product / company names when already spelled in Latin.
+- Dates: `YYYY-MM-DD`. `assignee`: only explicit owners; romanize sparingly when needed — or null.
+
+---
+
+"""
+
+
+def _read_default_template_text() -> str:
+    """Inline fallback matching ``default.md`` (used only if templates directory is unusable)."""
+    return '''You are an expert PM assistant. Extract structured information from meeting transcripts.
+
+CRITICAL RULES:
+
+Output ONLY valid JSON. No markdown, no explanations.
+Only extract action items explicitly stated or strongly implied.
+If assignee is unclear, set to null. Never guess.
+If due_date is not mentioned, set to null. Never invent dates.
+Confidence (0.0-1.0): how certain this is a real action item.
+
+Title: max 50 chars, English only. Summary: 3-5 English sentences.
+
+[Decisions — required JSON array — English sentences only]
+
+[Atomic decomposition — English wording for action content / depends_on]
+
+[Referenced documents — English 3–5 word labels when possible]
+
+Output schema:
+{"title":"","summary":"","decisions":[],"action_items":[{"content":"","assignee":null,"due_date":null,"depends_on":null,"confidence":0.8}],"referenced_documents":[]}
+'''
+
+
+def _system_prompt_base_fallback_body() -> str:
+    dp = Path(__file__).resolve().parents[1] / "prompts" / "templates" / "default.md"
+    try:
+        return dp.read_text(encoding="utf-8")
+    except OSError:
+        return _read_default_template_text()
+
+
+_SYSTEM_PROMPT_BASE_FALLBACK = _system_prompt_base_fallback_body()
 
 
 def _system_prompt_base(meeting_type: str | None = None) -> str:
@@ -218,13 +194,14 @@ def _system_prompt_base(meeting_type: str | None = None) -> str:
 
 
 _PREVIOUS_CONTEXT_SECTION = (
-    "\n[이전 회의 컨텍스트]\n"
+    "\n[Previous meeting context]\n"
     "{previous_context}\n\n"
-    "이전 회의 컨텍스트가 있는 경우:\n"
-    "- '지난번에 결정한 거' 같은 참조 발화를 이전 컨텍스트와 연결하세요\n"
-    "- 이전 회의의 액션이 이번 회의에서 변경/취소됐다면 명시하세요\n"
-    "  예: content에 '[UPDATE] PRD 마감일 5/22로 변경' 형태로 접두사 추가\n"
-    "- 이전 회의에 없던 완전히 새로운 액션은 접두사 없이 그대로\n"
+    "When prior context exists:\n"
+    "- Tie phrases such as \"what we agreed last time\" to that history.\n"
+    "- If a prior action is changed or cancelled in this meeting, say so plainly in "
+    "English (you may prefix with e.g. \"[UPDATE]\" in `content` only when obviously implied).\n"
+    "- Completely new actions that were not in the prior context carry no historical prefix.\n"
+    "- All wording for user-visible fields MUST remain English.\n"
 )
 
 _console = Console()
@@ -250,7 +227,7 @@ def _build_system_prompt(
     previous_context: str | None,
     meeting_type: str | None = None,
 ) -> str:
-    base = _system_prompt_base(meeting_type)
+    base = _OUTPUT_LANGUAGE_RULE + _system_prompt_base(meeting_type)
     if not previous_context:
         return base
     return base + _PREVIOUS_CONTEXT_SECTION.format(previous_context=previous_context)
@@ -295,8 +272,8 @@ def extract(
     ]
     if previous_context:
         user_prompt_parts.append(
-            f"이전 회의 관련 내용:\n{previous_context}\n\n"
-            "위 내용을 참고하여 이번 회의의 결정사항과 액션 아이템을 추출하세요."
+            f"Earlier meeting cross-reference:\n{previous_context}\n\n"
+            "Use only to interpret references this session; still obey the English-only output rule."
         )
     user_prompt_parts.append(
         "Extract structured information following the schema above.\n"
