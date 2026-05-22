@@ -26,20 +26,33 @@ _VISIBLE_ANALYSIS_ERROR_MAP: dict[str, str] = {
     "NO_AUDIO_OR_SILENT": (
         "No usable speech was detected. The file may be silent or the audio track missing."
     ),
+    "STORAGE_FULL": (
+        "We could not retrieve the file from storage. Check your workspace quota or contact support."
+    ),
+    "FILE_NOT_FOUND": (
+        "The recording could not be decoded or read. Try another format or re-export the file."
+    ),
+    "NETWORK_ERROR": (
+        "Could not save results due to a network issue. Check your connection and try again."
+    ),
+    "MODEL_API_FAILED": (
+        "An AI service failed temporarily. Try again in a few minutes."
+    ),
+    "DB_PUSH_ERROR": (
+        "Could not save results. Check your connection and try again."
+    ),
+    "PIPELINE_INTERNAL": (
+        "Analysis stopped unexpectedly. Try again or contact support."
+    ),
+    # 하위 호환: 이전 코드명으로 저장된 meetings.error_message 지원
     "FILE_RETRIEVAL_FAILED": (
         "We could not retrieve the file from storage. Check your workspace quota or contact support."
     ),
     "DOWNLOAD_FAILED": (
         "The recording could not be decoded or read. Try another format or re-export the file."
     ),
-    "MODEL_API_FAILED": (
-        "An AI service failed temporarily. Try again in a few minutes."
-    ),
     "DB_PUSH_FAILED": (
         "Could not save results. Check your connection and try again."
-    ),
-    "PIPELINE_INTERNAL": (
-        "Analysis stopped unexpectedly. Try again or contact support."
     ),
 }
 
@@ -162,6 +175,81 @@ def _dispatch_pipeline_email(
         _log.warning("pipeline email send failed (kind=%s): %s", ref_kind, e)
 
 
+def _get_meeting_notification_targets(
+    meeting_id: str,
+    workspace_id: str,
+    sb_client,
+) -> dict:
+    """회의 알림 대상 사용자를 역할별로 분류하여 반환.
+
+    역할 정의:
+    - owner_ids: workspace_members.role IN ('owner', 'admin')
+    - creator_id: meetings.created_by
+    - participant_ids: users.email ∩ meetings.participants[] (대소문자 무시)
+
+    Returns:
+        {
+            "owner_ids": set[str],
+            "creator_id": str | None,
+            "participant_ids": set[str],
+            "email_by_uid": dict[str, str],   # uid → email (소문자)
+            "meeting_title": str,
+        }
+    """
+    meeting_resp = (
+        sb_client.table("meetings")
+        .select("created_by, participants, title")
+        .eq("id", meeting_id)
+        .single()
+        .execute()
+    )
+    meeting = meeting_resp.data or {}
+    creator_id: str | None = meeting.get("created_by")
+    participants_raw: list = meeting.get("participants") or []
+    meeting_title = (meeting.get("title") or "").strip() or "Meeting"
+    participant_emails: set[str] = {
+        e.lower().strip() for e in participants_raw if "@" in (e or "")
+    }
+
+    members_resp = (
+        sb_client.table("workspace_members")
+        .select("user_id, role")
+        .eq("workspace_id", workspace_id)
+        .execute()
+    )
+    members = members_resp.data or []
+
+    member_uids = [str(m["user_id"]) for m in members if m.get("user_id")]
+    email_by_uid: dict[str, str] = {}
+    if member_uids:
+        users_resp = (
+            sb_client.table("users")
+            .select("id, email")
+            .in_("id", member_uids)
+            .execute()
+        )
+        for u in users_resp.data or []:
+            if u.get("email"):
+                email_by_uid[str(u["id"])] = (u["email"] or "").lower().strip()
+
+    owner_ids: set[str] = set()
+    participant_ids: set[str] = set()
+    for m in members:
+        uid = str(m["user_id"])
+        if m.get("role") in ("owner", "admin"):
+            owner_ids.add(uid)
+        if email_by_uid.get(uid) and email_by_uid[uid] in participant_emails:
+            participant_ids.add(uid)
+
+    return {
+        "owner_ids": owner_ids,
+        "creator_id": str(creator_id) if creator_id else None,
+        "participant_ids": participant_ids,
+        "email_by_uid": email_by_uid,
+        "meeting_title": meeting_title,
+    }
+
+
 def notify_analysis_complete(
     meeting_id: str,
     workspace_id: str,
@@ -170,28 +258,25 @@ def notify_analysis_complete(
     """분석 완료 알림 생성.
 
     수신자:
-    1. 해당 워크스페이스의 모든 멤버 (workspace_members)
-    2. 회의 작성자 (meetings.created_by; 멤버 집합에 포함되면 1건만)
-    3. 액션 아이템 담당자 (assignee_user_id; 위와 동일하게 중복 제거)
+    - 워크스페이스 오너/어드민 (workspace_members.role = 'owner' | 'admin')
+    - 회의 참가자 (meetings.participants[] 이메일 매칭)
+    멤버이더라도 participants에 없으면 알림 미발송.
 
-    멤버 전원에게 인앱 알림을 보내 초대된 member 도 owner 가 업로드한 회의
-    분석 완료를 볼 수 있다.
-
-    이메일은 기존과 같이 작성자(created_by) 한 명에게만, 설정이 켜져 있으면 발송한다.
+    이메일: 수신자 전원 중 설정이 켜진 경우 발송.
 
     Returns:
         생성된 알림 개수.
     """
-    meeting_resp = (
-        sb_client.table("meetings")
-        .select("created_by, title")
-        .eq("id", meeting_id)
-        .single()
-        .execute()
-    )
-    meeting = meeting_resp.data or {}
-    creator_id: str | None = meeting.get("created_by")
-    meeting_title = (meeting.get("title") or "").strip() or "Meeting"
+    targets = _get_meeting_notification_targets(meeting_id, workspace_id, sb_client)
+    meeting_title = targets["meeting_title"]
+
+    recipients: set[str] = set()
+    recipients.update(targets["owner_ids"])
+    recipients.update(targets["participant_ids"])
+
+    if not recipients:
+        _log.warning("notify_analysis_complete: 수신자 없음 (meeting_id=%s)", meeting_id)
+        return 0
 
     active_resp = (
         sb_client.table("action_items")
@@ -201,42 +286,6 @@ def notify_analysis_complete(
         .execute()
     )
     action_count = len(active_resp.data or [])
-
-    actions_resp = (
-        sb_client.table("action_items")
-        .select("assignee_user_id")
-        .eq("meeting_id", meeting_id)
-        .not_.is_("assignee_user_id", "null")
-        .execute()
-    )
-    action_rows = actions_resp.data or []
-    assignee_ids = {
-        row["assignee_user_id"]
-        for row in action_rows
-        if row.get("assignee_user_id")
-    }
-
-    members_resp = (
-        sb_client.table("workspace_members")
-        .select("user_id")
-        .eq("workspace_id", workspace_id)
-        .execute()
-    )
-    member_ids = {
-        str(row["user_id"])
-        for row in (members_resp.data or [])
-        if row.get("user_id")
-    }
-
-    recipients: set[str] = set()
-    recipients.update(member_ids)
-    if creator_id:
-        recipients.add(str(creator_id))
-    recipients.update(str(aid) for aid in assignee_ids)
-
-    if not recipients:
-        _log.warning("notify_analysis_complete: 수신자 없음 (meeting_id=%s)", meeting_id)
-        return 0
 
     notif_title = f"Analysis complete: {meeting_title}"
     notif_message = (
@@ -260,36 +309,28 @@ def notify_analysis_complete(
         "notify_analysis_complete: %d건 생성 (meeting_id=%s)", len(rows), meeting_id
     )
 
-    if creator_id and _user_wants_pipeline_email(sb_client, creator_id, kind="complete"):
-        to_email = ""
-        try:
-            ur = (
-                sb_client.table("users")
-                .select("email")
-                .eq("id", creator_id)
-                .single()
-                .execute()
-            )
-            to_email = ((ur.data or {}).get("email") or "").strip()
-        except Exception as e:
-            _log.warning("notify_analysis_complete: creator email lookup failed: %s", e)
-
-        if to_email:
-            from src.email_notifier import render_analysis_complete_email
-
-            meeting_url = f"{_app_url().rstrip('/')}/meetings/{meeting_id}"
-            rendered = render_analysis_complete_email(
-                meeting_title=meeting_title,
-                meeting_url=meeting_url,
-                app_url=_app_url(),
-            )
-            _dispatch_pipeline_email(
-                to=to_email,
-                rendered=rendered,
-                ref_kind="analysis_complete",
-                meeting_id=meeting_id,
-                workspace_id=workspace_id,
-            )
+    # 이메일: 수신자 전원 중 opt-in 설정 켜진 경우 발송
+    email_by_uid = targets["email_by_uid"]
+    meeting_url = f"{_app_url().rstrip('/')}/meetings/{meeting_id}"
+    from src.email_notifier import render_analysis_complete_email
+    rendered = render_analysis_complete_email(
+        meeting_title=meeting_title,
+        meeting_url=meeting_url,
+        app_url=_app_url(),
+    )
+    for uid in recipients:
+        to_email = email_by_uid.get(uid, "")
+        if not to_email:
+            continue
+        if not _user_wants_pipeline_email(sb_client, uid, kind="complete"):
+            continue
+        _dispatch_pipeline_email(
+            to=to_email,
+            rendered=rendered,
+            ref_kind="analysis_complete",
+            meeting_id=meeting_id,
+            workspace_id=workspace_id,
+        )
 
     return len(rows)
 
@@ -340,14 +381,7 @@ def notify_action_assigned(
         _log.info("notify_action_assigned: 매칭된 담당자 없음 (meeting_id=%s)", meeting_id)
         return 0
 
-    # 회의 작성자에게는 새 알림 보내지 않음 (이미 analysis_complete 받음)
-    targets = [a for a in actions if a["assignee_user_id"] != creator_id]
-    if not targets:
-        _log.info(
-            "notify_action_assigned: 모든 담당자가 작성자 본인 → SKIP (meeting_id=%s)",
-            meeting_id,
-        )
-        return 0
+    targets = list(actions)
 
     # 멱등성: 이미 보낸 (user_id, action_item_id) 조회 → 중복 제외
     action_ids = [a["id"] for a in targets]
@@ -584,65 +618,87 @@ def notify_analysis_failed(
 ) -> int:
     """분석 실패 알림 (인앱 + 선택 메일).
 
-    수신자: 회의 작성자만.
+    수신자:
+    - 워크스페이스 오너/어드민
+    - 회의 작성자 (created_by)
+    - 회의 참가자 (participants[] 이메일 매칭)
+
+    멱등성:
+    - 동일 meeting_id 에 analysis_failed 알림이 이미 있으면 SKIP.
+    - Modal retries=3 에서 중복 알림을 방지한다.
 
     Returns:
-        생성된 알림 개수 (0 또는 1).
+        새로 생성된 알림 개수 (0 = 이미 존재하거나 수신자 없음).
     """
-    meeting_resp = (
-        sb_client.table("meetings")
-        .select("created_by, title")
-        .eq("id", meeting_id)
-        .single()
+    # 멱등성: Modal retries=3 — 동일 meeting_id에 이미 실패 알림이 있으면 스킵
+    existing = (
+        sb_client.table("notifications")
+        .select("id")
+        .eq("meeting_id", meeting_id)
+        .eq("type", "analysis_failed")
+        .limit(1)
         .execute()
     )
-    meeting = meeting_resp.data or {}
-    creator_id: str | None = meeting.get("created_by")
-    meeting_title = (meeting.get("title") or "").strip() or "Meeting"
+    if existing.data:
+        _log.info(
+            "notify_analysis_failed: 기존 알림 존재 → 스킵 (idempotent, meeting_id=%s)",
+            meeting_id,
+        )
+        return 0
 
-    if not creator_id:
-        _log.warning("notify_analysis_failed: creator_id 없음 (meeting_id=%s)", meeting_id)
+    targets = _get_meeting_notification_targets(meeting_id, workspace_id, sb_client)
+    meeting_title = targets["meeting_title"]
+
+    recipients: set[str] = set()
+    recipients.update(targets["owner_ids"])
+    if targets["creator_id"]:
+        recipients.add(targets["creator_id"])
+    recipients.update(targets["participant_ids"])
+
+    if not recipients:
+        _log.warning("notify_analysis_failed: 수신자 없음 (meeting_id=%s)", meeting_id)
         return 0
 
     visible = user_visible_analysis_error(error_message)
     details = visible[:220] + ("..." if len(visible) > 220 else "")
-
-    create_notification(
-        user_id=creator_id,
-        workspace_id=workspace_id,
-        type="analysis_failed",
-        title=f"Analysis failed: {meeting_title}",
-        message=(
-            "Something went wrong while analyzing your recording. "
-            "Try again or upload a different file.\n"
-            f"Details: {details}"
-        ),
-        meeting_id=meeting_id,
-        sb_client=sb_client,
+    notif_message = (
+        "Something went wrong while analyzing your recording. "
+        "Try again or upload a different file.\n"
+        f"Details: {details}"
     )
 
-    to_email = ""
+    rows = [
+        {
+            "user_id": uid,
+            "workspace_id": workspace_id,
+            "type": "analysis_failed",
+            "title": f"Analysis failed: {meeting_title}",
+            "message": notif_message,
+            "meeting_id": meeting_id,
+        }
+        for uid in recipients
+    ]
+    sb_client.table("notifications").insert(rows).execute()
+    _log.info(
+        "notify_analysis_failed: %d건 인앱 알림 생성 (meeting_id=%s)", len(rows), meeting_id
+    )
+
+    # 이메일: 수신자 전원 중 opt-in 설정 켜진 경우 발송
+    email_by_uid = targets["email_by_uid"]
     try:
-        ur = (
-            sb_client.table("users")
-            .select("email")
-            .eq("id", creator_id)
-            .single()
-            .execute()
+        from src.email_notifier import render_analysis_failed_email
+
+        rendered = render_analysis_failed_email(
+            meeting_title=meeting_title,
+            error_message=visible,
+            app_url=_app_url(),
         )
-        to_email = ((ur.data or {}).get("email") or "").strip()
-    except Exception as e:
-        _log.warning("notify_analysis_failed: user email lookup failed: %s", e)
-
-    if to_email and _user_wants_pipeline_email(sb_client, creator_id, kind="failed"):
-        try:
-            from src.email_notifier import render_analysis_failed_email
-
-            rendered = render_analysis_failed_email(
-                meeting_title=meeting_title,
-                error_message=visible,
-                app_url=_app_url(),
-            )
+        for uid in recipients:
+            to_email = email_by_uid.get(uid, "")
+            if not to_email:
+                continue
+            if not _user_wants_pipeline_email(sb_client, uid, kind="failed"):
+                continue
             _dispatch_pipeline_email(
                 to=to_email,
                 rendered=rendered,
@@ -650,20 +706,13 @@ def notify_analysis_failed(
                 meeting_id=meeting_id,
                 workspace_id=workspace_id,
             )
-            _log.info(
-                "notify_analysis_failed: email dispatched for %s (meeting_id=%s)",
-                to_email,
-                meeting_id,
-            )
-        except Exception as e:
-            _log.warning(
-                "notify_analysis_failed: email dispatch failed (meeting_id=%s): %s",
-                meeting_id,
-                e,
-            )
+    except Exception as e:
+        _log.warning(
+            "notify_analysis_failed: email dispatch failed (meeting_id=%s): %s",
+            meeting_id, e,
+        )
 
-    _log.info("notify_analysis_failed: in-app notification created (meeting_id=%s)", meeting_id)
-    return 1
+    return len(rows)
 
 
 # ---------------------------------------------------------------------------

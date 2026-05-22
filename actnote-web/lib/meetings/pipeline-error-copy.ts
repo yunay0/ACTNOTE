@@ -3,16 +3,25 @@
 const CODE_MESSAGES: Record<string, string> = {
   NO_AUDIO_OR_SILENT:
     "No usable speech was detected. The file may be silent or the audio track missing.",
+  STORAGE_FULL:
+    "We could not retrieve the file from storage. Check your workspace quota or contact support.",
+  FILE_NOT_FOUND:
+    "The recording could not be decoded or read. Try another format or re-export the file.",
+  NETWORK_ERROR:
+    "Could not save results due to a network issue. Check your connection and try again.",
+  MODEL_API_FAILED:
+    "An AI service failed temporarily. Try again in a few minutes.",
+  DB_PUSH_ERROR:
+    "Could not save results. Check your connection and try again.",
+  PIPELINE_INTERNAL:
+    "Analysis stopped unexpectedly. Try again or contact support.",
+  // 하위 호환: 이전 코드명으로 저장된 meetings.error_message 지원
   FILE_RETRIEVAL_FAILED:
     "We could not retrieve the file from storage. Check your workspace quota or contact support.",
   DOWNLOAD_FAILED:
     "The recording could not be decoded or read. Try another format or re-export the file.",
-  MODEL_API_FAILED:
-    "An AI service failed temporarily. Try again in a few minutes.",
   DB_PUSH_FAILED:
     "Could not save results. Check your connection and try again.",
-  PIPELINE_INTERNAL:
-    "Analysis stopped unexpectedly. Try again or contact support.",
 };
 
 const CODE_RE = /^\[code:([A-Z0-9_]+)\]\s*/i;

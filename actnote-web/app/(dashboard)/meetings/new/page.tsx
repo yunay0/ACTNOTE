@@ -62,7 +62,8 @@ export default function NewMeetingPage() {
     pipelinePollStartedAtRef.current = null;
   }, []);
 
-  const [memberOptions, setMemberOptions] = useState<{ user_id: string; label: string }[]>([]);
+  const [memberOptions, setMemberOptions] = useState<{ user_id: string; label: string; email: string }[]>([]);
+  const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
   const [responsibleUserId, setResponsibleUserId] = useState<string | null>(null);
   const [membersLoaded, setMembersLoaded] = useState(false);
 
@@ -95,6 +96,21 @@ export default function NewMeetingPage() {
     participants.length,
     responsibleUserId,
   ]);
+
+  // 참가자 입력 시 워크스페이스 멤버 자동완성 후보 (이미 추가된 이메일 제외)
+  const filteredMemberSuggestions = useMemo(() => {
+    const q = participantInput.trim().toLowerCase();
+    if (!q) return [];
+    const added = new Set(participants.map((p) => p.value.toLowerCase()));
+    return memberOptions
+      .filter(
+        (o) =>
+          o.email &&
+          !added.has(o.email.toLowerCase()) &&
+          (o.label.toLowerCase().includes(q) || o.email.toLowerCase().includes(q))
+      )
+      .slice(0, 5);
+  }, [participantInput, memberOptions, participants]);
 
   // 브라우저 새로고침 / 탭 닫기 방지
   useEffect(() => {
@@ -130,7 +146,7 @@ export default function NewMeetingPage() {
 
       if (error || !rows?.length) {
         setMemberOptions([
-          { user_id: user.id, label: user.email ?? "You (organizer)" },
+          { user_id: user.id, label: user.email ?? "You (organizer)", email: user.email ?? "" },
         ]);
         setResponsibleUserId(user.id);
         setMembersLoaded(true);
@@ -143,7 +159,7 @@ export default function NewMeetingPage() {
         const email = typeof u?.email === "string" ? u.email : "";
         const shown = workspaceMemberDisplayName(name, email);
         const label = email ? `${shown} (${email})` : shown || String(r.user_id);
-        return { user_id: r.user_id as string, label };
+        return { user_id: r.user_id as string, label, email };
       });
       setMemberOptions(opts);
       setResponsibleUserId((prev) =>
@@ -180,8 +196,14 @@ export default function NewMeetingPage() {
   function addParticipant() {
     const val = participantInput.trim();
     if (!val) return;
+    if (participants.some((p) => p.value.toLowerCase() === val.toLowerCase())) {
+      setParticipantInput("");
+      setMemberDropdownOpen(false);
+      return;
+    }
     setParticipants((p) => [...p, { id: crypto.randomUUID(), value: val }]);
     setParticipantInput("");
+    setMemberDropdownOpen(false);
   }
 
   const handleFileSelect = useCallback((f: File) => {
@@ -602,14 +624,39 @@ export default function NewMeetingPage() {
 
                 <Field label="Participants" required>
                   <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={participantInput}
-                      onChange={(e) => setParticipantInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addParticipant())}
-                      placeholder="Enter name or email"
-                      className={`${inputCls} flex-1`}
-                    />
+                    <div className="relative flex-1">
+                      <input
+                        type="text"
+                        value={participantInput}
+                        onChange={(e) => {
+                          setParticipantInput(e.target.value);
+                          setMemberDropdownOpen(true);
+                        }}
+                        onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addParticipant())}
+                        onBlur={() => setTimeout(() => setMemberDropdownOpen(false), 150)}
+                        placeholder="Enter name or email"
+                        className={inputCls}
+                      />
+                      {memberDropdownOpen && filteredMemberSuggestions.length > 0 && (
+                        <div className="absolute top-full left-0 right-0 z-10 mt-1 overflow-hidden rounded-xl border border-[#e2e8f0] bg-white shadow-md">
+                          {filteredMemberSuggestions.map((o) => (
+                            <button
+                              key={o.user_id}
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                setParticipants((p) => [...p, { id: crypto.randomUUID(), value: o.email }]);
+                                setParticipantInput("");
+                                setMemberDropdownOpen(false);
+                              }}
+                              className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm hover:bg-[#f8fafc]"
+                            >
+                              <span className="font-medium text-[#0a2540]">{o.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     <button
                       type="button"
                       onClick={addParticipant}
