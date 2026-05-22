@@ -20,7 +20,76 @@ import { submissionLooksLikeNetworkFailure } from "@/lib/meetings/submission-net
 
 const MAX_SIZE_MB = 50;
 
-interface Participant { id: string; value: string; }
+interface Participant {
+  id: string;
+  value: string;
+}
+
+/** 새 회의 — 참석자 드롭다운 및 담당자 선택 */
+interface WorkspaceMemberRow {
+  user_id: string;
+  name: string;
+  email: string;
+  avatar_url: string | null;
+  label: string;
+  sort_key: string;
+}
+
+function initialsForMember(name: string, email: string): string {
+  const base = workspaceMemberDisplayName(name, email).trim() || email;
+  if (!base) return "??";
+  const parts = base.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    const a = parts[0][0];
+    const b = parts[parts.length - 1]?.[0];
+    if (a && b) return `${a}${b}`.toUpperCase();
+  }
+  return base.slice(0, 2).toUpperCase();
+}
+
+function MemberAvatarRound(props: {
+  avatarUrl: string | null;
+  name: string;
+  email: string;
+  size: number;
+  className?: string;
+}) {
+  const { avatarUrl, name, email, size, className = "" } = props;
+  const dim = `${size}px`;
+  if (avatarUrl?.trim()) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={avatarUrl}
+        alt=""
+        width={size}
+        height={size}
+        className={`shrink-0 rounded-full object-cover ${className}`}
+        referrerPolicy="no-referrer"
+      />
+    );
+  }
+  const initials = initialsForMember(name, email);
+  return (
+    <div
+      aria-hidden
+      className={`flex shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white sm:text-[11px] ${className}`}
+      style={{
+        width: dim,
+        height: dim,
+        background: "linear-gradient(135deg, #2e5c8a 0%, #ff6b35 50%)",
+      }}
+    >
+      {initials}
+    </div>
+  );
+}
+
+function sortMembersByDisplayName(rows: WorkspaceMemberRow[]): WorkspaceMemberRow[] {
+  return [...rows].sort((a, b) =>
+    a.sort_key.localeCompare(b.sort_key, "en", { sensitivity: "base" }),
+  );
+}
 
 /** Resume generate flow after a network error (insert may have succeeded). */
 interface PipelineCheckpoint {
@@ -43,7 +112,12 @@ export default function NewMeetingPage() {
   });
   const [description, setDescription] = useState("");
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [participantInput, setParticipantInput] = useState("");
+  const [participantPickerOpen, setParticipantPickerOpen] = useState(false);
+  const participantPickerRef = useRef<HTMLDivElement>(null);
+
+  const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMemberRow[]>([]);
+  const [responsibleUserId, setResponsibleUserId] = useState<string | null>(null);
+  const [membersLoaded, setMembersLoaded] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -63,11 +137,6 @@ export default function NewMeetingPage() {
   const [leaveModal, setLeaveModal] = useState(false);
   const [pendingNavTarget, setPendingNavTarget] = useState<string | null>(null);
   const pipelineCheckpointRef = useRef<PipelineCheckpoint | null>(null);
-
-  const [memberOptions, setMemberOptions] = useState<{ user_id: string; label: string; email: string }[]>([]);
-  const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
-  const [responsibleUserId, setResponsibleUserId] = useState<string | null>(null);
-  const [membersLoaded, setMembersLoaded] = useState(false);
 
   // 폼에 입력값이 하나라도 있으면 dirty
   const isDirty =
@@ -99,20 +168,10 @@ export default function NewMeetingPage() {
     responsibleUserId,
   ]);
 
-  // 참가자 입력 시 워크스페이스 멤버 자동완성 후보 (이미 추가된 이메일 제외)
-  const filteredMemberSuggestions = useMemo(() => {
-    const q = participantInput.trim().toLowerCase();
-    if (!q) return [];
-    const added = new Set(participants.map((p) => p.value.toLowerCase()));
-    return memberOptions
-      .filter(
-        (o) =>
-          o.email &&
-          !added.has(o.email.toLowerCase()) &&
-          (o.label.toLowerCase().includes(q) || o.email.toLowerCase().includes(q))
-      )
-      .slice(0, 5);
-  }, [participantInput, memberOptions, participants]);
+  const participantsNotYetAdded = useMemo(() => {
+    const emails = new Set(participants.map((p) => p.value.toLowerCase()));
+    return workspaceMembers.filter((m) => m.email && !emails.has(m.email.toLowerCase()));
+  }, [workspaceMembers, participants]);
 
   // 브라우저 새로고침 / 탭 닫기 방지
   useEffect(() => {
@@ -126,7 +185,7 @@ export default function NewMeetingPage() {
 
   useEffect(() => {
     if (!workspaceId) {
-      setMemberOptions([]);
+      setWorkspaceMembers([]);
       setResponsibleUserId(null);
       setMembersLoaded(false);
       return;
@@ -139,34 +198,48 @@ export default function NewMeetingPage() {
       } = await supabase.auth.getUser();
       if (!user || cancelled) return;
 
-      const { data: rows, error } = await (supabase as any)
+      const { data: rowsRaw, error } = await (supabase as any)
         .from("workspace_members")
-        .select("user_id, users(name, email)")
+        .select("user_id, users(name, email, avatar_url)")
         .eq("workspace_id", workspaceId);
 
       if (cancelled) return;
 
-      if (error || !rows?.length) {
-        setMemberOptions([
-          { user_id: user.id, label: user.email ?? "You (organizer)", email: user.email ?? "" },
-        ]);
-        setResponsibleUserId(user.id);
-        setMembersLoaded(true);
-        return;
+      if (error) {
+        console.error("[new meeting] workspace_members load:", error.message);
       }
 
-      const opts = (rows as any[]).map((r) => {
-        const u = Array.isArray(r.users) ? r.users[0] : r.users;
+      const rows = (rowsRaw ?? []) as Array<Record<string, unknown>>;
+      const built: WorkspaceMemberRow[] = [];
+      for (const r of rows) {
+        const uid = typeof r.user_id === "string" ? r.user_id : "";
+        if (!uid) continue;
+        const rawU = r.users;
+        const u = (
+          Array.isArray(rawU) ? rawU[0] : rawU
+        ) as Record<string, unknown> | null | undefined;
         const name = typeof u?.name === "string" ? u.name : "";
         const email = typeof u?.email === "string" ? u.email : "";
+        const ar = u?.avatar_url;
+        const avatar_url =
+          typeof ar === "string" && ar.trim() ? ar.trim() : null;
+        if (!email) continue;
         const shown = workspaceMemberDisplayName(name, email);
-        const label = email ? `${shown} (${email})` : shown || String(r.user_id);
-        return { user_id: r.user_id as string, label, email };
+        const label = `${shown} (${email})`;
+        const sort_key =
+          workspaceMemberDisplayName(name, email).trim().toLowerCase() ||
+          email.toLowerCase();
+        built.push({ user_id: uid, name, email, avatar_url, label, sort_key });
+      }
+
+      const sorted = sortMembersByDisplayName(built);
+      setWorkspaceMembers(sorted);
+
+      setResponsibleUserId((prev) => {
+        if (prev && sorted.some((m) => m.user_id === prev)) return prev;
+        const selfRow = sorted.find((m) => m.user_id === user.id);
+        return selfRow?.user_id ?? sorted[0]?.user_id ?? null;
       });
-      setMemberOptions(opts);
-      setResponsibleUserId((prev) =>
-        prev && opts.some((o) => o.user_id === prev) ? prev : user.id
-      );
       setMembersLoaded(true);
     })();
 
@@ -174,6 +247,16 @@ export default function NewMeetingPage() {
       cancelled = true;
     };
   }, [workspaceId]);
+
+  useEffect(() => {
+    if (!participantPickerOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      const el = participantPickerRef.current;
+      if (el && !el.contains(e.target as Node)) setParticipantPickerOpen(false);
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [participantPickerOpen]);
 
   useEffect(() => {
     if (!analysisInitiatedOpen) return undefined;
@@ -213,17 +296,11 @@ export default function NewMeetingPage() {
     if (pendingNavTarget) router.push(pendingNavTarget);
   }
 
-  function addParticipant() {
-    const val = participantInput.trim();
-    if (!val) return;
-    if (participants.some((p) => p.value.toLowerCase() === val.toLowerCase())) {
-      setParticipantInput("");
-      setMemberDropdownOpen(false);
-      return;
-    }
-    setParticipants((p) => [...p, { id: crypto.randomUUID(), value: val }]);
-    setParticipantInput("");
-    setMemberDropdownOpen(false);
+  function addParticipantFromMember(m: WorkspaceMemberRow): void {
+    const low = m.email.toLowerCase();
+    if (participants.some((p) => p.value.toLowerCase() === low)) return;
+    setParticipants((prev) => [...prev, { id: crypto.randomUUID(), value: m.email }]);
+    setParticipantPickerOpen(false);
   }
 
   const handleFileSelect = useCallback((f: File) => {
@@ -551,7 +628,7 @@ export default function NewMeetingPage() {
             participants.length > 0 ? participants.map((p) => p.value).join(", ") : "—"
           }
           responsibleLabel={
-            memberOptions.find((o) => o.user_id === responsibleUserId)?.label ?? "—"
+            workspaceMembers.find((m) => m.user_id === responsibleUserId)?.label ?? "—"
           }
           recordingFileName={file?.name ?? "—"}
           onStay={() => setConfirmAnalysisModal(false)}
@@ -672,62 +749,107 @@ export default function NewMeetingPage() {
                 </Field>
 
                 <Field label="Participants" required>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <input
-                        type="text"
-                        value={participantInput}
-                        onChange={(e) => {
-                          setParticipantInput(e.target.value);
-                          setMemberDropdownOpen(true);
-                        }}
-                        onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addParticipant())}
-                        onBlur={() => setTimeout(() => setMemberDropdownOpen(false), 150)}
-                        placeholder="Enter name or email"
-                        className={inputCls}
-                      />
-                      {memberDropdownOpen && filteredMemberSuggestions.length > 0 && (
-                        <div className="absolute top-full left-0 right-0 z-10 mt-1 overflow-hidden rounded-xl border border-[#e2e8f0] bg-white shadow-md">
-                          {filteredMemberSuggestions.map((o) => (
-                            <button
-                              key={o.user_id}
-                              type="button"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => {
-                                setParticipants((p) => [...p, { id: crypto.randomUUID(), value: o.email }]);
-                                setParticipantInput("");
-                                setMemberDropdownOpen(false);
-                              }}
-                              className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm hover:bg-[#f8fafc]"
-                            >
-                              <span className="font-medium text-[#0a2540]">{o.label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                  <div ref={participantPickerRef} className="relative">
                     <button
                       type="button"
-                      onClick={addParticipant}
-                      className="h-[52px] shrink-0 rounded-lg bg-[#2e5c8a] px-5 text-sm font-bold text-white transition-opacity hover:opacity-90"
+                      disabled={
+                        !membersLoaded || workspaceMembers.length === 0 || participantsNotYetAdded.length === 0
+                      }
+                      onClick={() => setParticipantPickerOpen((o) => !o)}
+                      className={`${inputCls} flex h-[52px] w-full items-center justify-between gap-2 text-left ${
+                        !membersLoaded || workspaceMembers.length === 0 || participantsNotYetAdded.length === 0
+                          ? "cursor-not-allowed opacity-60"
+                          : "cursor-pointer"
+                      }`}
+                      aria-expanded={participantPickerOpen}
+                      aria-haspopup="listbox"
                     >
-                      Add
+                      <span className="truncate text-[#64748b]">
+                        {!membersLoaded
+                          ? "Loading workspace members…"
+                          : workspaceMembers.length === 0
+                            ? "No workspace members loaded"
+                            : participantsNotYetAdded.length === 0
+                              ? "All workspace members added"
+                              : "Choose a participant…"}
+                      </span>
+                      <span className="shrink-0 text-[12px] text-[#94a3b8]" aria-hidden>
+                        ▼
+                      </span>
                     </button>
+                    {participantPickerOpen && participantsNotYetAdded.length > 0 && (
+                      <div
+                        role="listbox"
+                        className="absolute bottom-full left-0 right-0 z-30 mb-1 max-h-[min(320px,50vh)] overflow-auto rounded-xl border border-[#e2e8f0] bg-white py-1 shadow-[0_-8px_24px_rgba(10,37,64,0.12)]"
+                      >
+                        {participantsNotYetAdded.map((m) => {
+                          const display = workspaceMemberDisplayName(m.name, m.email);
+                          return (
+                            <button
+                              key={m.user_id}
+                              type="button"
+                              role="option"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => addParticipantFromMember(m)}
+                              className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[#f8fafc]"
+                            >
+                              <MemberAvatarRound
+                                avatarUrl={m.avatar_url}
+                                name={m.name}
+                                email={m.email}
+                                size={40}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-semibold text-[#0a2540]">
+                                  {display}
+                                </span>
+                                <span className="mt-0.5 block truncate text-xs text-[#64748b]">
+                                  {m.email}
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                  <p className="text-[12px] leading-[19.5px] text-[#64748b]">Add team members who attended this meeting</p>
+                  <p className="text-[12px] leading-[19.5px] text-[#64748b]">
+                    Everyone in your workspace appears here (sorted A–Z by name).
+                  </p>
                   {participants.length > 0 && (
                     <div className="flex flex-wrap gap-2">
-                      {participants.map((p) => (
-                        <span
-                          key={p.id}
-                          className="flex items-center gap-1 rounded-full bg-[#e3f2fd] px-3 py-1 text-xs font-medium text-[#2e5c8a]"
-                        >
-                          {p.value}
-                          <button type="button" onClick={() => setParticipants((prev) => prev.filter((x) => x.id !== p.id))}>
-                            <X className="h-3 w-3" />
-                          </button>
-                        </span>
-                      ))}
+                      {participants.map((p) => {
+                        const m = workspaceMembers.find(
+                          (x) => x.email.toLowerCase() === p.value.toLowerCase(),
+                        );
+                        const chipLabel = m
+                          ? workspaceMemberDisplayName(m.name, m.email)
+                          : p.value;
+                        return (
+                          <span
+                            key={p.id}
+                            className="flex items-center gap-2 rounded-full border border-[#e2e8f0] bg-[#f8fafc] py-1 pl-1 pr-2 text-xs font-medium text-[#0a2540]"
+                          >
+                            {m ? (
+                              <MemberAvatarRound
+                                avatarUrl={m.avatar_url}
+                                name={m.name}
+                                email={m.email}
+                                size={24}
+                              />
+                            ) : null}
+                            <span className="max-w-[180px] truncate">{chipLabel}</span>
+                            <button
+                              type="button"
+                              aria-label="Remove participant"
+                              className="text-[#94a3b8] hover:text-red-500"
+                              onClick={() => setParticipants((prev) => prev.filter((x) => x.id !== p.id))}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </span>
+                        );
+                      })}
                     </div>
                   )}
                 </Field>
@@ -737,7 +859,7 @@ export default function NewMeetingPage() {
                     value={responsibleUserId ?? ""}
                     onChange={(e) => setResponsibleUserId(e.target.value || null)}
                     required
-                    disabled={!membersLoaded || memberOptions.length === 0}
+                    disabled={!membersLoaded || workspaceMembers.length === 0}
                     className={`${inputCls} cursor-pointer appearance-none bg-[length:12px_8px] bg-[right_18px_center] bg-no-repeat pr-10`}
                     style={{
                       backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2364748b' d='M6 8 .07.59 1.43-.82 6 4.88 10.57-.81 11.93.59z'/%3E%3C/svg%3E")`,
@@ -746,9 +868,9 @@ export default function NewMeetingPage() {
                     <option value="" disabled>
                       Select responsible person
                     </option>
-                    {memberOptions.map((o) => (
-                      <option key={o.user_id} value={o.user_id}>
-                        {o.label}
+                    {workspaceMembers.map((m) => (
+                      <option key={m.user_id} value={m.user_id}>
+                        {m.label}
                       </option>
                     ))}
                   </select>

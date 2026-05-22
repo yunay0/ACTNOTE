@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { INVITE_EXPIRES_IN_DAYS } from "@/lib/workspace/invite-expiry";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
+import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -167,7 +168,7 @@ export default function OnboardingInvitePage() {
         return;
       }
 
-      router.push("/workspace/select");
+      router.push(`/onboarding/invite/success?sent=${valid.length}`);
       setLoading(false);
     } catch {
       setError("Something went wrong. Please try again.");
@@ -181,28 +182,28 @@ export default function OnboardingInvitePage() {
 
   if (checkingAuth) {
     return (
-      <div className="flex h-screen items-center justify-center bg-white">
+      <div className="flex h-screen items-center justify-center bg-[#f8fafc]">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
       </div>
     );
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col bg-white">
+    <OnboardingLayout>
       <OnboardingHeader />
 
-      <main className="flex flex-1 justify-center p-[80px]">
+      <main className="flex flex-1 justify-center px-6 py-[80px] sm:px-10">
         <div className="flex w-full max-w-[520px] flex-col justify-center">
-          {/* Step 2 progress — Figma 74:2074 */}
+          {/* Figma 146:7600 — step 2 / 2 indicator (blue = done, orange = current) */}
           <div className="pb-12">
             <div className="flex w-full gap-3">
-              <div className="h-1 flex-1 rounded-full bg-[#2e5c8a]" />
-              <div className="h-1 flex-1 rounded-full bg-[#ff6b35]" />
+              <div className="h-1 flex-1 rounded-[2px] bg-[#2e5c8a]" />
+              <div className="h-1 flex-1 rounded-[2px] bg-[#ff6b35]" />
             </div>
           </div>
 
           <div className="pb-[34px]">
-            <h1 className="mb-3 text-[34.3px] font-bold leading-[43.2px] text-[#0a2540]">
+            <h1 className="mb-[12px] text-[34.3px] font-bold leading-[43.2px] text-[#0a2540]">
               Invite your team 👥
             </h1>
             <p className="text-[15px] font-normal leading-normal text-[#64748b]">
@@ -213,25 +214,25 @@ export default function OnboardingInvitePage() {
           <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-3 pb-6">
               {emails.map((value, i) => (
-                <div key={i} className="flex gap-3">
-                <input
-                  type="email"
-                  value={value}
-                  onChange={(e) => updateEmail(i, e.target.value)}
-                  placeholder="teammate@company.com"
-                  autoComplete="email"
-                  className="h-12 min-w-0 flex-1 rounded-[10px] border-2 border-[#e2e8f0] px-[18px] text-[14.2px] text-[#0a2540] placeholder-[#94a3b8] outline-none transition-colors focus:border-[#ff6b35]"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeRow(i)}
-                  className="flex size-12 shrink-0 items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] text-xl leading-none text-[#64748b] transition-colors hover:bg-[#f8fafc]"
-                  aria-label="Remove email row"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+                <div key={i} className="flex gap-3 pb-px">
+                  <input
+                    type="email"
+                    value={value}
+                    onChange={(e) => updateEmail(i, e.target.value)}
+                    placeholder="teammate@company.com"
+                    autoComplete="email"
+                    className="h-12 min-w-0 flex-1 rounded-[10px] border-2 border-[#e2e8f0] px-[18px] text-[14.2px] text-[#0a2540] placeholder-[#94a3b8] outline-none transition-colors focus:border-[#ff6b35]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeRow(i)}
+                    className="flex size-12 shrink-0 items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] text-xl leading-none text-[#64748b] transition-colors hover:bg-[#f8fafc]"
+                    aria-label="Remove email row"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
             </div>
 
             <button
@@ -239,11 +240,11 @@ export default function OnboardingInvitePage() {
               onClick={addRow}
               className="flex h-12 w-full items-center justify-center gap-2 rounded-[10px] border-2 border-dashed border-[#cbd5e1] text-[15px] font-bold text-[#64748b] transition-colors hover:border-[#94a3b8] hover:bg-[#f8fafc]"
             >
-              <span className="text-[15px] font-bold">+</span>
+              <span className="font-bold">+</span>
               <span>Add another email</span>
             </button>
 
-            <p className="text-[12.2px] font-normal leading-normal text-[#64748b] pt-2">
+            <p className="pt-4 text-[12.2px] font-normal leading-normal text-[#64748b]">
               We&apos;ll send them an email invitation to join your workspace
             </p>
 
@@ -288,7 +289,7 @@ export default function OnboardingInvitePage() {
               </div>
             )}
 
-            <div className="flex gap-4 pt-8">
+            <div className="flex gap-4 pt-12">
               <button
                 type="button"
                 onClick={handleSkip}
@@ -314,6 +315,6 @@ export default function OnboardingInvitePage() {
           </div>
         </div>
       </main>
-    </div>
+    </OnboardingLayout>
   );
 }

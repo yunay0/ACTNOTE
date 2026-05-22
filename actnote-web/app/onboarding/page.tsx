@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
+import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
 import { MAX_WORKSPACE_NAME_LENGTH, validateWorkspaceName } from "@/lib/workspace-name";
 
 export default function OnboardingPage() {
@@ -84,31 +85,31 @@ export default function OnboardingPage() {
   }
 
   const charCount = name.length;
-  const trimmedLen = name.trim().length;
-  const isDisabled = trimmedLen === 0 || loading;
+  const isDisabled = name.trim().length === 0 || loading;
 
   if (checkingAuth) {
     return (
-      <div className="flex h-screen items-center justify-center bg-white">
+      <div className="flex h-screen items-center justify-center bg-[#f8fafc]">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
       </div>
     );
   }
 
   return (
-    <div className="relative flex min-h-screen flex-col bg-white">
+    <OnboardingLayout>
       <OnboardingHeader />
 
-      <main className="flex flex-1 justify-center p-[80px]">
+      <main className="flex flex-1 justify-center px-6 py-[80px] sm:px-10">
         <div className="flex w-full max-w-[520px] flex-col justify-center">
+          {/* Figma 146:7540 — step 1 / 2 indicator */}
           <div className="pb-12">
             <div className="flex w-full gap-3">
-              <div className="h-1 flex-1 rounded-full bg-[#ff6b35]" />
-              <div className="h-1 flex-1 rounded-full bg-[#e2e8f0]" />
+              <div className="h-1 flex-1 rounded-[2px] bg-[#ff6b35]" />
+              <div className="h-1 flex-1 rounded-[2px] bg-[#e2e8f0]" />
             </div>
           </div>
 
-          <div className="pb-6">
+          <div className="pb-[7px]">
             <h1 className="mb-3 text-[35.7px] font-bold leading-[43.2px] text-[#0a2540]">
               Let&apos;s set up your
               <br />
@@ -175,6 +176,6 @@ export default function OnboardingPage() {
           </form>
         </div>
       </main>
-    </div>
+    </OnboardingLayout>
   );
 }
