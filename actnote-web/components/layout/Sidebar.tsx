@@ -98,10 +98,32 @@ export function Sidebar() {
         </div>
       </nav>
 
-      {/* Footer — workspace (Figma S-09-01: opens Workspace Settings) */}
+      {/* Footer — workspace: multi-ws row opens picker; single + admin → settings */}
       <div className="shrink-0 border-t border-[#e2e8f0] px-4 pb-4 pt-[13px]">
         <div className="flex flex-col gap-2">
-          {canAccessWorkspaceSettings ? (
+          {memberships.length > 1 ? (
+            <Link
+              href="/workspace/select?switch=1"
+              className="flex items-center gap-2.5 rounded-lg bg-[#f8fafc] px-3 py-2.5 transition-colors hover:bg-[#f1f5f9]"
+              aria-label="Switch workspace"
+            >
+              <div
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-[14px] font-bold text-white"
+                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+              >
+                {(workspaceName || "?")[0]?.toUpperCase() ?? "?"}
+              </div>
+              <span
+                className="min-w-0 flex-1 truncate text-[12.7px] font-bold leading-tight text-[#0a2540]"
+                title={workspaceName || undefined}
+              >
+                {workspaceName || "Workspace"}
+              </span>
+              <span className="shrink-0 text-[12px] leading-none text-[#94a3b8]" aria-hidden>
+                ▼
+              </span>
+            </Link>
+          ) : canAccessWorkspaceSettings ? (
             <Link
               href="/settings/workspace"
               className="flex items-center gap-2.5 rounded-lg bg-[#f8fafc] px-3 py-2.5 transition-colors hover:bg-[#f1f5f9]"
@@ -137,14 +159,6 @@ export function Sidebar() {
                 {workspaceName || "Workspace"}
               </span>
             </div>
-          )}
-          {memberships.length > 1 && (
-            <Link
-              href="/workspace/select?switch=1"
-              className="text-center text-[11px] font-semibold text-[#ff6b35] hover:underline"
-            >
-              Switch workspace
-            </Link>
           )}
         </div>
       </div>

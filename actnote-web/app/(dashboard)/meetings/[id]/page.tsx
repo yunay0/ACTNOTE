@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, CalendarDays, CheckCircle2, ListTodo, Sparkles,
@@ -15,6 +15,7 @@ import { StatusBadge } from "@/components/meetings/StatusBadge";
 import {
   SpeakerMappingSection,
   type SpeakerCandidate,
+  type SpeakerMappingSectionHandle,
   type TranscriptLine,
 } from "@/components/meetings/SpeakerMappingSection";
 import { TranscriptViewer } from "@/components/meetings/TranscriptViewer";
@@ -195,6 +196,8 @@ export default function MeetingDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishDone, setPublishDone] = useState(false);
+  /** 발행 전 DB에 현재 Speakers & transcript 드롭다운 상태를 반영 (검증·RPC 와 동기화) */
+  const speakerMappingRef = useRef<SpeakerMappingSectionHandle>(null);
 
   // 편집 모드 (DRAFT-001 / DRAFT-005)
   const [editMode, setEditMode] = useState(false);
@@ -468,10 +471,14 @@ export default function MeetingDetailPage() {
     setEditMode(false);
   }
 
-  async function saveEdits() {
-    if (!meeting || meeting.approval_status === "published") return;
-    if (meetingRole !== "owner") return;
-    setSaving(true);
+  /**
+   * Persists draft fields to DB without leaving edit mode.
+   * @returns Whether all writes succeeded (alerts already shown on failure).
+   */
+  async function persistDraftEdits(): Promise<boolean> {
+    if (!meeting || meeting.approval_status === "published") return false;
+    if (meetingRole !== "owner") return false;
+
     const supabase = createClient();
 
     const trimmedDecisions = editDecisions.map((d) => d.trim()).filter(Boolean);
@@ -494,8 +501,7 @@ export default function MeetingDetailPage() {
 
     if (decExpireErr) {
       alert(`Failed to update decisions: ${decExpireErr.message}`);
-      setSaving(false);
-      return;
+      return false;
     }
 
     if (trimmedDecisions.length > 0) {
@@ -508,8 +514,42 @@ export default function MeetingDetailPage() {
       const { error: decInsErr } = await (supabase as any).from("decisions").insert(rows);
       if (decInsErr) {
         alert(`Failed to save decisions: ${decInsErr.message}`);
-        setSaving(false);
-        return;
+        return false;
+      }
+    }
+
+    const persistedActionIds = new Set(
+      editActionItems.filter((item) => !item.id.startsWith(NEW_ACTION_ITEM_PREFIX)).map((item) => item.id)
+    );
+    const { data: currentActionRows, error: curActErr } = await (supabase as any)
+      .from("action_items")
+      .select("id")
+      .eq("meeting_id", meeting.id)
+      .is("valid_until", null);
+
+    if (curActErr) {
+      alert(`Failed to load action items for save: ${curActErr.message}`);
+      return false;
+    }
+
+    const actionIdsToExpire = (
+      ((currentActionRows ?? []) as { id: string }[]).map((r) => r.id).filter((id) => !persistedActionIds.has(id))
+    );
+
+    for (const removeId of actionIdsToExpire) {
+      const { error: expireErr } = await (supabase as any)
+        .from("action_items")
+        .update({
+          valid_until: nowIso,
+          change_type: "DELETE",
+          status: "cancelled",
+        })
+        .eq("id", removeId)
+        .is("valid_until", null);
+
+      if (expireErr) {
+        alert(`Failed to remove action item: ${expireErr.message}`);
+        return false;
       }
     }
 
@@ -533,8 +573,7 @@ export default function MeetingDetailPage() {
         });
         if (insErr) {
           alert(`Failed to save action item: ${insErr.message}`);
-          setSaving(false);
-          return;
+          return false;
         }
       } else {
         const { error: upErr } = await (supabase as any)
@@ -543,21 +582,51 @@ export default function MeetingDetailPage() {
           .eq("id", item.id);
         if (upErr) {
           alert(`Failed to update action item: ${upErr.message}`);
-          setSaving(false);
-          return;
+          return false;
         }
       }
     }
 
     await fetchMeeting();
-    setEditMode(false);
-    setSaving(false);
+    return true;
+  }
+
+  async function saveEdits() {
+    if (!meeting || meeting.approval_status === "published") return;
+    if (meetingRole !== "owner") return;
+    setSaving(true);
+    try {
+      const ok = await persistDraftEdits();
+      if (ok) setEditMode(false);
+    } finally {
+      setSaving(false);
+    }
   }
 
   // PUB-001: validate_meeting_for_publication RPC 사용
   async function handlePublishClick() {
     if (!meeting || publishing) return;
     if (meetingRole !== "owner") return;
+
+    if (editMode) {
+      setSaving(true);
+      try {
+        const ok = await persistDraftEdits();
+        if (!ok) return;
+      } finally {
+        setSaving(false);
+      }
+    }
+
+    if (speakerMappingRef.current) {
+      setSaving(true);
+      try {
+        const okSpeakers = await speakerMappingRef.current.persist();
+        if (!okSpeakers) return;
+      } finally {
+        setSaving(false);
+      }
+    }
 
     const supabase = createClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -578,6 +647,13 @@ export default function MeetingDetailPage() {
         if (key === "title") return "Meeting title is required.";
         if (key === "summary") return "AI summary must be added before publishing.";
         if (key === "action_items") return "At least 1 active action item is required.";
+        if (key === "decisions") return "Add at least one decision before publishing.";
+        if (key === "speaker_mapping") {
+          return "Map every speaker label to a workspace member (Speakers & transcript).";
+        }
+        if (key === "action_item_fields") {
+          return "Each action item needs text, an assignee, and a due date (YYYY-MM-DD).";
+        }
         if (key === "notion_integration") {
           // INTEG-005: Notion 미연동 경고
           setNotionConnected(false);
@@ -647,6 +723,7 @@ export default function MeetingDetailPage() {
     }).catch(() => null);
 
     setMeeting((prev) => prev ? { ...prev, approval_status: "published" } : prev);
+    setEditMode(false);
     setPublishDone(true);
     setPublishing(false);
   }
@@ -898,8 +975,8 @@ export default function MeetingDetailPage() {
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </button>
                 )}
-                {canPublish && !editMode && (
-                  <button onClick={handlePublishClick} disabled={publishing} className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60 transition-opacity" style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}>
+                {canPublish && (
+                  <button onClick={handlePublishClick} disabled={publishing || saving} className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60 transition-opacity" style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}>
                     {publishing ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" /> : <Send className="h-3.5 w-3.5" />}
                     Publish
                   </button>
@@ -1074,6 +1151,7 @@ export default function MeetingDetailPage() {
                 transcriptLines.length > 0 ||
                 Object.keys(speakerMapping).length > 0) && (
                 <SpeakerMappingSection
+                  ref={speakerMappingRef}
                   meetingId={meeting.id}
                   speakerCandidates={speakerCandidates}
                   initialMapping={speakerMapping}
@@ -1134,12 +1212,22 @@ export default function MeetingDetailPage() {
                       const accentDue = draftActionAccentBorder(highlightDue);
                       return (
                       <div key={item.id} className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-4 space-y-3">
-                        <input
-                          value={item.content}
-                          onChange={(e) => setEditActionItems((prev) => prev.map((a, idx) => idx === i ? { ...a, content: e.target.value } : a))}
-                          placeholder="Action item..."
-                          className="w-full h-10 rounded-xl border border-[#e2e8f0] bg-white px-4 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
-                        />
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={item.content}
+                            onChange={(e) => setEditActionItems((prev) => prev.map((a, idx) => idx === i ? { ...a, content: e.target.value } : a))}
+                            placeholder="Action item..."
+                            className="flex-1 min-w-0 h-10 rounded-xl border border-[#e2e8f0] bg-white px-4 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
+                          />
+                          <button
+                            type="button"
+                            aria-label="Remove action item"
+                            onClick={() => setEditActionItems((prev) => prev.filter((_, idx) => idx !== i))}
+                            className="shrink-0 text-[#94a3b8] hover:text-red-500 transition-colors p-1"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
                         <div className="flex gap-3 min-w-0">
                           <select
                             aria-invalid={highlightAssignee}
