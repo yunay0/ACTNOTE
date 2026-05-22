@@ -11,11 +11,24 @@ const FEATURES = [
 export function AuthMarketingPanel() {
   return (
     <aside
-      className="relative z-[2] flex w-full shrink-0 flex-col justify-center px-10 py-12 sm:px-14 sm:py-16 lg:w-[min(700px,100%)] lg:min-h-0 lg:px-14 lg:py-14 xl:p-20"
+      className="relative z-[2] flex w-full shrink-0 flex-col justify-center overflow-hidden px-10 py-12 sm:px-14 sm:py-16 lg:w-[min(700px,100%)] lg:min-h-0 lg:px-14 lg:py-14 xl:p-20"
       style={{
-        background: "linear-gradient(135deg, #0a2540 0%, #1e3a5f 100%)",
+        background: "linear-gradient(147.05deg, #0a2540 0%, #1e3a5f 100%)",
       }}
     >
+      {/* 우상단 데코 원 — Figma S-04-01 ::before */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute"
+        style={{
+          width: 400,
+          height: 400,
+          right: -100,
+          top: -100,
+          background: "rgba(255, 107, 53, 0.1)",
+          borderRadius: 200,
+        }}
+      />
       <div className="mx-auto flex w-full max-w-[520px] flex-col gap-[2.45rem]">
         <div className="flex items-center gap-4">
           <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-[#ff6b35] sm:size-16">

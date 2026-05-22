@@ -53,10 +53,10 @@ export function AuthSocialChrome({ redirectAfterAuth }: AuthSocialChromeProps) {
         type="button"
         disabled={busy}
         onClick={() => void handleGoogleClick()}
-        className="flex h-[56px] w-full items-center justify-center gap-3 rounded-xl border-2 border-[#e2e8f0] bg-white px-4 text-[16px] font-bold text-[#0a2540] transition-opacity hover:bg-[#f8fafc] disabled:cursor-wait disabled:opacity-70"
+        className="flex h-[56px] w-full items-center justify-center gap-3 rounded-xl border-2 border-[#e2e8f0] bg-white px-4 font-['Roboto',sans-serif] text-[16px] font-bold text-[#0a2540] transition-opacity hover:bg-[#f8fafc] disabled:cursor-wait disabled:opacity-70"
       >
         <span
-          className="flex size-6 shrink-0 items-center justify-center font-['Roboto',sans-serif] text-[18px] font-bold text-[#0a2540]"
+          className="flex size-6 shrink-0 items-center justify-center text-[18px] font-bold text-[#0a2540]"
           aria-hidden
         >
           G

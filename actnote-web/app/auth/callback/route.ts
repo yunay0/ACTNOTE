@@ -4,6 +4,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
+import { isFreeEmailDomain } from "@/lib/auth/domain-check";
 
 function callbackRedirectPath(rawNext: string | null): string {
   const path = getSafeInternalReturnPath(rawNext) ?? "/workspace/select";
@@ -21,6 +22,17 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
+      const { data: { user } } = await supabase.auth.getUser();
+      const email = user?.email ?? "";
+
+      if (isFreeEmailDomain(email)) {
+        const domain = email.split("@")[1] ?? "";
+        await supabase.auth.signOut();
+        return NextResponse.redirect(
+          `${origin}/login?error=personal_email&domain=${encodeURIComponent(domain)}`
+        );
+      }
+
       return NextResponse.redirect(`${origin}${next}`);
     }
   }
