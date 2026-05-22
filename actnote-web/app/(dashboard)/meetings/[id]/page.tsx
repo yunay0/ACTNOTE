@@ -1213,25 +1213,16 @@ export default function MeetingDetailPage() {
                       const accentSelect = draftActionAccentBorder(highlightAssignee);
                       const accentDue = draftActionAccentBorder(highlightDue);
                       return (
-                      <div key={item.id} className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-4 space-y-3">
-                        <div className="flex items-center gap-2">
+                      <div key={item.id} className="flex gap-3 rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-4">
+                        <div className="min-w-0 flex-1 space-y-3">
                           <input
                             value={item.content}
                             onChange={(e) => setEditActionItems((prev) => prev.map((a, idx) => idx === i ? { ...a, content: e.target.value } : a))}
                             placeholder="Action item..."
-                            className="flex-1 min-w-0 h-10 rounded-xl border border-[#e2e8f0] bg-white px-4 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
+                            className="w-full h-10 rounded-xl border border-[#e2e8f0] bg-white px-4 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
                           />
-                          <button
-                            type="button"
-                            aria-label="Remove action item"
-                            onClick={() => setEditActionItems((prev) => prev.filter((_, idx) => idx !== i))}
-                            className="shrink-0 text-[#94a3b8] hover:text-red-500 transition-colors p-1"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                        <div className="flex gap-3 min-w-0">
-                          <select
+                          <div className="flex gap-3 min-w-0">
+                            <select
                             aria-invalid={highlightAssignee}
                             value={item.assignee_user_id ?? ""}
                             onChange={(e) => {
@@ -1276,7 +1267,17 @@ export default function MeetingDetailPage() {
                             }}
                             className={`flex-[3] min-w-0 shrink-0 h-9 rounded-xl border bg-white px-3 text-sm tabular-nums text-[#0a2540] outline-none placeholder:text-[#94a3b8] focus:border-[#ff6b35] ${accentDue}`}
                           />
+                          </div>
                         </div>
+                        <button
+                          type="button"
+                          aria-label="Remove action item"
+                          title="Remove action item"
+                          onClick={() => setEditActionItems((prev) => prev.filter((_, idx) => idx !== i))}
+                          className="shrink-0 self-center rounded-lg p-2 text-[#94a3b8] hover:bg-red-50 hover:text-red-500 transition-colors"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
                       </div>
                       );
                     })}

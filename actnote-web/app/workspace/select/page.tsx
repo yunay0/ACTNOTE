@@ -63,7 +63,7 @@ function WorkspaceSelectInner() {
         return;
       }
 
-      const { data: rows, error: memErr } = await supabase
+      const { data: memberRowsData, error: memErr } = await supabase
         .from("workspace_members")
         .select("workspace_id, role, workspaces(id, name, slug)")
         .eq("user_id", user.id);
@@ -76,8 +76,10 @@ function WorkspaceSelectInner() {
         return;
       }
 
+      const rows = memberRowsData as unknown[] | null;
       const list: WorkspaceMembership[] = [];
-      for (const row of rows ?? []) {
+      for (const raw of rows ?? []) {
+        const row = raw as Record<string, unknown>;
         const wid = row.workspace_id as string;
         const rawWs = row.workspaces;
         const wsRaw = rawWs as unknown;
