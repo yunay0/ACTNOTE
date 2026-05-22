@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
 import {
   getStoredWorkspaceId,
   setStoredWorkspaceId,
@@ -113,7 +114,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!needsWorkspacePick) return;
-    router.replace("/workspace/select");
+    if (typeof window === "undefined") return;
+    const path = `${window.location.pathname}${window.location.search}`;
+    const safeReturn = getSafeInternalReturnPath(path);
+    const q = safeReturn ? `?next=${encodeURIComponent(safeReturn)}` : "";
+    router.replace(`/workspace/select${q}`);
   }, [needsWorkspacePick, router]);
 
   const setCurrentWorkspace = useCallback(

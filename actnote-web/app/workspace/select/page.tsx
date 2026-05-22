@@ -14,6 +14,7 @@ import {
   type WorkspaceWelcomeTile,
 } from "@/components/workspace/WorkspaceWelcomeScreen";
 import type { WorkspaceMembership } from "@/components/workspace/WorkspaceProvider";
+import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
 
 type BootState =
   | { status: "loading" }
@@ -237,7 +238,8 @@ function WorkspaceSelectInner() {
   function handlePickWorkspace(workspaceId: string): void {
     setWelcomeBusy(true);
     setStoredWorkspaceId(workspaceId);
-    router.replace("/meetings");
+    const after = getSafeInternalReturnPath(searchParams.get("next"));
+    router.replace(after ?? "/meetings");
   }
 
   function handleRetry(): void {

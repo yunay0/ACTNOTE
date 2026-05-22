@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -68,8 +69,14 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user && !isAuthPage && !isPublicPage && !isApiRoute) {
+    const attemptedPath = pathname + (request.nextUrl.search || "");
+    const safeReturn = getSafeInternalReturnPath(attemptedPath);
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    url.search = "";
+    if (safeReturn) {
+      url.searchParams.set("next", safeReturn);
+    }
     return NextResponse.redirect(url);
   }
 

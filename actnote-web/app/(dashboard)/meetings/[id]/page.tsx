@@ -189,7 +189,7 @@ function normalizeParticipants(raw: unknown): string[] {
 export default function MeetingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { memberships } = useWorkspaceContext();
+  const { memberships, workspaceId, setCurrentWorkspace } = useWorkspaceContext();
 
   const [meeting, setMeeting] = useState<MeetingRow | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -407,6 +407,16 @@ export default function MeetingDetailPage() {
   }, [id]);
 
   useEffect(() => { fetchMeeting(); }, [fetchMeeting]);
+
+  /** View Draft email links — ?workspace=<id> aligns context with Home draft card UX */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const wid = new URLSearchParams(window.location.search).get("workspace")?.trim();
+    if (!wid) return;
+    const allowed = memberships.some((m) => m.workspace_id === wid);
+    if (!allowed || wid === workspaceId) return;
+    setCurrentWorkspace(wid);
+  }, [memberships, workspaceId, setCurrentWorkspace, id]);
 
   useEffect(() => {
     setSpeakerMapOverlay(undefined);
