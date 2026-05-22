@@ -99,6 +99,10 @@ export const SpeakerMappingSection = forwardRef<
     members: MemberOption[];
     canEdit: boolean;
     onSaved?: () => void;
+    /** When transcript is shown in a parent sidebar, hide duplicate inline viewer here. */
+    hideEmbeddedTranscript?: boolean;
+    /** Live speaker_mapping for sibling transcript viewer (updates on dropdown change). */
+    onMappingLiveChange?: (mapping: Record<string, string>) => void;
   }
 >(function SpeakerMappingSection(props, ref) {
   const {
@@ -109,6 +113,8 @@ export const SpeakerMappingSection = forwardRef<
     members,
     canEdit,
     onSaved,
+    hideEmbeddedTranscript = false,
+    onMappingLiveChange,
   } = props;
 
   const labels = useMemo(() => {
@@ -129,6 +135,10 @@ export const SpeakerMappingSection = forwardRef<
   useEffect(() => {
     setMapping(initialMapping);
   }, [initialMapping]);
+
+  useEffect(() => {
+    onMappingLiveChange?.(mapping);
+  }, [mapping, onMappingLiveChange]);
 
   const persistMapping = useCallback(
     async (showUiMessage: boolean): Promise<boolean> => {
@@ -209,7 +219,9 @@ export const SpeakerMappingSection = forwardRef<
     <section className="rounded-xl border border-[#e2e8f0] bg-white p-6 shadow-sm space-y-4">
       <div className="flex items-center gap-2">
         <Mic2 className="h-4 w-4 text-[#ff6b35]" />
-        <h2 className="text-[15px] font-bold text-[#0a2540]">Speakers & transcript</h2>
+        <h2 className="text-[15px] font-bold text-[#0a2540]">
+          {hideEmbeddedTranscript ? "Speakers" : "Speakers & transcript"}
+        </h2>
       </div>
       <p className="text-[13px] text-[#64748b] leading-relaxed">
         <span className="font-semibold text-[#475569]">DRAFT-010:</span> Diarization labels (e.g.{" "}
@@ -309,7 +321,7 @@ export const SpeakerMappingSection = forwardRef<
         </div>
       )}
 
-      {transcripts.length > 0 && (
+      {transcripts.length > 0 && !hideEmbeddedTranscript && (
         <TranscriptViewer
           bare
           transcripts={transcripts}
