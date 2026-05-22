@@ -1,16 +1,181 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
+import type { WorkspaceMembership } from "@/components/workspace/WorkspaceProvider";
 
 /** 다음 버전에서 연동 설정 노출 시 true 로 변경 */
 const SHOW_INTEGRATIONS_IN_SIDEBAR = false;
 
+const AVATAR_GRADIENTS = [
+  "linear-gradient(135deg, rgb(0,200,179) 0%, rgb(0,195,208) 100%)",
+  "linear-gradient(135deg, rgb(46,92,138) 0%, rgb(30,58,95) 100%)",
+] as const;
+
+function initialsFromName(name: string): string {
+  const t = name.trim();
+  if (!t) return "??";
+  const parts = t.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    const a = parts[0][0];
+    const b = parts[parts.length - 1][0];
+    if (a && b) return `${a}${b}`.toUpperCase();
+  }
+  return t.slice(0, 2).toUpperCase();
+}
+
+/** 멀티 워크스페이스: ▼ 로 위쪽 패널 열어 바로 선택 (전체 페이지 picker 제거 목적) */
+function WorkspaceSwitcherPopover({
+  memberships,
+  workspaceId,
+  workspaceName,
+  setCurrentWorkspace,
+}: {
+  memberships: WorkspaceMembership[];
+  workspaceId: string | null;
+  workspaceName: string;
+  setCurrentWorkspace: (id: string) => void;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const pick = useCallback(
+    (id: string) => {
+      setOpen(false);
+      if (!workspaceId || id === workspaceId) return;
+      setCurrentWorkspace(id);
+      router.replace("/meetings");
+    },
+    [router, setCurrentWorkspace, workspaceId],
+  );
+
+  const signOutAnother = useCallback(async () => {
+    setOpen(false);
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.replace("/login");
+  }, [router]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(ev: MouseEvent) {
+      const el = rootRef.current;
+      if (!el || el.contains(ev.target as Node)) return;
+      setOpen(false);
+    }
+    function handleKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative flex flex-col gap-0">
+      <div className="flex items-center gap-0 overflow-hidden rounded-lg bg-[#f8fafc]">
+        <div
+          className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2.5"
+          title={workspaceName || undefined}
+          aria-current="page"
+        >
+          <div
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-[14px] font-bold text-white"
+            style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+            aria-hidden
+          >
+            {(workspaceName || "?")[0]?.toUpperCase() ?? "?"}
+          </div>
+          <span className="min-w-0 flex-1 truncate text-[12.7px] font-bold leading-tight text-[#0a2540]">
+            {workspaceName || "Workspace"}
+          </span>
+        </div>
+        <button
+          type="button"
+          className={cn(
+            "shrink-0 px-3 py-2.5 text-[12px] leading-none text-[#94a3b8] outline-none transition-colors hover:bg-[#e2e8f0]/60 hover:text-[#64748b]",
+            open && "bg-[#e2e8f0]/50 text-[#64748b]",
+          )}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          aria-label="Open workspace list"
+          onClick={() => setOpen((v) => !v)}
+        >
+          ▼
+        </button>
+      </div>
+
+      {open && (
+        <div
+          role="listbox"
+          aria-label="Your workspaces"
+          className="absolute bottom-full left-0 right-0 z-[60] mb-1 max-h-[min(420px,calc(100vh-140px))] overflow-auto rounded-xl border border-[#e2e8f0] bg-white py-1.5 shadow-[0_-8px_24px_rgba(10,37,64,0.12)]"
+        >
+          <ul className="flex flex-col gap-0 px-1.5 pb-1">
+            {memberships.map((m, idx) => {
+              const initials = initialsFromName(m.workspace.name || "Workspace");
+              const gradient = AVATAR_GRADIENTS[idx % AVATAR_GRADIENTS.length];
+              const title = (m.workspace.name || "Workspace").trim() || "Workspace";
+              const active = workspaceId === m.workspace_id;
+              return (
+                <li key={m.workspace_id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    disabled={active}
+                    onClick={() => pick(m.workspace_id)}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors disabled:opacity-100",
+                      active
+                        ? "cursor-default bg-[#fff4f0] font-bold text-[#ff6b35]"
+                        : "font-medium text-[#0a2540] hover:bg-[#f8fafc]",
+                    )}
+                  >
+                    <div
+                      className="flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                      style={{ backgroundImage: gradient }}
+                      aria-hidden
+                    >
+                      {initials.slice(0, 2)}
+                    </div>
+                    <span className="min-w-0 flex-1 truncate">{title}</span>
+                    {active && (
+                      <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-[#ff6b35]">
+                        Current
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="mx-2 border-t border-[#f1f5f9]" />
+          <button
+            type="button"
+            className="mt-1 w-full px-3 py-2.5 text-left text-[13px] font-semibold text-[#64748b] transition-colors hover:bg-[#f8fafc] hover:text-[#0a2540]"
+            onClick={() => void signOutAnother()}
+          >
+            Use another account
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Sidebar() {
   const pathname = usePathname();
-  const { workspaceName, memberships, workspaceId } = useWorkspaceContext();
+  const { workspaceName, memberships, workspaceId, setCurrentWorkspace } =
+    useWorkspaceContext();
 
   const isHome = pathname.startsWith("/meetings");
   const isWorkspace = pathname.startsWith("/settings/workspace");
@@ -42,7 +207,7 @@ export function Sidebar() {
               "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[14px] font-bold transition-colors",
               isHome
                 ? "bg-[#fff4f0] text-[#ff6b35]"
-                : "text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
+                : "text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]",
             )}
           >
             <span className="text-[14px]">🏠</span>
@@ -62,7 +227,7 @@ export function Sidebar() {
                 "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors",
                 isWorkspace
                   ? "bg-[#fff4f0] font-bold text-[#ff6b35]"
-                  : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
+                  : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]",
               )}
             >
               <span>👥</span>
@@ -75,33 +240,40 @@ export function Sidebar() {
               "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors",
               isPersonal
                 ? "bg-[#fff4f0] font-bold text-[#ff6b35]"
-                : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
+                : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]",
             )}
           >
             <span>⚙️</span>
             Personal
           </Link>
           {SHOW_INTEGRATIONS_IN_SIDEBAR && (
-          <Link
-            href="/settings/integrations"
-            className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors",
-              pathname.startsWith("/settings/integrations")
-                ? "bg-[#fff4f0] font-bold text-[#ff6b35]"
-                : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
-            )}
-          >
-            <span>🔗</span>
-            Integrations
-          </Link>
+            <Link
+              href="/settings/integrations"
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors",
+                pathname.startsWith("/settings/integrations")
+                  ? "bg-[#fff4f0] font-bold text-[#ff6b35]"
+                  : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]",
+              )}
+            >
+              <span>🔗</span>
+              Integrations
+            </Link>
           )}
         </div>
       </nav>
 
-      {/* Footer — workspace (Figma S-09-01: opens Workspace Settings) */}
+      {/* Footer — multi-ws: ▼ 패널 / single+admin → settings */}
       <div className="shrink-0 border-t border-[#e2e8f0] px-4 pb-4 pt-[13px]">
         <div className="flex flex-col gap-2">
-          {canAccessWorkspaceSettings ? (
+          {memberships.length > 1 ? (
+            <WorkspaceSwitcherPopover
+              memberships={memberships}
+              workspaceId={workspaceId}
+              workspaceName={workspaceName}
+              setCurrentWorkspace={setCurrentWorkspace}
+            />
+          ) : canAccessWorkspaceSettings ? (
             <Link
               href="/settings/workspace"
               className="flex items-center gap-2.5 rounded-lg bg-[#f8fafc] px-3 py-2.5 transition-colors hover:bg-[#f1f5f9]"
@@ -137,14 +309,6 @@ export function Sidebar() {
                 {workspaceName || "Workspace"}
               </span>
             </div>
-          )}
-          {memberships.length > 1 && (
-            <Link
-              href="/workspace/select?switch=1"
-              className="text-center text-[11px] font-semibold text-[#ff6b35] hover:underline"
-            >
-              Switch workspace
-            </Link>
           )}
         </div>
       </div>

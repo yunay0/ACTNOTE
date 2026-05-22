@@ -67,7 +67,7 @@ export function useMeetings() {
   // 처리 중인 미팅이 있으면 5초마다 상태 새로고침
   useEffect(() => {
     if (!ctxWorkspaceId || !hydrated) return;
-    if (!meetings.some((m) => isProcessing(m.status))) return;
+    if (!meetings.some((m) => isProcessing(m.status) || m.status === "error")) return;
 
     const interval = setInterval(() => loadMeetings(ctxWorkspaceId), 5000);
     return () => clearInterval(interval);

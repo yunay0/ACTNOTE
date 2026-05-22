@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, Suspense, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -8,8 +8,28 @@ import {
   getStoredWorkspaceId,
   setStoredWorkspaceId,
 } from "@/lib/workspace/storage";
-import { WorkspaceAccountPicker } from "@/components/workspace/WorkspaceAccountPicker";
+import { PostLoginAccountModal } from "@/components/workspace/PostLoginAccountModal";
+import {
+  WorkspaceWelcomeScreen,
+  type WorkspaceWelcomeTile,
+} from "@/components/workspace/WorkspaceWelcomeScreen";
 import type { WorkspaceMembership } from "@/components/workspace/WorkspaceProvider";
+
+type BootState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | {
+      status: "ready";
+      displayName: string;
+      email: string | null;
+      avatarUrl: string | null;
+      /** Owner has default-name workspace — complete onboarding first. */
+      needsOnboarding: boolean;
+      workspaces: WorkspaceWelcomeTile[];
+      preferredWorkspaceId: string | null;
+      /** Matches `create_workspace_for_self`: no second owned workspace after name is finalized. */
+      canCreateOwnedWorkspace: boolean;
+    };
 
 export default function WorkspaceSelectPage() {
   return (
@@ -25,112 +45,184 @@ export default function WorkspaceSelectPage() {
   );
 }
 
+async function fetchWorkspaceStats(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  workspaceIds: string[],
+): Promise<Map<string, { memberCount: number; meetingCount: number }>> {
+  const out = new Map<string, { memberCount: number; meetingCount: number }>();
+  await Promise.all(
+    workspaceIds.map(async (wid: string) => {
+      const [{ count: mc }, { count: meetC }] = await Promise.all([
+        supabase
+          .from("workspace_members")
+          .select("user_id", { count: "exact", head: true })
+          .eq("workspace_id", wid),
+        supabase
+          .from("meetings")
+          .select("id", { count: "exact", head: true })
+          .eq("workspace_id", wid)
+          .is("deleted_at", null),
+      ]);
+      out.set(wid, { memberCount: mc ?? 0, meetingCount: meetC ?? 0 });
+    }),
+  );
+  return out;
+}
+
 function WorkspaceSelectInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [loading, setLoading] = useState(true);
-  const [choices, setChoices] = useState<WorkspaceMembership[]>([]);
-  const [pickerEmail, setPickerEmail] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [boot, setBoot] = useState<BootState>({ status: "loading" });
+  const [accountConfirmed, setAccountConfirmed] = useState(false);
+  const [welcomeBusy, setWelcomeBusy] = useState(false);
+
+  const runLoad = useCallback(async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const supabase: any = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+
+    if (searchParams.get("switch") === "1") {
+      clearStoredWorkspaceId();
+    }
+
+    const [{ data: ownedRows }, { data: profileRow, error: profileErr }] = await Promise.all([
+      supabase.from("workspaces").select("id, name").eq("owner_id", user.id),
+      supabase.from("users").select("name, email, avatar_url").eq("id", user.id).maybeSingle(),
+    ]);
+
+    if (profileErr) {
+      setBoot({
+        status: "error",
+        message: profileErr.message ?? "Could not load profile.",
+      });
+      return;
+    }
+
+    const meta = user.user_metadata as Record<string, unknown> | undefined;
+    const metaFull =
+      (typeof meta?.full_name === "string" && meta.full_name) ||
+      (typeof meta?.name === "string" && meta.name) ||
+      "";
+    const profileName = (profileRow?.name as string | null | undefined)?.trim() || "";
+    const displayName = profileName || metaFull || "";
+
+    const avatarUrl =
+      (profileRow?.avatar_url as string | null | undefined)?.trim() ||
+      (typeof meta?.avatar_url === "string" && meta.avatar_url) ||
+      (typeof meta?.picture === "string" && meta.picture) ||
+      null;
+    const profileEmail = (profileRow?.email as string | null | undefined)?.trim() || null;
+    const email = profileEmail || user.email || null;
+
+    const pending =
+      (ownedRows as { id: string; name?: string | null }[] | null)?.filter((w) =>
+        ((w.name as string) ?? "").endsWith("'s workspace"),
+      ) ?? [];
+
+    const ownedList = (ownedRows as { name?: string | null }[]) ?? [];
+    const hasFinalizedOwnedWorkspace = ownedList.some((w) => {
+      const n = (w.name ?? "").trim();
+      return n.length > 0 && !n.endsWith("'s workspace");
+    });
+    const canCreateOwnedWorkspace = !hasFinalizedOwnedWorkspace;
+
+    const { data: memberRowsData, error: memErr } = await supabase
+      .from("workspace_members")
+      .select("workspace_id, role, workspaces(id, name, slug)")
+      .eq("user_id", user.id);
+
+    if (memErr) {
+      setBoot({ status: "error", message: memErr.message });
+      return;
+    }
+
+    const rows = memberRowsData as unknown[] | null;
+    const list: WorkspaceMembership[] = [];
+    for (const raw of rows ?? []) {
+      const row = raw as Record<string, unknown>;
+      const wid = row.workspace_id as string;
+      const rawWs = row.workspaces;
+      const wsRaw = rawWs as unknown;
+      const ws = Array.isArray(wsRaw) ? wsRaw[0] : wsRaw;
+      const w = ws as { id?: string; name?: string; slug?: string | null } | null;
+      if (!w?.id) continue;
+      list.push({
+        workspace_id: wid,
+        role: (row.role as string) ?? "member",
+        workspace: {
+          id: w.id as string,
+          name: (w.name as string) ?? "",
+          slug: (w.slug as string | null) ?? null,
+        },
+      });
+    }
+
+    list.sort((a, b) =>
+      (a.workspace.name || "").localeCompare(b.workspace.name || "", undefined, {
+        sensitivity: "base",
+      }),
+    );
+
+    const needsOnboarding = pending.length > 0 || list.length === 0;
+
+    let workspaces: WorkspaceWelcomeTile[] = [];
+
+    if (!needsOnboarding) {
+      const ids = list.map((m) => m.workspace_id);
+      const statsMap = await fetchWorkspaceStats(supabase, ids);
+      workspaces = list.map((m) => {
+        const s = statsMap.get(m.workspace_id);
+        return {
+          id: m.workspace_id,
+          name: (m.workspace.name || "Workspace").trim() || "Workspace",
+          memberCount: s?.memberCount ?? 0,
+          meetingCount: s?.meetingCount ?? 0,
+        };
+      });
+    }
+
+    const stored = searchParams.get("switch") === "1" ? null : getStoredWorkspaceId();
+
+    setBoot({
+      status: "ready",
+      displayName,
+      email,
+      avatarUrl,
+      needsOnboarding,
+      workspaces,
+      preferredWorkspaceId: stored && workspaces.some((w) => w.id === stored) ? stored : null,
+      canCreateOwnedWorkspace,
+    });
+    setAccountConfirmed(false);
+  }, [router, searchParams]);
 
   useEffect(() => {
     let cancelled = false;
-
-    async function run() {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.replace("/login");
-        return;
-      }
-
-      if (searchParams.get("switch") === "1") {
-        clearStoredWorkspaceId();
-      }
-
-      const { data: ownedRows } = await supabase.from("workspaces").select("id, name").eq("owner_id", user.id);
-
-      const pendingRows = (ownedRows as { id: string; name?: string | null }[] | null)?.filter((w) =>
-        ((w.name as string) ?? "").endsWith("'s workspace"),
-      );
-      const pending = pendingRows ?? [];
-
-      if (pending.length > 0) {
-        router.replace("/onboarding");
-        return;
-      }
-
-      const { data: rows, error: memErr } = await supabase
-        .from("workspace_members")
-        .select("workspace_id, role, workspaces(id, name, slug)")
-        .eq("user_id", user.id);
-
-      if (memErr) {
-        if (!cancelled) {
-          setError(memErr.message);
-          setLoading(false);
-        }
-        return;
-      }
-
-      const list: WorkspaceMembership[] = [];
-      for (const row of rows ?? []) {
-        const wid = row.workspace_id as string;
-        const rawWs = row.workspaces;
-        const wsRaw = rawWs as unknown;
-        const ws = Array.isArray(wsRaw) ? wsRaw[0] : wsRaw;
-        const w = ws as { id?: string; name?: string; slug?: string | null } | null;
-        if (!w?.id) continue;
-        list.push({
-          workspace_id: wid,
-          role: (row.role as string) ?? "member",
-          workspace: {
-            id: w.id as string,
-            name: (w.name as string) ?? "",
-            slug: (w.slug as string | null) ?? null,
-          },
-        });
-      }
-
-      if (list.length === 0) {
-        router.replace("/onboarding");
-        return;
-      }
-
-      const ids = list.map((m) => m.workspace_id);
-      const stored = getStoredWorkspaceId();
-
-      if (list.length === 1) {
-        setStoredWorkspaceId(list[0].workspace_id);
-        router.replace("/meetings");
-        return;
-      }
-
-      if (stored && ids.includes(stored)) {
-        router.replace("/meetings");
-        return;
-      }
-
-      if (!cancelled) {
-        setChoices(list);
-        setPickerEmail(user.email ?? null);
-        setLoading(false);
-      }
-    }
-
-    void run();
+    void (async () => {
+      await runLoad();
+      if (cancelled) return;
+    })();
     return () => {
       cancelled = true;
     };
-  }, [router, searchParams]);
+  }, [runLoad]);
 
-  function choose(id: string): void {
-    setStoredWorkspaceId(id);
-    router.replace("/meetings");
-  }
+  const handleContinueAccount = (): void => {
+    if (boot.status !== "ready") return;
+    if (boot.needsOnboarding) {
+      router.replace("/onboarding");
+      return;
+    }
+    setAccountConfirmed(true);
+  };
 
   async function handleUseAnotherAccount(): Promise<void> {
     const supabase = createClient();
@@ -142,24 +234,35 @@ function WorkspaceSelectInner() {
     router.push("/");
   }
 
-  const overlayShell = "fixed inset-0 z-[90] flex items-center justify-center bg-[rgba(10,37,64,0.6)] backdrop-blur-[2px] px-4";
-
-  if (loading && !error) {
-    return (
-      <div className={overlayShell}>
-        <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
-      </div>
-    );
+  function handlePickWorkspace(workspaceId: string): void {
+    setWelcomeBusy(true);
+    setStoredWorkspaceId(workspaceId);
+    router.replace("/meetings");
   }
 
-  if (error) {
+  function handleRetry(): void {
+    setBoot({ status: "loading" });
+    void runLoad();
+  }
+
+  const overlayLoading = (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[rgba(10,37,64,0.6)] backdrop-blur-[2px] px-4">
+      <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
+    </div>
+  );
+
+  if (boot.status === "loading") {
+    return overlayLoading;
+  }
+
+  if (boot.status === "error") {
     return (
-      <div className={overlayShell}>
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-[rgba(10,37,64,0.6)] backdrop-blur-[2px] px-4">
         <div className="w-full max-w-[480px] rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]">
-          <p className="mb-6 text-center text-sm text-red-600">{error}</p>
+          <p className="mb-6 text-center text-sm text-red-600">{boot.message}</p>
           <button
             type="button"
-            onClick={() => router.refresh()}
+            onClick={handleRetry}
             className="w-full rounded-xl bg-[#0a2540] py-3 text-sm font-bold text-white hover:opacity-90"
           >
             Retry
@@ -176,13 +279,31 @@ function WorkspaceSelectInner() {
     );
   }
 
+  if (!accountConfirmed) {
+    return (
+      <PostLoginAccountModal
+        displayName={boot.displayName || boot.email?.split("@")[0] || "Your account"}
+        email={boot.email}
+        avatarUrl={boot.avatarUrl}
+        onContinue={handleContinueAccount}
+        onUseAnotherAccount={() => void handleUseAnotherAccount()}
+        onCancel={handleCancel}
+      />
+    );
+  }
+
   return (
-    <WorkspaceAccountPicker
-      memberships={choices}
-      userEmail={pickerEmail}
-      onPickWorkspace={choose}
-      onUseAnotherAccount={handleUseAnotherAccount}
-      onCancel={handleCancel}
+    <WorkspaceWelcomeScreen
+      displayName={boot.displayName || boot.email?.split("@")[0] || "Member"}
+      email={boot.email}
+      avatarUrl={boot.avatarUrl}
+      workspaces={boot.workspaces}
+      preferredWorkspaceId={boot.preferredWorkspaceId}
+      canCreateOwnedWorkspace={boot.canCreateOwnedWorkspace}
+      busy={welcomeBusy}
+      onContinue={handlePickWorkspace}
+      onCreateWorkspace={() => router.push("/onboarding")}
+      onSignOut={() => void handleUseAnotherAccount()}
     />
   );
 }

@@ -27,17 +27,21 @@ const { data, error } = await supabase.rpc("validate_meeting_for_publication", {
   p_meeting_id: meetingId,
 });
 // data = { ok: boolean, missing: string[] }
-// missing 후보: 'title' | 'summary' | 'action_items' | 'notion_integration'
+// missing 후보: title, summary, decisions, speaker_mapping,
+//               action_items, action_item_fields, notion_integration (레거시 이전 배포만)
 ```
 
-UI 매핑 예시:
+UI 매핑 예시 (035 마이그레이션 적용 후):
 
 | missing 값 | 안내 문구 |
 |---|---|
 | `title` | 제목을 입력해 주세요 |
 | `summary` | 요약을 입력해 주세요 |
+| `decisions` | 결정사항(Decisions) 최소 1개 필요합니다 |
+| `speaker_mapping` | 모든 화자 라벨을 멤버에 매핑하세요(Speakers & transcript) |
 | `action_items` | 유효한 액션 아이템이 최소 1개 필요합니다 |
-| `notion_integration` | INTEG-005: "Notion 연동 설정 없이는 발행이 제한됩니다." |
+| `action_item_fields` | 각 액션에 내용·담당자·마감일이 모두 필요합니다 |
+| `notion_integration` | INTEG-005: 과거 버전 검증값(현재 마이그레이션에서는 제외 가능) |
 
 ---
 

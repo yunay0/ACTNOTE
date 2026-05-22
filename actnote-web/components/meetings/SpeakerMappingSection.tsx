@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+} from "react";
 import { Mic2, Save } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { workspaceMemberDisplayName } from "@/lib/user/member-display";
@@ -15,6 +22,11 @@ export type SpeakerCandidate = {
 };
 
 export type { TranscriptLine };
+
+export type SpeakerMappingSectionHandle = {
+  /** DB에 현재 선택된 화자 매핑을 저장합니다. 라벨이 없으면 no-op 후 true 반환 */
+  persist: () => Promise<boolean>;
+};
 
 type MemberOption = {
   user_id: string;
@@ -77,15 +89,18 @@ function normalizeMapping(raw: unknown): Record<string, string> {
   return out;
 }
 
-export function SpeakerMappingSection(props: {
-  meetingId: string;
-  speakerCandidates: Record<string, SpeakerCandidate[]>;
-  initialMapping: Record<string, string>;
-  transcripts: TranscriptLine[];
-  members: MemberOption[];
-  canEdit: boolean;
-  onSaved?: () => void;
-}) {
+export const SpeakerMappingSection = forwardRef<
+  SpeakerMappingSectionHandle,
+  {
+    meetingId: string;
+    speakerCandidates: Record<string, SpeakerCandidate[]>;
+    initialMapping: Record<string, string>;
+    transcripts: TranscriptLine[];
+    members: MemberOption[];
+    canEdit: boolean;
+    onSaved?: () => void;
+  }
+>(function SpeakerMappingSection(props, ref) {
   const {
     meetingId,
     speakerCandidates,
@@ -115,43 +130,77 @@ export function SpeakerMappingSection(props: {
     setMapping(initialMapping);
   }, [initialMapping]);
 
+  const persistMapping = useCallback(
+    async (showUiMessage: boolean): Promise<boolean> => {
+      if (labels.length === 0 && transcripts.length === 0) {
+        return true;
+      }
+
+      const supabase = createClient();
+
+      const { data: row, error: fetchErr } = await (supabase as any)
+        .from("meetings")
+        .select("ai_draft_notes")
+        .eq("id", meetingId)
+        .single();
+
+      if (fetchErr || !row) {
+        const msg = fetchErr?.message ?? "Could not load draft notes.";
+        if (showUiMessage) {
+          setMessage(msg);
+        } else {
+          alert(`Failed to save speaker mapping: ${msg}`);
+        }
+        return false;
+      }
+
+      const base = parseDraftNotes(row.ai_draft_notes) ?? {};
+      const cleaned: Record<string, string> = {};
+      for (const [k, v] of Object.entries(mapping)) {
+        if (v && v.trim()) cleaned[k] = v.trim();
+      }
+      const next = { ...base, speaker_mapping: cleaned };
+
+      const { error: upErr } = await (supabase as any)
+        .from("meetings")
+        .update({ ai_draft_notes: JSON.stringify(next) })
+        .eq("id", meetingId);
+
+      if (upErr) {
+        if (showUiMessage) {
+          setMessage(upErr.message);
+        } else {
+          alert(`Failed to save speaker mapping: ${upErr.message}`);
+        }
+        return false;
+      }
+
+      if (showUiMessage) {
+        setMessage("Saved.");
+        setTimeout(() => setMessage(null), 2500);
+      }
+      onSaved?.();
+      return true;
+    },
+    [labels.length, transcripts.length, meetingId, mapping, onSaved]
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      persist: () => persistMapping(false),
+    }),
+    [persistMapping]
+  );
+
   async function handleSave() {
     setMessage(null);
     setSaving(true);
-    const supabase = createClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: row, error: fetchErr } = await (supabase as any)
-      .from("meetings")
-      .select("ai_draft_notes")
-      .eq("id", meetingId)
-      .single();
-
-    if (fetchErr || !row) {
-      setMessage(fetchErr?.message ?? "Could not load draft notes.");
+    try {
+      await persistMapping(true);
+    } finally {
       setSaving(false);
-      return;
     }
-
-    const base = parseDraftNotes(row.ai_draft_notes) ?? {};
-    const cleaned: Record<string, string> = {};
-    for (const [k, v] of Object.entries(mapping)) {
-      if (v && v.trim()) cleaned[k] = v.trim();
-    }
-    const next = { ...base, speaker_mapping: cleaned };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: upErr } = await (supabase as any)
-      .from("meetings")
-      .update({ ai_draft_notes: JSON.stringify(next) })
-      .eq("id", meetingId);
-
-    setSaving(false);
-    if (upErr) {
-      setMessage(upErr.message);
-      return;
-    }
-    setMessage("Saved.");
-    onSaved?.();
-    setTimeout(() => setMessage(null), 2500);
   }
 
   if (labels.length === 0 && transcripts.length === 0) return null;
@@ -231,7 +280,9 @@ export function SpeakerMappingSection(props: {
                   </div>
                 )}
                 {cands.length === 0 && (
-                  <p className="text-[11px] text-[#94a3b8]">No AI match above {CONFIDENCE_MIN * 100}% — choose manually.</p>
+                  <p className="text-[11px] text-[#94a3b8]">
+                    No AI match above {CONFIDENCE_MIN * 100}% — choose manually.
+                  </p>
                 )}
               </div>
             );
@@ -268,4 +319,6 @@ export function SpeakerMappingSection(props: {
       )}
     </section>
   );
-}
+});
+
+export { normalizeCandidates, normalizeMapping };

@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   }
 
   const {
-    data: membership,
+    data: membershipRaw,
     error: membershipError,
   } = await supabase
     .from("workspace_members")
@@ -41,6 +41,8 @@ export async function POST(request: Request) {
     .eq("workspace_id", workspaceId)
     .eq("user_id", user.id)
     .maybeSingle();
+
+  const membership = membershipRaw as { role: string } | null;
 
   if (membershipError) {
     return NextResponse.json(

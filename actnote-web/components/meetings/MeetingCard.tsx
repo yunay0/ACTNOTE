@@ -1,30 +1,27 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { MoreVertical, Trash2, RefreshCw, Mail } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Menu, MoreVertical, Trash2, Eye } from "lucide-react";
 import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
-import {
-  userFacingPipelineError,
-  supportContactHref,
-  supportContactOpensInNewTab,
-  supportEmailAddress,
-} from "@/lib/meetings/pipeline-error-copy";
+import { userFacingPipelineError } from "@/lib/meetings/pipeline-error-copy";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
+import { MeetingDeleteConfirmModal } from "@/components/meetings/MeetingDeleteConfirmModal";
 
 interface MeetingCardProps {
   meeting: Meeting;
-  onDelete?: (id: string) => void;
+  onDelete?: (id: string) => boolean | Promise<boolean>;
   onClick?: () => void;
-  onRetry?: (id: string) => void;
-  retrying?: boolean;
 }
 
 const STATUS_STYLE: Record<string, { bg: string; dot: string; text: string; label: string }> = {
-  analyzing: { bg: "bg-green-50", dot: "bg-green-500 animate-pulse", text: "text-green-700", label: "Analyzing" },
-  draft:     { bg: "bg-amber-50", dot: "bg-amber-500",               text: "text-amber-900", label: "Draft" },
-  published: { bg: "bg-blue-50",   dot: "bg-blue-500",               text: "text-blue-800",  label: "Published" },
-  error:     { bg: "bg-red-50",    dot: "bg-red-500",                text: "text-red-600",   label: "Error" },
+  /** Figma 147:8793 analyzing pill (#dcfbe7 / #34c759) — no pulse dot */
+  analyzing: { bg: "bg-[#dcfbe7]", dot: "", text: "text-[#34c759]", label: "Analyzing" },
+  draft: { bg: "bg-amber-50", dot: "bg-amber-500", text: "text-amber-900", label: "Draft" },
+  published: { bg: "bg-blue-50", dot: "bg-blue-500", text: "text-blue-800", label: "Published" },
+  /** Figma ERROR pill (#ffc6c7 surface, red wording) */
+  error: { bg: "bg-[#ffc6c7]", dot: "", text: "text-red-700", label: "Error" },
 };
 
 function getStatusKey(meeting: Meeting): string {
@@ -41,216 +38,209 @@ function formatMeetingDateTime(iso: string) {
   });
 }
 
-export function MeetingCard({ meeting, onDelete, onClick, onRetry, retrying }: MeetingCardProps) {
+function initialsFromParticipant(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    const a = parts[0][0];
+    const b = parts[1][0];
+    if (a && b) return `${a}${b}`.toUpperCase();
+  }
+  const t = parts[0] ?? "";
+  return (t.slice(0, 2) || "?").toUpperCase();
+}
+
+/** Pipeline still running or failed — user should always see ⋮ menu (Figma home / analyzing tab). */
+function showPersistentMenu(meeting: Meeting): boolean {
+  return isProcessing(meeting.status) || meeting.status === "error";
+}
+
+export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const statusKey = getStatusKey(meeting);
   const style = STATUS_STYLE[statusKey];
-  const contactHref = supportContactHref();
-  const contactNewTab = supportContactOpensInNewTab();
-  const supportEmail = supportEmailAddress();
   const errorHint =
     meeting.status === "error" ? userFacingPipelineError(meeting.error_message) : null;
+  const pipelineMenu = showPersistentMenu(meeting);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node))
-        setMenuOpen(false);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
     }
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
   const participants = meeting.participants ?? [];
-  const visibleParticipants = participants.slice(0, 3);
-  const extraCount = Math.max(0, participants.length - 3);
+  const participantCountLabel =
+    participants.length === 0
+      ? "No participants"
+      : `${participants.length} participant${participants.length !== 1 ? "s" : ""}`;
+  const primaryParticipant = participants[0]?.trim() ?? "";
   const actionCount = meeting.action_items_count ?? 0;
   const dateStr = formatMeetingDateTime(meeting.meeting_date ?? meeting.created_at);
   const isErr = meeting.status === "error";
 
+  async function confirmDelete(): Promise<void> {
+    if (!onDelete) return;
+    setDeleteBusy(true);
+    try {
+      const ok = await Promise.resolve(onDelete(meeting.id));
+      if (ok) setDeleteConfirmOpen(false);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  const MenuIcon = pipelineMenu ? Menu : MoreVertical;
+
   return (
     <>
-      {deleteConfirmOpen && (
+      <MeetingDeleteConfirmModal
+        meeting={meeting}
+        open={deleteConfirmOpen}
+        confirming={deleteBusy}
+        onClose={() => {
+          if (deleteBusy) return;
+          setDeleteConfirmOpen(false);
+        }}
+        onConfirm={() => void confirmDelete()}
+      />
+
+      <div
+        className="group relative flex cursor-pointer flex-col rounded-xl border border-[#e2e8f0] bg-white p-[25px] transition-all hover:border-[#2e5c8a]/30 hover:shadow-md"
+        onClick={() => {
+          if (isErr) {
+            router.push(`/meetings/${meeting.id}/analysis-error`);
+            return;
+          }
+          onClick?.();
+        }}
+      >
         <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-          role="presentation"
+          ref={menuRef}
+          className="absolute right-3 top-3 z-10"
           onClick={(e) => e.stopPropagation()}
         >
           <button
             type="button"
-            aria-label="Close delete confirmation"
-            className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
-            onClick={(e) => {
-              e.stopPropagation();
-              setDeleteConfirmOpen(false);
-            }}
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="delete-meeting-title"
-            aria-describedby="delete-meeting-desc"
-            className="relative z-[101] w-full max-w-[400px] rounded-2xl bg-white p-6 shadow-xl mx-4"
-            onClick={(e) => e.stopPropagation()}
+            aria-label="Open meeting actions menu"
+            onClick={() => setMenuOpen((v) => !v)}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540] ${
+              pipelineMenu ? "opacity-100" : "opacity-0 hover:opacity-100 group-hover:opacity-100"
+            }`}
           >
-            <div className="flex gap-4">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#fef2f2]">
-                <Trash2 className="h-5 w-5 text-red-500" strokeWidth={2} />
-              </div>
-              <div className="min-w-0 flex-1 pt-0.5">
-                <h2 id="delete-meeting-title" className="text-[15px] font-bold leading-snug text-[#0a2540]">
-                  Delete this meeting?
-                </h2>
-                <p id="delete-meeting-desc" className="mt-1 text-[13px] leading-relaxed text-[#64748b]">
-                  This action cannot be undone.
-                </p>
-              </div>
+            <MenuIcon className="h-5 w-5 shrink-0" strokeWidth={2} />
+          </button>
+          {menuOpen && (
+            <div
+              className={`absolute right-0 top-full z-20 mt-1 overflow-hidden rounded-lg border border-[#e2e8f0] bg-white shadow-lg ${
+                isErr ? "min-w-[11rem]" : "min-w-[8.5rem]"
+              }`}
+            >
+              {isErr ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setMenuOpen(false);
+                    router.push(`/meetings/${meeting.id}/analysis-error`);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#0a2540] transition-colors hover:bg-[#f8fafc]"
+                >
+                  <Eye className="h-3.5 w-3.5 shrink-0" />
+                  View error
+                </button>
+              ) : null}
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setMenuOpen(false);
+                    setDeleteConfirmOpen(true);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 transition-colors hover:bg-red-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Delete
+                </button>
+              )}
             </div>
-            <div className="mt-6 flex gap-3">
-              <button
-                type="button"
-                onClick={() => setDeleteConfirmOpen(false)}
-                className="h-11 flex-1 rounded-xl border-2 border-[#e2e8f0] bg-white text-[14px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc]"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setDeleteConfirmOpen(false);
-                  onDelete?.(meeting.id);
-                }}
-                className="h-11 flex-1 rounded-xl bg-red-600 text-[14px] font-bold text-white transition-opacity hover:opacity-90"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
+          )}
         </div>
-      )}
 
-    <div
-      className="group relative flex cursor-pointer flex-col rounded-xl border border-[#e2e8f0] bg-white p-5 transition-all hover:border-[#2e5c8a]/30 hover:shadow-md"
-      onClick={onClick}
-    >
-      {/* 3-dot menu */}
-      <div ref={menuRef} className="absolute right-3 top-3" onClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          onClick={() => setMenuOpen((v) => !v)}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-[#94a3b8] opacity-0 group-hover:opacity-100 hover:bg-[#f8fafc] hover:text-[#64748b] transition-all"
-        >
-          <MoreVertical className="h-4 w-4" />
-        </button>
-        {menuOpen && (
-          <div className={`absolute right-0 top-full z-20 mt-1 overflow-hidden rounded-lg border border-[#e2e8f0] bg-white shadow-lg ${isErr ? "w-44" : "w-28"}`}>
-            {isErr && onRetry && (
-              <button
-                type="button"
-                disabled={retrying}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setMenuOpen(false);
-                  onRetry(meeting.id);
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#0a2540] hover:bg-[#f8fafc] transition-colors disabled:opacity-50"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${retrying ? "animate-spin" : ""}`} />
-                Try again
-              </button>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span
+            className={`rounded-[6px] px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.5px] ${style.bg} ${style.text}`}
+          >
+            {statusKey === "analyzing" || statusKey === "error" ? (
+              style.label
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+                {style.label}
+              </span>
             )}
-            {isErr && (
-              <a
-                href={contactHref}
-                {...(contactNewTab ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-                title={contactNewTab ? `Open Gmail to ${supportEmail}` : `Email ${supportEmail}`}
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-[#0a2540] hover:bg-[#f8fafc] transition-colors"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Mail className="h-3.5 w-3.5 shrink-0" />
-                Contact support
-              </a>
-            )}
-            {onDelete && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setMenuOpen(false);
-                  setDeleteConfirmOpen(true);
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
-              >
-                <Trash2 className="h-3.5 w-3.5" /> Delete
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 상단: 상태 배지 + 회의 유형 */}
-      <div className="flex items-center gap-2 mb-3">
-        <span className={`flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.5px] ${style.bg} ${style.text}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
-          {style.label}
-        </span>
-        {meeting.meeting_type?.trim() && (
-          <span className="rounded-[6px] bg-[#f8fafc] border border-[#e2e8f0] px-2 py-0.5 text-[11px] text-[#64748b] font-medium">
-            {formatMeetingTypeLabel(meeting.meeting_type)}
           </span>
-        )}
-      </div>
+          {meeting.meeting_type?.trim() && (
+            <span className="rounded-[6px] border border-[#e2e8f0] bg-[#f8fafc] px-2 py-0.5 text-[11px] font-medium text-[#64748b]">
+              {formatMeetingTypeLabel(meeting.meeting_type)}
+            </span>
+          )}
+        </div>
 
-      {/* 제목 */}
-      <p className="text-[15px] font-bold leading-snug text-[#0a2540] line-clamp-2 mb-1">
-        {meeting.title}
-      </p>
+        <p className="mb-1 mt-2 line-clamp-2 text-[15.6px] font-bold leading-snug text-[#0a2540]">
+          {meeting.title}
+        </p>
 
-      {/* 날짜 */}
-      <p className="text-[12px] text-[#94a3b8] mb-2">{dateStr}</p>
+        <p className="mb-2 pb-2 text-[12.2px] text-[#64748b]">{dateStr}</p>
 
-      {errorHint && (
-        <p className="mb-3 line-clamp-2 text-[12px] leading-snug text-red-600">{errorHint}</p>
-      )}
+        {errorHint ? (
+          <p className="mb-3 line-clamp-2 text-[12px] leading-snug text-red-600">{errorHint}</p>
+        ) : null}
 
-      {/* 구분선 + 메타 */}
-      <div className="border-t border-[#f1f5f9] pt-3 flex items-center gap-3">
-        {/* 액션 아이템 개수 */}
-        <span className="flex items-center gap-1 text-[12px] text-[#64748b]">
-          <span className="text-[11px]">✅</span>
-          <span>{actionCount} item{actionCount !== 1 ? "s" : ""}</span>
-        </span>
+        <div className="flex flex-wrap items-center gap-[15px] border-t border-[#f1f5f9] pt-[17px]">
+          <span className="flex items-center gap-1.5 text-[12px] text-[#64748b]">
+            <span className="text-[15px]" aria-hidden>
+              👥
+            </span>
+            <span>{participantCountLabel}</span>
+          </span>
 
-        {/* 참여자 */}
-        {participants.length > 0 ? (
-          <div className="flex items-center gap-1 ml-1">
-            {visibleParticipants.map((p, i) => (
+          {statusKey !== "analyzing" && statusKey !== "error" ? (
+          <span className="flex items-center gap-1.5 text-[12px] text-[#64748b]">
+            <span className="text-[11px]">✅</span>
+            <span>
+              {actionCount} item{actionCount !== 1 ? "s" : ""}
+            </span>
+          </span>
+          ) : null}
+
+          {primaryParticipant ? (
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
               <div
-                key={i}
-                title={p}
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#e3f2fd] text-[10px] font-bold text-[#2e5c8a] border border-white -ml-1 first:ml-0"
+                className="flex size-4 shrink-0 items-center justify-center rounded-[18px] bg-gradient-to-br from-[#4284f4] to-[#34a853] text-[8px] font-bold leading-none text-white"
+                aria-hidden
               >
-                {p[0]?.toUpperCase() ?? "?"}
+                {initialsFromParticipant(primaryParticipant)}
               </div>
-            ))}
-            {extraCount > 0 && (
-              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#f1f5f9] text-[10px] font-bold text-[#64748b] border border-white -ml-1">
-                +{extraCount}
-              </div>
-            )}
-          </div>
-        ) : (
-          <span className="flex items-center gap-1 text-[12px] text-[#94a3b8]">
-            <span className="text-[11px]">👥</span>
-            <span>No participants</span>
-          </span>
-        )}
+              <span className="truncate pl-0.5 text-[12px] text-[#64748b]" title={primaryParticipant}>
+                {primaryParticipant}
+              </span>
+              {participants.length > 1 ? (
+                <span className="shrink-0 text-[11px] text-[#94a3b8]">
+                  +{participants.length - 1}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
-    </div>
     </>
   );
 }
