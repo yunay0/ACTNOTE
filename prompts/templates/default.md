@@ -14,7 +14,7 @@ Confidence (0.0-1.0): how certain this is a real action item.
 <0.5: Don't include
 
 Title: max 50 chars, English only
-Summary: 3-5 sentences
+Summary: 3-5 sentences in English.
 
 [Decisions — required JSON array]
 Fill "decisions" with every explicit group agreement, approved choice, or resolved question (one short English sentence each).
@@ -22,50 +22,47 @@ Examples: agreed deadlines, chosen approach, scope approval.
 If the transcript contains no clear decisions, output [].
 Never omit the "decisions" key; never use null.
 
-[Atomic Decomposition 원칙]
-액션 아이템 추출 시 반드시 다음 5가지 원자 사실로 분해하세요:
-- content: 무엇을 할 것인지 (동사+목적어 형태로 명확하게)
-- assignee: 누가 할 것인지 (발화에서 명시된 경우만, 없으면 null)
-- due_date: 언제까지 할 것인지 (발화에서 명시된 경우만, 없으면 null)
-- depends_on: 선행 조건이 있는지 (있으면 관련 액션 내용 요약, 없으면 null)
-- confidence: 이게 진짜 액션인지 확신 (0.0~1.0)
+[Atomic decomposition]
+For each action item, capture exactly these atomic facts:
 
-transcript에 명시적으로 등장한 내용만 추출하세요.
-추론하거나 일반 상식을 동원하지 마세요.
-명시적이지 않으면 confidence < 0.7로 표시하세요.
+- content: what will be done (clear verb–object wording; English)
+- assignee: who owns it — only when explicitly spoken; otherwise null
+- due_date: by when — only when explicitly spoken; otherwise null
+- depends_on: prior blocker or prerequisite (short English summary) or null
+- confidence: how sure this is a real action (0.0–1.0)
 
-[관련 문서 언급 추출 / Referenced Document Detection]
+Extract ONLY what explicitly appears in the transcript. Do not guess from common sense.
+When uncertain, score confidence below 0.7.
 
-회의 중 언급된 문서, 자료, 참조 항목을 식별하세요.
-Identify documents, materials, or references mentioned in the meeting.
+[Referenced document detection]
 
-추출 대상 (Extract):
-- 문서 종류 / Document types:
-  PRD, spec, brief, proposal, memo, report, 기획서, 명세서, 제안서, 보고서
-- 디자인 / Design:
-  design, mockup, wireframe, prototype, 시안, 목업, 디자인, 프로토타입
-- 데이터·분석 / Data & Analysis:
-  data, analysis, dashboard, report, 자료, 분석, 리포트, 통계
-- 코드·레포 / Code & Repo:
-  code, repo, repository, branch, PR, 코드, 레포, 브랜치
-- 일반 참조 / General references:
-  file, attachment, link, reference, 파일, 첨부, 링크
+Identify documents, materials, or artifacts mentioned explicitly in speech.
 
-참조 패턴 (Reference patterns):
-- "지난번 X" / "last X" / "previous X"
-- "X v2" / "X version 2" / "X 두 번째"
-- "X 문서" / "X document"
-- "위에 언급한 X" / "the X mentioned above"
-- "팀 X" / "team X"
+Eligible types:
 
-추출 형식:
-- 3~5단어 이내 키워드로 추출 (검색 쿼리로 사용)
-- 발화에 명시적으로 등장한 것만 (추론 금지)
-- 일반화 금지 ("회의 자료" 같은 일반 명사는 제외)
-- 최대 10개
+- Documents: PRD, spec, brief, proposal, memo, report, roadmap
+- Design: design, mockup, wireframe, prototype
+- Data: data, analysis, dashboard, metric report
+- Code: repo, repository, branch, PR, codebase
+- General: file, attachment, link, reference
 
-좋은 예시: "PRD v2", "Q3 roadmap", "프로젝트 기획서", "와이어프레임 v3"
-나쁜 예시: "문서" (너무 일반적), "회의 자료" (모호함), "지난주에 본 거" (구체적이지 않음)
+Patterns to match (examples):
+
+- "last week's X", "previous X", "last X"
+- "X v2", "second version of X"
+- "the X doc / document"
+- "X mentioned earlier"
+- "team X"
+
+Format rules:
+
+- 3–5 words max per phrase (usable as search labels)
+- Only what was explicitly spoken; no inference
+- Avoid vague labels ("the document", "meeting notes")
+- At most 10 entries
+
+Good: "PRD v2", "Q3 roadmap", "architecture RFC"
+Bad: "document", "the deck", "that thing from last week"
 
 Output schema:
 {
@@ -81,5 +78,5 @@ Output schema:
       "confidence": 0.85
     }
   ],
-  "referenced_documents": ["기획서 v2", "PRD 수정 건"]
+  "referenced_documents": ["PRD v2", "onboarding RFC"]
 }

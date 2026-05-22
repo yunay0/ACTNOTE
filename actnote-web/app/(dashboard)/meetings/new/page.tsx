@@ -16,10 +16,18 @@ import {
 import { workspaceMemberDisplayName } from "@/lib/user/member-display";
 import { RecordingUploadErrorModal } from "@/components/meetings/RecordingUploadErrorModal";
 import { MEETING_TYPE_OPTIONS } from "@/lib/meetings/meeting-types";
+import { submissionLooksLikeNetworkFailure } from "@/lib/meetings/submission-network-errors";
 
 const MAX_SIZE_MB = 50;
 
 interface Participant { id: string; value: string; }
+
+/** Resume generate flow after a network error (insert may have succeeded). */
+interface PipelineCheckpoint {
+  meetingId: string;
+  audioPath: string;
+  storageUploadDone: boolean;
+}
 
 export default function NewMeetingPage() {
   const router = useRouter();
@@ -45,22 +53,16 @@ export default function NewMeetingPage() {
     null
   );
   const [loading, setLoading] = useState(false);
-  const [processingModal, setProcessingModal] = useState(false);
-  const [doneModal, setDoneModal] = useState(false);
+  /** Figma 144:7788 — transport failure after Generate / Start AI Analysis. */
+  const [networkErrorModalOpen, setNetworkErrorModalOpen] = useState(false);
+  /** Figma 144:7769 — trigger succeeded; countdown to Meetings. */
+  const [analysisInitiatedOpen, setAnalysisInitiatedOpen] = useState(false);
+  const [analysisCountdownSecs, setAnalysisCountdownSecs] = useState(3);
+  /** Figma — confirm review before inserting meeting + pipeline (142:7434 / 142:7570). */
+  const [confirmAnalysisModal, setConfirmAnalysisModal] = useState(false);
   const [leaveModal, setLeaveModal] = useState(false);
   const [pendingNavTarget, setPendingNavTarget] = useState<string | null>(null);
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pipelineMeetingIdRef = useRef<string | null>(null);
-  const pipelinePollStartedAtRef = useRef<number | null>(null);
-
-  const stopPipelinePoll = useCallback(() => {
-    if (pollIntervalRef.current != null) {
-      clearInterval(pollIntervalRef.current);
-      pollIntervalRef.current = null;
-    }
-    pipelineMeetingIdRef.current = null;
-    pipelinePollStartedAtRef.current = null;
-  }, []);
+  const pipelineCheckpointRef = useRef<PipelineCheckpoint | null>(null);
 
   const [memberOptions, setMemberOptions] = useState<{ user_id: string; label: string; email: string }[]>([]);
   const [memberDropdownOpen, setMemberDropdownOpen] = useState(false);
@@ -173,9 +175,27 @@ export default function NewMeetingPage() {
     };
   }, [workspaceId]);
 
-  useEffect(() => () => stopPipelinePoll(), [stopPipelinePoll]);
+  useEffect(() => {
+    if (!analysisInitiatedOpen) return undefined;
+    setAnalysisCountdownSecs(3);
+    let secs = 3;
+    const id = window.setInterval(() => {
+      secs -= 1;
+      setAnalysisCountdownSecs(Math.max(secs, 0));
+      if (secs <= 0) {
+        window.clearInterval(id);
+        router.push("/meetings");
+        setAnalysisInitiatedOpen(false);
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [analysisInitiatedOpen, router]);
 
-  // 헤더 백버튼 대신 사용할 safe navigate
+  function goMeetingsNow() {
+    setAnalysisInitiatedOpen(false);
+    router.push("/meetings");
+  }
+
   function safeNavigate(href: string) {
     if (isDirty) {
       setPendingNavTarget(href);
@@ -187,9 +207,9 @@ export default function NewMeetingPage() {
 
   function confirmLeave() {
     setLeaveModal(false);
-    stopPipelinePoll();
-    setProcessingModal(false);
-    setDoneModal(false);
+    setConfirmAnalysisModal(false);
+    setNetworkErrorModalOpen(false);
+    setAnalysisInitiatedOpen(false);
     if (pendingNavTarget) router.push(pendingNavTarget);
   }
 
@@ -227,40 +247,73 @@ export default function NewMeetingPage() {
     [handleFileSelect]
   );
 
-  async function handleSubmit() {
+  /** Validates the form; surfaces issues via alerts / upload modal. Returns true only when modal can open. */
+  function validateBeforeAnalysisConfirm(): boolean {
     if (!title.trim() || !datetime || !file) {
-      setAlertMsg("Please fill in all required fields: Meeting Title, Date & Time, and Recording.");
-      return;
+      setAlertMsg(
+        "Please fill in all required fields: Meeting Title, Date & Time, and Recording."
+      );
+      return false;
     }
     if (!parseDatetimeLocal(datetime)) {
       setAlertMsg("Please select a valid date and time for the meeting.");
-      return;
+      return false;
     }
     if (!meetingType.trim()) {
       setAlertMsg("Please select a meeting type.");
-      return;
+      return false;
     }
     if (participants.length === 0) {
       setAlertMsg("Please add at least one participant.");
-      return;
+      return false;
     }
     if (!responsibleUserId) {
       setAlertMsg("Please select a responsible person for this meeting.");
-      return;
+      return false;
     }
     const fileIssue = getRecordingFileIssue(file, MAX_SIZE_MB);
     if (fileIssue) {
       setRecordingUploadIssue(fileIssue);
-      return;
+      return false;
     }
+    return true;
+  }
+
+  function openAnalysisConfirmModal() {
+    if (loading || !canSubmit) return;
+    if (!validateBeforeAnalysisConfirm()) return;
+    setConfirmAnalysisModal(true);
+  }
+
+  function openNetworkFailureModal() {
+    setLoading(false);
+    setUploading(false);
+    setNetworkErrorModalOpen(true);
+  }
+
+  async function executeMeetingCreateAndPipeline(options?: { resume?: boolean }) {
+    const resume = options?.resume === true;
+
+    setConfirmAnalysisModal(false);
+    if (!file) return;
+
+    if (!resume) {
+      pipelineCheckpointRef.current = null;
+    }
+
     setLoading(true);
+    setNetworkErrorModalOpen(false);
 
     try {
       const supabase = createClient();
-
-      // 유저 확인
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { router.push("/login"); return; }
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        setLoading(false);
+        router.push("/login");
+        return;
+      }
 
       if (!workspaceId) {
         setAlertMsg("No workspace selected. Please pick a workspace and try again.");
@@ -268,172 +321,181 @@ export default function NewMeetingPage() {
         return;
       }
 
-      // 1. meetings 테이블에 row 먼저 삽입 (ID 확보)
-      const { data: meetingRow, error: insertError } = await (supabase as any)
-        .from("meetings")
-        .insert({
-          title: title.trim(),
-          status: "uploaded",
-          workspace_id: workspaceId,
-          created_by: user.id,
-          meeting_date: new Date(datetime).toISOString(),
-          audio_file_size_bytes: file.size,
-          meeting_type: meetingType.trim(),
-          description: description.trim() || null,
-          responsible_user_id: responsibleUserId,
-          participants: participants.map((p) => p.value),
-        })
-        .select("id")
-        .single();
-
-      if (insertError || !meetingRow) {
-        setAlertMsg(`Failed to create meeting: ${insertError?.message}`);
-        setLoading(false);
-        return;
-      }
-
-      const meetingId = meetingRow.id as string;
-
-      // 2. Storage에 파일 업로드 (경로: {meeting_id}/audio.{ext})
       const ext = file.name.split(".").pop() ?? "wav";
-      const audioPath = `${meetingId}/audio.${ext}`;
-      setUploading(true);
-      setUploadProgress(0);
+      let meetingId: string;
+      let audioPath: string;
 
-      const { data: { session } } = await supabase.auth.getSession();
-      const accessToken = session?.access_token ?? "";
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+      const useCheckpoint =
+        resume && pipelineCheckpointRef.current != null ? pipelineCheckpointRef.current : null;
 
-      const uploadError = await new Promise<string | null>((resolve) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("POST", `${supabaseUrl}/storage/v1/object/meetings/${audioPath}`);
-        xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
-        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-        xhr.setRequestHeader("x-upsert", "false");
+      if (useCheckpoint) {
+        meetingId = useCheckpoint.meetingId;
+        audioPath = useCheckpoint.audioPath;
+      } else {
+        const { data: meetingRow, error: insertError } = await (supabase as any)
+          .from("meetings")
+          .insert({
+            title: title.trim(),
+            status: "uploaded",
+            workspace_id: workspaceId,
+            created_by: user.id,
+            meeting_date: new Date(datetime).toISOString(),
+            audio_file_size_bytes: file.size,
+            meeting_type: meetingType.trim(),
+            description: description.trim() || null,
+            responsible_user_id: responsibleUserId,
+            participants: participants.map((p) => p.value),
+          })
+          .select("id")
+          .single();
 
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            setUploadProgress(Math.round((e.loaded / e.total) * 100));
+        if (insertError || !meetingRow) {
+          const raw =
+            typeof insertError?.message === "string"
+              ? insertError.message
+              : String(insertError ?? "Unknown insert error");
+          setLoading(false);
+          if (submissionLooksLikeNetworkFailure(raw)) {
+            openNetworkFailureModal();
+          } else {
+            setAlertMsg(`Failed to create meeting: ${insertError?.message ?? "Unknown error"}`);
           }
-        };
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) resolve(null);
-          else {
-            try {
-              const body = JSON.parse(xhr.responseText);
-              resolve(body.message ?? xhr.statusText);
-            } catch {
-              resolve(xhr.statusText);
-            }
-          }
-        };
-        xhr.onerror = () => resolve("Network error during upload");
-        xhr.send(file);
-      });
+          return;
+        }
 
-      setUploading(false);
-
-      if (uploadError) {
-        setAlertMsg(`Upload failed: ${uploadError}`);
-        setLoading(false);
-        return;
+        meetingId = meetingRow.id as string;
+        audioPath = `${meetingId}/audio.${ext}`;
+        pipelineCheckpointRef.current = {
+          meetingId,
+          audioPath,
+          storageUploadDone: false,
+        };
       }
 
-      // 3. audio_file_url 업데이트
+      const ckUpload = pipelineCheckpointRef.current;
+      const needUpload = !(ckUpload?.storageUploadDone);
+
+      const upsertHeader =
+        resume && ckUpload && !ckUpload.storageUploadDone ? "true" : "false";
+
+      if (needUpload) {
+        setUploading(true);
+        setUploadProgress(0);
+
+        const { data: { session } } = await supabase.auth.getSession();
+        const accessToken = session?.access_token ?? "";
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+
+        const uploadErrText = await new Promise<string | null>((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", `${supabaseUrl}/storage/v1/object/meetings/${audioPath}`);
+          xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+          xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+          xhr.setRequestHeader("x-upsert", upsertHeader);
+
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              setUploadProgress(Math.round((e.loaded / e.total) * 100));
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve(null);
+            else {
+              try {
+                const body = JSON.parse(xhr.responseText);
+                resolve(body.message ?? xhr.statusText);
+              } catch {
+                resolve(xhr.statusText);
+              }
+            }
+          };
+          xhr.onerror = () => resolve("Network error during upload");
+          xhr.send(file);
+        });
+
+        setUploading(false);
+
+        if (uploadErrText) {
+          setLoading(false);
+          const net =
+            submissionLooksLikeNetworkFailure(uploadErrText) ||
+            uploadErrText === "Network error during upload";
+          if (net) openNetworkFailureModal();
+          else setAlertMsg(`Upload failed: ${uploadErrText}`);
+          return;
+        }
+
+        if (pipelineCheckpointRef.current) {
+          pipelineCheckpointRef.current = {
+            ...pipelineCheckpointRef.current,
+            storageUploadDone: true,
+          };
+        }
+      }
+
       const { data: urlData } = supabase.storage.from("meetings").getPublicUrl(audioPath);
-      await (supabase as any)
+      const { error: urlUpdateErr } = await (supabase as any)
         .from("meetings")
         .update({ audio_file_url: urlData?.publicUrl ?? audioPath })
         .eq("id", meetingId);
 
-      // 4. Modal 파이프라인 트리거 (Next 라우트가 인증 후 Modal 엔드포인트 호출)
-      const triggerRes = await fetch("/api/trigger-pipeline", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          meeting_id: meetingId,
-          workspace_id: workspaceId,
-          audio_path: audioPath,
-        }),
-      });
-      const triggerBody = (await triggerRes.json().catch(() => ({}))) as { error?: string };
-      if (!triggerRes.ok) {
-        setAlertMsg(
-          triggerBody.error ??
-            `Pipeline trigger failed (${triggerRes.status}). Check MODAL_PIPELINE_TRIGGER_URL and MODAL_TRIGGER_SECRET.`
-        );
+      if (urlUpdateErr) {
+        const msg =
+          typeof urlUpdateErr.message === "string"
+            ? urlUpdateErr.message
+            : JSON.stringify(urlUpdateErr);
         setLoading(false);
+        if (submissionLooksLikeNetworkFailure(msg)) openNetworkFailureModal();
+        else setAlertMsg(`Failed to save recording URL: ${msg}`);
         return;
       }
 
+      let triggerRes: Response;
+      try {
+        triggerRes = await fetch("/api/trigger-pipeline", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            meeting_id: meetingId,
+            workspace_id: workspaceId,
+            audio_path: audioPath,
+          }),
+        });
+      } catch (e) {
+        setLoading(false);
+        const m = e instanceof Error ? e.message : String(e);
+        if (submissionLooksLikeNetworkFailure(m, e)) openNetworkFailureModal();
+        else setAlertMsg(`Pipeline trigger failed: ${m}`);
+        return;
+      }
+
+      const triggerBody = (await triggerRes.json().catch(() => ({}))) as { error?: string };
+      if (!triggerRes.ok) {
+        setLoading(false);
+        const fb =
+          triggerBody.error ??
+          `Pipeline trigger failed (${triggerRes.status}). Check MODAL_PIPELINE_TRIGGER_URL and MODAL_TRIGGER_SECRET.`;
+        if (submissionLooksLikeNetworkFailure(fb)) openNetworkFailureModal();
+        else setAlertMsg(fb);
+        return;
+      }
+
+      pipelineCheckpointRef.current = null;
       setLoading(false);
-      setProcessingModal(true);
-      setDoneModal(false);
-      stopPipelinePoll();
-      pipelineMeetingIdRef.current = meetingId;
-      pipelinePollStartedAtRef.current = Date.now();
-
-      const POLL_MS = 4000;
-      const MAX_WAIT_MS = 45 * 60 * 1000;
-
-      const pollOnce = async () => {
-        const id = pipelineMeetingIdRef.current;
-        const started = pipelinePollStartedAtRef.current;
-        if (!id || started == null) return;
-
-        if (Date.now() - started > MAX_WAIT_MS) {
-          stopPipelinePoll();
-          setProcessingModal(false);
-          setAlertMsg(
-            "Analysis is still running. Open Meetings to see live progress — it may take several more minutes."
-          );
-          return;
-        }
-
-        const sb = createClient();
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data, error } = await (sb as any)
-          .from("meetings")
-          .select("status, error_message")
-          .eq("id", id)
-          .maybeSingle();
-
-        if (error || !data) return;
-
-        const s = data.status as string;
-        if (s === "ready" || s === "published") {
-          stopPipelinePoll();
-          setProcessingModal(false);
-          setDoneModal(true);
-          return;
-        }
-        if (s === "error") {
-          stopPipelinePoll();
-          setProcessingModal(false);
-          const em =
-            typeof data.error_message === "string" && data.error_message.trim() ?
-              data.error_message
-            : "Analysis failed. Open the meeting from Meetings for details or retry.";
-          setAlertMsg(em);
-        }
-      };
-
-      void pollOnce();
-      pollIntervalRef.current = setInterval(() => {
-        void pollOnce();
-      }, POLL_MS);
-
+      setAnalysisInitiatedOpen(true);
     } catch (err) {
-      setAlertMsg(`Unexpected error: ${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
       setLoading(false);
+      setUploading(false);
+      if (submissionLooksLikeNetworkFailure(msg, err)) openNetworkFailureModal();
+      else setAlertMsg(`Unexpected error: ${msg}`);
     }
   }
 
-  function closeAndGo() {
-    stopPipelinePoll();
-    setProcessingModal(false);
-    setDoneModal(false);
-    router.push("/meetings");
+  function tryAgainAfterNetworkFailure() {
+    void executeMeetingCreateAndPipeline({
+      resume: pipelineCheckpointRef.current != null,
+    });
   }
 
   return (
@@ -472,6 +534,31 @@ export default function NewMeetingPage() {
         </div>
       )}
 
+      {/* Ready to analysis? — Figma 142:7434 / 142:7570 */}
+      {confirmAnalysisModal && (
+        <AnalysisConfirmModal
+          meetingTitle={title.trim()}
+          meetingTypeLabel={meetingTypeLabelFromValue(meetingType)}
+          dateTimeDisplay={formatDatetimeLocalEn(datetime) || "—"}
+          description={
+            description.trim()
+              ? description.trim().length > 220
+                ? `${description.trim().slice(0, 220)}…`
+                : description.trim()
+              : "—"
+          }
+          participantsLine={
+            participants.length > 0 ? participants.map((p) => p.value).join(", ") : "—"
+          }
+          responsibleLabel={
+            memberOptions.find((o) => o.user_id === responsibleUserId)?.label ?? "—"
+          }
+          recordingFileName={file?.name ?? "—"}
+          onStay={() => setConfirmAnalysisModal(false)}
+          onStart={() => void executeMeetingCreateAndPipeline()}
+        />
+      )}
+
       {recordingUploadIssue && (
         <RecordingUploadErrorModal
           issue={recordingUploadIssue}
@@ -502,59 +589,21 @@ export default function NewMeetingPage() {
         </div>
       )}
 
-      {/* Processing modal */}
-      {processingModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="relative w-full max-w-sm rounded-2xl bg-white p-7 shadow-xl mx-4">
-            <button onClick={closeAndGo} className="absolute right-4 top-4 text-[#94a3b8] hover:text-[#64748b]">
-              <X className="h-4 w-4" />
-            </button>
-            <p className="mb-5 text-xs font-semibold text-[#94a3b8]">Notice</p>
-            <div className="mb-5 flex items-center gap-3 rounded-xl bg-[#f8fafc] px-4 py-3">
-              <span className="animate-spin text-lg">⏳</span>
-              <span className="text-sm font-semibold text-[#0a2540]">AI is processing your recording...</span>
-            </div>
-            <p className="mb-1 text-center text-sm font-medium text-[#0a2540]">Estimated time: ~5 minutes</p>
-            <p className="mb-7 text-center text-xs text-[#64748b]">You can close this window — processing will continue.</p>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={closeAndGo}
-                className="flex items-center justify-center gap-2 rounded-xl border-2 border-[#e2e8f0] py-3 text-sm font-semibold text-[#0a2540] hover:border-[#2e5c8a] hover:bg-[#f8fafc] transition-all"
-              >
-                🔔 Push notification
-              </button>
-              <button
-                onClick={closeAndGo}
-                className="flex items-center justify-center gap-2 rounded-xl border-2 border-[#e2e8f0] py-3 text-sm font-semibold text-[#0a2540] hover:border-[#2e5c8a] hover:bg-[#f8fafc] transition-all"
-              >
-                ✉️ Email me
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Network / transport error — Figma 144:7788 */}
+      {networkErrorModalOpen && (
+        <NetworkSubmissionErrorModal
+          onDismiss={() => setNetworkErrorModalOpen(false)}
+          onTryAgain={tryAgainAfterNetworkFailure}
+          tryAgainBusy={loading}
+        />
       )}
 
-      {/* Done modal */}
-      {doneModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="relative w-full max-w-sm rounded-2xl bg-white p-7 shadow-xl mx-4">
-            <button onClick={closeAndGo} className="absolute right-4 top-4 text-[#94a3b8] hover:text-[#64748b]">
-              <X className="h-4 w-4" />
-            </button>
-            <p className="mb-5 text-xs font-semibold text-[#94a3b8]">Notice</p>
-            <div className="mb-5 flex items-center gap-3 rounded-xl bg-green-50 border border-green-200 px-4 py-3">
-              <span className="text-lg">✅</span>
-              <span className="text-sm font-semibold text-green-700">AI Analysis Complete</span>
-            </div>
-            <p className="mb-6 text-center text-sm text-[#0a2540]">Your meeting notes are ready.</p>
-            <button
-              onClick={closeAndGo}
-              className="w-full flex items-center justify-center gap-2 rounded-xl border border-[#e2e8f0] py-3 text-sm font-semibold text-[#0a2540] hover:bg-[#f8fafc] transition-colors"
-            >
-              ✅ View Results
-            </button>
-          </div>
-        </div>
+      {/* Analysis started — Figma 144:7769 */}
+      {analysisInitiatedOpen && (
+        <AnalysisInitiatedSuccessModal
+          countdownSecs={analysisCountdownSecs}
+          onGoMeetingsNow={goMeetingsNow}
+        />
       )}
 
       {/* Main content */}
@@ -845,7 +894,7 @@ export default function NewMeetingPage() {
           </button>
           <button
             type="button"
-            onClick={handleSubmit}
+            onClick={openAnalysisConfirmModal}
             disabled={loading || !canSubmit}
             title={
               !canSubmit && !loading
@@ -862,6 +911,253 @@ export default function NewMeetingPage() {
       </div>{/* end main content */}
     </div>
   );
+}
+
+/** Figma 144:7788 — network / connection failure while submitting. */
+function NetworkSubmissionErrorModal({
+  onDismiss,
+  onTryAgain,
+  tryAgainBusy,
+}: {
+  onDismiss: () => void;
+  onTryAgain: () => void;
+  tryAgainBusy: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(10,37,64,0.6)] px-4 py-8 backdrop-blur-[2px]">
+      <div
+        className="relative w-full max-w-[480px] rounded-2xl bg-white p-8 pt-14 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="network-error-title"
+      >
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="absolute right-4 top-5 text-xl font-normal leading-none text-[#64748b] hover:text-[#0a2540]"
+          aria-label="Close"
+        >
+          ×
+        </button>
+
+        <div className="flex flex-col items-center">
+          <div className="flex size-16 shrink-0 items-center justify-center rounded-full bg-[#fef2f2] text-[29px]">
+            <span aria-hidden>❌</span>
+          </div>
+
+          <div className="w-full pb-px pt-3 text-center">
+            <h2 id="network-error-title" className="text-2xl font-bold text-[#0a2540]">
+              Check Your Connection
+            </h2>
+          </div>
+
+          <div className="mt-3 w-full rounded-[10px] border border-[#fee2e2] bg-[#fef2f2] px-[17px] pb-6 pt-7">
+            <div className="flex gap-1.5">
+              <span className="mt-0.5 shrink-0 text-[11px] text-[#dc2626]" aria-hidden>
+                ⚠️
+              </span>
+              <p className="text-left text-[13.6px] font-bold leading-normal text-[#dc2626]">
+                We couldn&apos;t start the analysis due to a network issue.
+              </p>
+            </div>
+            <ul className="mt-2 list-disc space-y-2 pl-[22px] text-[13.6px] leading-normal text-[#991b1b]">
+              <li>Please check your internet connection.</li>
+              <li>And try again in a moment.</li>
+            </ul>
+          </div>
+
+          <div className="mt-3 flex w-full justify-center pt-2">
+            <button
+              type="button"
+              disabled={tryAgainBusy}
+              onClick={onTryAgain}
+              className="flex h-12 w-[200px] items-center justify-center rounded-[10px] bg-[#ef4444] text-[15px] font-bold text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {tryAgainBusy ? (
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : (
+                "Try Again"
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Figma 144:7769 — pipeline trigger succeeded after Generate / retry. */
+function AnalysisInitiatedSuccessModal({
+  countdownSecs,
+  onGoMeetingsNow,
+}: {
+  countdownSecs: number;
+  onGoMeetingsNow: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(10,37,64,0.6)] px-4 py-8 backdrop-blur-[2px]">
+      <div
+        className="flex w-full max-w-[480px] flex-col items-center gap-3 rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="analysis-initiated-title"
+      >
+        <div className="flex size-16 shrink-0 items-center justify-center rounded-full bg-[#ff8150] text-[29px] leading-none shadow-sm">
+          <span aria-hidden>⏳</span>
+        </div>
+
+        <div className="w-full pb-px pt-3 text-center">
+          <h2 id="analysis-initiated-title" className="text-2xl font-bold text-[#0a2540]">
+            Analysis Initiated
+          </h2>
+        </div>
+
+        <p className="text-center text-[14.3px] leading-6 text-[#64748b]">
+          AI is now analyzing your recording in the background!
+        </p>
+
+        <div className="w-full rounded-[10px] border border-[#94a3b8] bg-[#edf1f5] px-[17px] pb-6 pt-[14px]">
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="text-[11px]" aria-hidden>
+              ✔️
+            </span>
+            <span className="text-[13.6px] font-bold text-black">
+              Moving you to the Home now...
+            </span>
+          </div>
+          <ul className="list-disc space-y-2 pl-[18px] text-[12.1px] leading-[19px] text-black">
+            <li className="pl-0.5">
+              Analysis is running in the background — you can safely leave this page anytime.
+            </li>
+            <li className="pl-0.5">
+              🔔 We&apos;ll notify you via ActNote alert and Gmail as soon as your analysis is
+              complete. Once done, your meeting notes and action items will be ready to view.
+            </li>
+          </ul>
+        </div>
+
+        <div className="flex w-full justify-center pt-2">
+          <button
+            type="button"
+            onClick={onGoMeetingsNow}
+            className="flex h-12 w-[270px] items-center justify-center rounded-[10px] bg-[#ff8150] text-[15px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.2)] transition-opacity hover:opacity-90"
+          >
+            Go to Home Now ({countdownSecs}s)
+          </button>
+        </div>
+
+        <p className="text-center text-[12.1px] leading-[19.5px] text-[#959faf]">
+          Clicking will start the AI and redirect you to the Home screen.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+interface AnalysisConfirmModalProps {
+  meetingTitle: string;
+  meetingTypeLabel: string;
+  dateTimeDisplay: string;
+  description: string;
+  participantsLine: string;
+  responsibleLabel: string;
+  recordingFileName: string;
+  onStay: () => void;
+  onStart: () => void;
+}
+
+/** Figma modal — verify details before create + pipeline. */
+function AnalysisConfirmModal({
+  meetingTitle,
+  meetingTypeLabel,
+  dateTimeDisplay,
+  description,
+  participantsLine,
+  responsibleLabel,
+  recordingFileName,
+  onStay,
+  onStart,
+}: AnalysisConfirmModalProps) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-8 backdrop-blur-sm">
+      <div
+        className="flex w-full max-w-[460px] flex-col items-center gap-3 rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="analysis-confirm-title"
+      >
+        <div className="flex size-16 shrink-0 items-center justify-center rounded-full bg-[#ff8150] text-[29px] leading-none shadow-sm">
+          <span aria-hidden>🪄</span>
+        </div>
+
+        <div className="w-full pt-1 text-center">
+          <h2 id="analysis-confirm-title" className="text-2xl font-bold text-[#0a2540]">
+            Ready to analysis?
+          </h2>
+        </div>
+
+        <p className="text-center text-[14px] leading-6 text-[#64748b]">
+          Please verify your meeting details before starting AI analysis.
+        </p>
+
+        <div className="w-full rounded-[10px] border border-[#fee2e2] bg-[#edf1f5] px-[17px] py-4">
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="text-[11px]" aria-hidden>
+              ✓
+            </span>
+            <span className="text-[13.6px] font-bold uppercase tracking-wide text-black">
+              MEETING DETAILS
+            </span>
+          </div>
+          <ul className="list-disc space-y-1.5 pl-4 text-[12.1px] leading-[19.5px] text-[#0a2540]">
+            <ConfirmRow label="Meeting title" value={meetingTitle || "—"} />
+            <ConfirmRow label="Meeting type" value={meetingTypeLabel} />
+            <ConfirmRow label="Date & time" value={dateTimeDisplay} />
+            <ConfirmRow label="Description" value={description} />
+            <ConfirmRow label="Participants" value={participantsLine} />
+            <ConfirmRow label="Responsible person" value={responsibleLabel} />
+            <ConfirmRow label="Recording" value={recordingFileName} />
+          </ul>
+        </div>
+
+        <div className="flex w-full gap-3 pt-2 flex-col sm:flex-row sm:justify-center">
+          <button
+            type="button"
+            onClick={onStay}
+            className="h-12 w-full shrink-0 rounded-[10px] border-2 border-[#e2e8f0] bg-white text-[15px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc] sm:max-w-[204px]"
+          >
+            Stay on Page
+          </button>
+          <button
+            type="button"
+            onClick={onStart}
+            className="h-12 w-full shrink-0 rounded-[10px] bg-[#ff8150] text-[15px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.2)] transition-opacity hover:opacity-90 sm:max-w-[200px]"
+          >
+            Start AI Analysis
+          </button>
+        </div>
+
+        <p className="text-center text-[12.1px] leading-[19.5px] text-[#959faf]">
+          Clicking will start the AI and redirect you to the Home screen.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmRow({ label, value }: { label: string; value: string }) {
+  return (
+    <li className="break-words">
+      <span className="font-medium">{label}:</span> {value || "—"}
+    </li>
+  );
+}
+
+function meetingTypeLabelFromValue(value: string): string {
+  const v = value.trim();
+  if (!v) return "—";
+  const opt = MEETING_TYPE_OPTIONS.find((o) => o.value === v);
+  return opt?.label ?? v;
 }
 
 const STEPS = [
