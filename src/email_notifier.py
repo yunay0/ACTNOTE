@@ -22,7 +22,7 @@ Public API:
     EMAIL_FROM          : 기본 발신자 헤더. SMTP 에선 유니코드 표시명 허용.
                           Resend 는 표시 이름·주소 ASCII 만 허용 (한글 표시명 불가).
                           미설정 시 SMTP 는 ``Actnote <SMTP_USER>``, Resend 는 onboarding@resend.dev
-    NEXT_PUBLIC_APP_URL : 본문 안에 들어가는 호스트 (예: "https://app.actnote.com")
+    NEXT_PUBLIC_APP_URL : 본문 안에 들어가는 호스트 (예: "https://actnote.xyz")
 
 도메인 인증 (운영 단계):
     Resend 대시보드 → Domains → Add domain → DNS 4줄 (DKIM, SPF, MX 등) 추가.
@@ -238,7 +238,7 @@ def _common_footer(app_url: str) -> str:
         f'<hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">'
         f'<p style="color:#6b7280;font-size:12px;line-height:1.5">'
         f'이 메일은 <a href="{safe_url}" style="color:#6b7280">Actnote</a> 에서 자동 발송되었습니다.<br>'
-        f'문의: support@actnote.app'
+        f'문의: support@actnote.xyz'
         f'</p>'
     )
 
@@ -387,7 +387,7 @@ def render_analysis_failed_email(
     text = (
         f'Analysis failed for "{meeting_title}".\n\n'
         f"Reason:\n{error_message}\n\n"
-        f"Support: support@actnote.app\n"
+        f"Support: support@actnote.xyz\n"
     )
     return {
         "subject": title,
@@ -408,7 +408,7 @@ if __name__ == "__main__":
 
     # 1) 초대 메일
     invite = render_invite_email(
-        invite_link="https://app.actnote.com/invite/abc123",
+        invite_link="https://actnote.xyz/invite/abc123",
         workspace_name="Actnote 팀",
         inviter_name="이동욱",
     )
@@ -418,7 +418,7 @@ if __name__ == "__main__":
     assigned = render_action_assigned_email(
         action_content="PRD 초안을 금요일까지 작성해주세요.",
         meeting_title="월요일 기획 회의",
-        meeting_url="https://app.actnote.com/meetings/abc",
+        meeting_url="https://actnote.xyz/meetings/abc",
         due_date="2026-05-15",
     )
     send_email("user@example.com", assigned["subject"], assigned["html"], assigned["text"], dry_run=True)
@@ -426,7 +426,7 @@ if __name__ == "__main__":
     # 3) 분석 완료
     done = render_analysis_complete_email(
         meeting_title="수요일 진행 점검",
-        meeting_url="https://app.actnote.com/meetings/xyz",
+        meeting_url="https://actnote.xyz/meetings/xyz",
     )
     send_email("creator@example.com", done["subject"], done["html"], done["text"], dry_run=True)
 

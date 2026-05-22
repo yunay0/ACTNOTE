@@ -118,7 +118,7 @@ sb = create_supabase_client_from_env()
 result = complete_notion_oauth(
     workspace_id="<actnote_workspace_id>",
     code="<callback_code>",
-    redirect_uri="https://app.actnote.com/api/integrations/notion/callback",
+    redirect_uri="https://actnote.xyz/api/integrations/notion/callback",
     connected_by="<user_id>",
     sb_client=sb,
 )

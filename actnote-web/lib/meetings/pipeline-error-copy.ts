@@ -38,7 +38,7 @@ export function userFacingPipelineError(raw: string | null | undefined): string 
 }
 
 /** 기획 확정 주소 — `NEXT_PUBLIC_SUPPORT_EMAIL` 미설정 시 폴백 (frontend-handoff와 동일). */
-const DEFAULT_SUPPORT_EMAIL = "ttojo6@gmail.com";
+const DEFAULT_SUPPORT_EMAIL = "support@actnote.xyz";
 
 const SUPPORT_CONTACT_SUBJECT = "ACTNOTE — Meeting analysis issue";
 

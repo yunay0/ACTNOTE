@@ -7,7 +7,7 @@ export const PRIVACY_POLICY_URL =
   "https://www.notion.so/ACTNOTE-Privacy-Policy-35ab26f4c46a80e18e94d5ef43814663?source=copy_link";
 
 /** 공식 지원 메일 — 랜딩 푸터 Support 링크 고정. */
-export const SUPPORT_EMAIL = "actnote.support@gmail.com";
+export const SUPPORT_EMAIL = "support@actnote.xyz";
 
 /** Landing footer — opens default mail client addressed to support. */
 export function supportMailtoHref(): string {

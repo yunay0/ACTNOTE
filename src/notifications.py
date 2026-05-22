@@ -19,7 +19,7 @@ VALID_TYPES = {"analysis_complete", "analysis_failed", "action_assigned"}
 
 def _app_url() -> str:
     """본문 링크 호스트. NEXT_PUBLIC_APP_URL 우선."""
-    return os.getenv("NEXT_PUBLIC_APP_URL") or "https://app.actnote.com"
+    return os.getenv("NEXT_PUBLIC_APP_URL") or "https://actnote.xyz"
 
 
 _VISIBLE_ANALYSIS_ERROR_MAP: dict[str, str] = {
