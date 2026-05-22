@@ -68,6 +68,33 @@ function emptyDraftActionItem(): ActionItem {
   };
 }
 
+/** ISO/date DB value → YYYY-MM-DD for text input (English UI, avoids locale date picker). */
+function toYmdInput(isoOrYmd: string | null): string | null {
+  if (isoOrYmd == null) return null;
+  const s = String(isoOrYmd).trim().slice(0, 10);
+  return s.length > 0 ? s : null;
+}
+
+/** Validates calendar YYYY-MM-DD (leap years, month lengths). */
+function isValidYmd(value: string | null): boolean {
+  if (value == null || !String(value).trim()) return false;
+  const raw = String(value).trim().slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!m) return false;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return (
+    dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d
+  );
+}
+
+/** Actnote orange border when draft row has content but assignee/due is missing. */
+function draftActionAccentBorder(active: boolean): string {
+  return active ? "border-2 border-[#ff6b35]" : "border border-[#e2e8f0]";
+}
+
 interface Member {
   user_id: string;
   name: string | null;
@@ -357,6 +384,7 @@ export default function MeetingDetailPage() {
     const normalized = ((items as ActionItem[]) ?? []).map((row) => ({
       ...row,
       assignee_user_id: row.assignee_user_id ?? null,
+      due_date: toYmdInput(row.due_date != null ? String(row.due_date) : null),
     }));
     setActionItems(normalized);
     setLoading(false);
@@ -473,11 +501,12 @@ export default function MeetingDetailPage() {
 
     for (const item of editActionItems) {
       const content = item.content.trim() || "Action item";
+      const dueNorm = item.due_date?.trim() ? item.due_date.trim().slice(0, 10) : null;
       const payload = {
         content,
         assignee: item.assignee,
         assignee_user_id: item.assignee_user_id ?? null,
-        due_date: item.due_date || null,
+        due_date: dueNorm && isValidYmd(dueNorm) ? dueNorm : null,
         status: item.status,
       };
       if (item.id.startsWith(NEW_ACTION_ITEM_PREFIX)) {
@@ -1053,8 +1082,17 @@ export default function MeetingDetailPage() {
               {/* 액션 아이템 (DRAFT-001 + DRAFT-005) */}
               <Section icon={<ListTodo className="h-4 w-4 text-[#2e5c8a]" />} title="Action Items">
                 {editMode && canEdit ? (
-                  <div className="space-y-3">
-                    {editActionItems.map((item, i) => (
+                  <div className="space-y-3" lang="en-US">
+                    {editActionItems.map((item, i) => {
+                      const rowHasContent = item.content.trim().length > 0;
+                      const dueStr = item.due_date ?? "";
+                      const highlightAssignee =
+                        rowHasContent && !item.assignee_user_id;
+                      const highlightDue =
+                        rowHasContent && (!dueStr.trim() || !isValidYmd(dueStr));
+                      const accentSelect = draftActionAccentBorder(highlightAssignee);
+                      const accentDue = draftActionAccentBorder(highlightDue);
+                      return (
                       <div key={item.id} className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-4 space-y-3">
                         <input
                           value={item.content}
@@ -1062,8 +1100,9 @@ export default function MeetingDetailPage() {
                           placeholder="Action item..."
                           className="w-full h-10 rounded-xl border border-[#e2e8f0] bg-white px-4 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
                         />
-                        <div className="flex gap-2 flex-wrap">
+                        <div className="flex gap-3 min-w-0">
                           <select
+                            aria-invalid={highlightAssignee}
                             value={item.assignee_user_id ?? ""}
                             onChange={(e) => {
                               const uid = e.target.value || null;
@@ -1080,7 +1119,7 @@ export default function MeetingDetailPage() {
                                 )
                               );
                             }}
-                            className="flex-1 min-w-[140px] h-9 rounded-xl border border-[#e2e8f0] bg-white px-3 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
+                            className={`flex-1 min-w-0 basis-1/2 h-9 rounded-xl border bg-white px-3 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35] ${accentSelect}`}
                           >
                             <option value="">Unassigned</option>
                             {members.map((m) => (
@@ -1091,23 +1130,26 @@ export default function MeetingDetailPage() {
                             ))}
                           </select>
                           <input
-                            type="date"
-                            value={item.due_date ?? ""}
-                            onChange={(e) => setEditActionItems((prev) => prev.map((a, idx) => idx === i ? { ...a, due_date: e.target.value || null } : a))}
-                            className="h-9 rounded-xl border border-[#e2e8f0] bg-white px-3 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
+                            type="text"
+                            inputMode="numeric"
+                            placeholder="YYYY-MM-DD"
+                            maxLength={10}
+                            aria-invalid={highlightDue}
+                            value={dueStr}
+                            onChange={(e) => {
+                              const next = e.target.value.slice(0, 10);
+                              setEditActionItems((prev) =>
+                                prev.map((a, idx) =>
+                                  idx === i ? { ...a, due_date: next || null } : a
+                                )
+                              );
+                            }}
+                            className={`flex-1 min-w-0 basis-1/2 h-9 rounded-xl border bg-white px-3 text-sm tabular-nums text-[#0a2540] outline-none placeholder:text-[#94a3b8] focus:border-[#ff6b35] ${accentDue}`}
                           />
-                          <select
-                            value={item.status}
-                            onChange={(e) => setEditActionItems((prev) => prev.map((a, idx) => idx === i ? { ...a, status: e.target.value as ActionItem["status"] } : a))}
-                            className="h-9 rounded-xl border border-[#e2e8f0] bg-white px-3 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
-                          >
-                            <option value="open">Open</option>
-                            <option value="done">Done</option>
-                            <option value="cancelled">Cancelled</option>
-                          </select>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                     <button
                       type="button"
                       onClick={() => setEditActionItems((prev) => [...prev, emptyDraftActionItem()])}
