@@ -9,6 +9,7 @@ import {
   sendViaResend,
   sendViaSmtp,
 } from "@/lib/server/invite-email";
+import { isFreeEmailDomain } from "@/lib/auth/domain-check";
 
 export const runtime = "nodejs";
 
@@ -32,6 +33,14 @@ export async function POST(req: NextRequest) {
   const invite = (body as { invite?: InviteRow }).invite;
   if (!invite?.token || !invite.workspace_id || !invite.invited_email) {
     return NextResponse.json({ error: "invite with token, workspace_id, invited_email required" }, { status: 400 });
+  }
+
+  if (isFreeEmailDomain(invite.invited_email)) {
+    const domain = invite.invited_email.split("@")[1] ?? "";
+    return NextResponse.json(
+      { error: "personal_email_not_allowed", domain },
+      { status: 400 }
+    );
   }
 
   const supabase = await createClient();

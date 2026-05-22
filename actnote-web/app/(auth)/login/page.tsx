@@ -1,9 +1,10 @@
 "use client";
 
 import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { AuthSplitShell } from "@/components/auth/AuthSplitShell";
 import { AuthSocialChrome } from "@/components/auth/AuthSocialChrome";
+import { PersonalEmailBlockModal } from "@/components/auth/PersonalEmailBlockModal";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
 
 /**
@@ -11,9 +12,13 @@ import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
  */
 function LoginForm() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const returnTo = getSafeInternalReturnPath(searchParams.get("next"));
   const verified = searchParams.get("verified") === "1";
   const urlError = searchParams.get("error");
+  const blockedDomain = searchParams.get("domain") ?? "";
+
+  const isPersonalEmailBlocked = urlError === "personal_email";
 
   let queryBanner: { kind: "success" | "error"; text: string } | null = null;
   if (verified) {
@@ -33,27 +38,40 @@ function LoginForm() {
     };
   }
 
+  function handleRetryWithCompanyAccount() {
+    // 에러 파라미터 제거 후 동일 페이지로 돌아와 Google OAuth 재시도
+    router.replace("/login" + (returnTo ? `?next=${encodeURIComponent(returnTo)}` : ""));
+  }
+
   return (
-    <AuthSplitShell>
-      <div className="flex flex-col gap-3 pb-4 text-center">
-        <h1 className="text-[31px] font-bold leading-tight tracking-tight text-[#0a2540]">Welcome</h1>
-        <p className="text-[15px] leading-normal text-[#64748b]">Sign in to continue to ACTNOTE</p>
-      </div>
+    <>
+      {isPersonalEmailBlocked && (
+        <PersonalEmailBlockModal
+          domain={blockedDomain}
+          onRetry={handleRetryWithCompanyAccount}
+        />
+      )}
+      <AuthSplitShell>
+        <div className="flex flex-col gap-3 pb-4 text-center">
+          <h1 className="text-[31.5px] font-bold leading-tight tracking-tight text-[#0a2540]">Welcome to ACTNOTE</h1>
+          <p className="text-[15.1px] leading-normal text-[#64748b]">Sign in to continue</p>
+        </div>
 
-      {queryBanner ? (
-        <p
-          className={`rounded-xl border px-4 py-3 text-center text-sm ${
-            queryBanner.kind === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-              : "border-red-200 bg-red-50 text-red-600"
-          }`}
-        >
-          {queryBanner.text}
-        </p>
-      ) : null}
+        {queryBanner ? (
+          <p
+            className={`rounded-xl border px-4 py-3 text-center text-sm ${
+              queryBanner.kind === "success"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-red-200 bg-red-50 text-red-600"
+            }`}
+          >
+            {queryBanner.text}
+          </p>
+        ) : null}
 
-      <AuthSocialChrome redirectAfterAuth={returnTo ?? "/workspace/select"} />
-    </AuthSplitShell>
+        <AuthSocialChrome redirectAfterAuth={returnTo ?? "/workspace/select"} />
+      </AuthSplitShell>
+    </>
   );
 }
 
