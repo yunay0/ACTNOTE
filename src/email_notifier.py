@@ -5,7 +5,7 @@ Public API:
     render_invite_email(invite_link, workspace_name, inviter_name) -> dict
     render_action_assigned_email(action, meeting_title, app_url) -> dict
     render_analysis_complete_email(meeting_title, meeting_url) -> dict
-    render_analysis_failed_email(meeting_title, error_message, app_url) -> dict
+    render_analysis_failed_* : see ``src/email_analysis_failed`` (변종 3종, notify 에서 호출)
 
 설계:
     - HTML + plain text 둘 다 자동 생성 (멀티파트 MIME).
@@ -228,7 +228,7 @@ def _strip_html(html: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 템플릿 — 한국어 본문
+# 템플릿 (언어별: 초대/액션 한국어, 분석 완료·실패는 영문 디자인 기준)
 # ---------------------------------------------------------------------------
 
 def _common_footer(app_url: str) -> str:
@@ -337,6 +337,82 @@ def render_action_assigned_email(
     }
 
 
+def _analysis_complete_email_html(meeting_title: str, meeting_url: str) -> str:
+    """Figma S-15-mail (node 147:11386) 레이아웃 — 테이블 + 인라인 스타일 (메일 호환).
+
+    카피·색상은 디자인 시안과 동일하게 유지합니다.
+    """
+    safe_meeting_title = escape(meeting_title.strip() or "(Untitled meeting)")
+    inner_title = escape("The AI draft is now available.")
+    quote_open = "\u201c"
+    quote_close = "\u201d"
+    return f"""<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background-color:#f8fafc;background:#f8fafc;-webkit-font-smoothing:antialiased;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#f8fafc;background:#f8fafc;margin:0;padding:0;width:100%;">
+  <tr>
+    <td align="center" style="padding:40px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+      <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;width:100%;border-collapse:collapse;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(10,37,64,0.08);border:1px solid #ffffff;">
+        <tr>
+          <td style="padding:40px 52px;background-color:#0a2540;background:linear-gradient(150deg,#0a2540 0%,#1e3a5f 100%);vertical-align:middle;">
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="left" style="border-collapse:collapse;">
+              <tr>
+                <td align="center" valign="middle" style="background-color:#ff6b35;background:#ff6b35;width:32px;height:32px;border-radius:6px;line-height:32px;font-size:18px;font-weight:700;color:#1e3a5f;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">&#10003;</td>
+                <td style="padding-left:12px;font-family:Roboto,Helvetica,Arial,sans-serif;font-size:28px;font-weight:700;color:#ffffff;line-height:32px;text-transform:uppercase;letter-spacing:0.02em;">ACTNOTE</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:24px 40px 28px;background:#ffffff;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;border:2px solid #e2e8f0;border-radius:12px;">
+              <tr>
+                <td style="padding:36px 28px 32px;text-align:center;">
+                  <p style="margin:0 0 20px;font-family:Inter,Roboto,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:24px;font-weight:700;line-height:normal;color:#0a2540;">{inner_title}</p>
+                  <p style="margin:0 0 24px;font-family:Inter,Roboto,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:18px;font-weight:700;line-height:normal;color:#64748b;max-width:370px;margin-left:auto;margin-right:auto;">
+                    AI Analysis Complete<br/><span style="font-weight:700;color:#64748b;">: {quote_open}{safe_meeting_title}{quote_close}</span>
+                  </p>
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 24px;border-collapse:collapse;background-color:#f8fafc;background:#f8fafc;border-radius:8px;">
+                    <tr>
+                      <td style="padding:24px 20px;text-align:left;">
+                        <ul style="margin:10px 0 0;color:#94a3b8;font-family:Inter,Roboto,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:18px;font-weight:500;line-height:25px;padding-left:22px;text-align:left;">
+                          <li style="margin-bottom:12px;"><span>Draft ready: AI analysis complete based on the provided meeting metadata.</span></li>
+                          <li style="margin-bottom:0;"><span>Please review and edit the details before publishing.</span></li>
+                        </ul>
+                      </td>
+                    </tr>
+                  </table>
+                  <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto 14px;border-collapse:collapse;">
+                    <tr>
+                      <td align="center" valign="middle" style="border-radius:10px;background-color:#ff6b35;background-image:linear-gradient(131deg,#ff6b35 0%,#ff8555 100%);box-shadow:0 4px 6px rgba(255,107,53,0.35);padding:14px 32px;text-align:center;">
+                        <a href="{escape(meeting_url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;font-family:Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:normal;color:#ffffff;text-decoration:none;">View Draft</a>
+                      </td>
+                    </tr>
+                  </table>
+                  <p style="margin:0 auto;max-width:376px;color:#959faf;font-family:Inter,Roboto,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;line-height:19.5px;text-align:center;">&#8505;&#65039;&nbsp;&nbsp;Standard members are restricted to reading or deleting drafts.</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="border-top:1px solid #e2e8f0;background:#ffffff;padding:25px 40px 24px;text-align:center;">
+            <p style="margin:0 0 8px;font-family:Roboto,Helvetica,Arial,sans-serif;font-size:13px;font-weight:400;color:#94a3b8;line-height:normal;">© 2026 ACTNOTE. All rights reserved.</p>
+            <p style="margin:0;margin-top:14px;line-height:normal;font-size:0;">
+              <a href="https://actnote.io/terms" target="_blank" rel="noopener noreferrer" style="color:#64748b;font-family:Roboto,Helvetica,Arial,sans-serif;font-size:13px;text-decoration:none;">Terms of Service</a>&nbsp;&#8203;&nbsp;
+              <a href="https://actnote.io/privacy" target="_blank" rel="noopener noreferrer" style="color:#64748b;font-family:Roboto,Helvetica,Arial,sans-serif;font-size:13px;text-decoration:none;">Privacy Policy</a>
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>"""
+
+
 def render_analysis_complete_email(
     *,
     meeting_title: str,
@@ -344,64 +420,37 @@ def render_analysis_complete_email(
     app_url: str | None = None,
 ) -> dict[str, str]:
     """분석 완료 알림 메일."""
-    title = f'Analysis ready: "{meeting_title}"'
-    body = (
-        f'<p style="margin:0 0 24px 0;line-height:1.6">'
-        f"Summary, decisions, and action items are ready. Open your draft to review and publish."
-        f"</p>"
-        f'<a href="{escape(meeting_url)}" '
-        f'style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;'
-        f'padding:12px 24px;border-radius:8px;font-weight:600">'
-        f"Open meeting</a>"
-    )
+    safe_title_plain = meeting_title.strip() or "(Untitled meeting)"
+    subject = f'The AI draft is now available: "{safe_title_plain}"'
+    html = _analysis_complete_email_html(meeting_title, meeting_url)
     text = (
-        f'Analysis finished for "{meeting_title}".\n\n'
-        f"Open draft:\n{meeting_url}\n"
+        "The AI draft is now available.\n\n"
+        f'AI Analysis Complete: "{safe_title_plain}"\n\n'
+        "- Draft ready: AI analysis complete based on the provided meeting metadata.\n"
+        "- Please review and edit the details before publishing.\n\n"
+        "View Draft:\n"
+        f"{meeting_url.strip()}\n\n"
+        "Standard members are restricted to reading or deleting drafts.\n\n"
+        "© 2026 ACTNOTE. All rights reserved.\n"
+        "Terms of Service: https://actnote.io/terms\n"
+        "Privacy Policy: https://actnote.io/privacy\n"
     )
+    _ = app_url  # 디자인 푸터는 고정 legal URL만 사용하며 레거시 호출 시 호환 위해 인자 유지
     return {
-        "subject": title,
-        "html": _wrap_html(title, body, app_url=app_url),
+        "subject": subject,
+        "html": html,
         "text": text,
     }
 
-
-def render_analysis_failed_email(
-    *,
-    meeting_title: str,
-    error_message: str,
-    app_url: str | None = None,
-) -> dict[str, str]:
-    """분석 실패 알림 메일."""
-    title = f'Analysis failed: "{meeting_title}"'
-    body = (
-        f'<p style="margin:0 0 16px 0;line-height:1.6">'
-        f"We could not finish analyzing this recording. Try again with a different file, "
-        f"or contact support if you need help."
-        f"</p>"
-        f'<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;'
-        f'padding:16px;color:#991b1b;font-family:monospace;font-size:13px;line-height:1.5;'
-        f'white-space:pre-wrap;word-break:break-word">'
-        f'{escape(error_message)}'
-        f"</div>"
-    )
-    text = (
-        f'Analysis failed for "{meeting_title}".\n\n'
-        f"Reason:\n{error_message}\n\n"
-        f"Support: support@actnote.xyz\n"
-    )
-    return {
-        "subject": title,
-        "html": _wrap_html(title, body, app_url=app_url),
-        "text": text,
-    }
-
-
-# ---------------------------------------------------------------------------
-# 로컬 스모크 테스트 — RESEND_API_KEY 없이도 dry_run 으로 안전 동작
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
+
+    from src.email_analysis_failed import (
+        render_analysis_failed_email,
+        support_mailto_analysis_failed_href,
+    )
+
     load_dotenv()
 
     _console.print("[bold]email_notifier 스모크 (dry_run)[/]\n")
@@ -430,11 +479,25 @@ if __name__ == "__main__":
     )
     send_email("creator@example.com", done["subject"], done["html"], done["text"], dry_run=True)
 
-    # 4) 분석 실패
-    failed = render_analysis_failed_email(
-        meeting_title="금요일 우선순위 재조정",
-        error_message="OpenAI API rate limit (429). 잠시 후 다시 시도해주세요.",
-    )
-    send_email("creator@example.com", failed["subject"], failed["html"], failed["text"], dry_run=True)
+    # 4) 분석 실패 (3 variant)
+    vu = "https://actnote.app/meetings/m1/analysis-error?workspace=w1"
+    for var in ("retry_network", "reattach_file", "contact_support"):
+        fail = render_analysis_failed_email(
+            meeting_title="Product Roadmap Q2 Review",
+            variant=var,
+            view_error_url=vu if var != "contact_support" else None,
+            support_mailto_href=(
+                support_mailto_analysis_failed_href("Product Roadmap Q2 Review")
+                if var == "contact_support"
+                else None
+            ),
+        )
+        send_email(
+            f"{var}@example.com",
+            fail["subject"],
+            fail["html"],
+            fail["text"],
+            dry_run=True,
+        )
 
-    _console.print("\n[bold green]4종 템플릿 dry_run 통과[/]")
+    _console.print("\n[bold green]템플릿 dry_run 통과 (실패 3종 포함)[/]")

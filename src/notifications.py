@@ -58,6 +58,32 @@ _VISIBLE_ANALYSIS_ERROR_MAP: dict[str, str] = {
 
 _CODE_PREFIX_RE = re.compile(r"^\[code:([A-Z0-9_]+)\]\s*", re.I)
 
+# 분석 실패 메일 variant — 프론트 ``analysis-error-ux.ts`` 와 동일 계열 매핑
+_RETRY_NETWORK_MAIL_CODES = frozenset(
+    {"NETWORK_ERROR", "DB_PUSH_ERROR", "DB_PUSH_FAILED"},
+)
+_REATTACH_FILE_MAIL_CODES = frozenset(
+    {"FILE_NOT_FOUND", "NO_AUDIO_OR_SILENT", "DOWNLOAD_FAILED"},
+)
+
+
+def extract_pipeline_error_code(error_message: str) -> str:
+    """meetings.error_message 의 ``[code:XXX]`` 에서 분류 코드만 추출."""
+    t = (error_message or "").strip()
+    m = _CODE_PREFIX_RE.match(t)
+    return (m.group(1).upper() if m else "PIPELINE_INTERNAL")
+
+
+def analysis_failed_email_variant(error_message_raw: str) -> str:
+    """``retry_network`` | ``reattach_file`` | ``contact_support``."""
+
+    code = extract_pipeline_error_code(error_message_raw)
+    if code in _RETRY_NETWORK_MAIL_CODES:
+        return "retry_network"
+    if code in _REATTACH_FILE_MAIL_CODES:
+        return "reattach_file"
+    return "contact_support"
+
 
 def user_visible_analysis_error(error_message: str) -> str:
     """Strip ``[code:...]`` prefix and return English UX copy for notifications/email."""
@@ -313,7 +339,10 @@ def notify_analysis_complete(
 
     # 이메일: 수신자 전원 중 opt-in 설정 켜진 경우 발송
     email_by_uid = targets["email_by_uid"]
-    meeting_url = f"{_app_url().rstrip('/')}/meetings/{meeting_id}"
+    meeting_url = (
+        f"{_app_url().rstrip('/')}/meetings/{meeting_id}"
+        f"?workspace={workspace_id}"
+    )
     from src.email_notifier import render_analysis_complete_email
     rendered = render_analysis_complete_email(
         meeting_title=meeting_title,
@@ -667,13 +696,21 @@ def notify_analysis_failed(
         "Try again or upload a different file.\n"
         f"Details: {details}"
     )
+    fail_variant = analysis_failed_email_variant(error_message)
+    if fail_variant == "retry_network":
+        notif_heading = "Network issue"
+    elif fail_variant == "reattach_file":
+        notif_heading = "File issue"
+    else:
+        notif_heading = "Server issue"
+    bell_title = f"{notif_heading}: {meeting_title}"
 
     rows = [
         {
             "user_id": uid,
             "workspace_id": workspace_id,
             "type": "analysis_failed",
-            "title": f"Analysis failed: {meeting_title}",
+            "title": bell_title,
             "message": notif_message,
             "meeting_id": meeting_id,
         }
@@ -687,12 +724,24 @@ def notify_analysis_failed(
     # 이메일: 수신자 전원 중 opt-in 설정 켜진 경우 발송
     email_by_uid = targets["email_by_uid"]
     try:
-        from src.email_notifier import render_analysis_failed_email
+        from src.email_analysis_failed import (
+            render_analysis_failed_email,
+            support_mailto_analysis_failed_href,
+        )
+
+        variant = analysis_failed_email_variant(error_message)
+        base = _app_url().rstrip("/")
+        view_error_url = f"{base}/meetings/{meeting_id}/analysis-error?workspace={workspace_id}"
 
         rendered = render_analysis_failed_email(
             meeting_title=meeting_title,
-            error_message=visible,
-            app_url=_app_url(),
+            variant=variant,
+            view_error_url=view_error_url if variant != "contact_support" else None,
+            support_mailto_href=(
+                support_mailto_analysis_failed_href(meeting_title)
+                if variant == "contact_support"
+                else None
+            ),
         )
         for uid in recipients:
             to_email = email_by_uid.get(uid, "")
@@ -789,7 +838,7 @@ if __name__ == "__main__":
     console.print(f"[green][OK][/] is_read=False 확인")
 
     # --- notify_analysis_failed: 작성자에게 1건 ---
-    count = notify_analysis_failed(mid, workspace_id, "FileNotFoundError: audio.wav", sb)
+    count = notify_analysis_failed(mid, workspace_id, "[code:FILE_NOT_FOUND] audio.wav", sb)
     assert count == 1, f"1건 기대, 실제={count}"
     console.print(f"[green][OK][/] notify_analysis_failed → {count}건")
 

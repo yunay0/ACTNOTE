@@ -6,6 +6,7 @@ import {
   ArrowLeft, CalendarDays, CheckCircle2, ListTodo, Sparkles,
   Clock, User, Send, Pencil, Trash2, Plus, X, Save,
   AlertCircle, ExternalLink,
+  FileText,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
@@ -20,6 +21,8 @@ import {
 } from "@/components/meetings/SpeakerMappingSection";
 import { TranscriptViewer } from "@/components/meetings/TranscriptViewer";
 import { ProcessingProgress } from "@/components/meetings/ProcessingProgress";
+import { MeetingPipelineSteps } from "@/components/meetings/MeetingPipelineSteps";
+import { MeetingAiAnalysisPreview } from "@/components/meetings/MeetingAiAnalysisPreview";
 import { retryMeetingPipeline } from "@/lib/meetings/retry-pipeline";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 import type { MeetingStatus } from "@/lib/types/meeting";
@@ -186,7 +189,7 @@ function normalizeParticipants(raw: unknown): string[] {
 export default function MeetingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { memberships } = useWorkspaceContext();
+  const { memberships, workspaceId, setCurrentWorkspace } = useWorkspaceContext();
 
   const [meeting, setMeeting] = useState<MeetingRow | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -210,6 +213,12 @@ export default function MeetingDetailPage() {
   const [speakerCandidates, setSpeakerCandidates] = useState<Record<string, SpeakerCandidate[]>>({});
   const [speakerMapping, setSpeakerMapping] = useState<Record<string, string>>({});
   const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
+  /** Sidebar transcript drawer (draft UI only). */
+  const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(false);
+  /** Live speaker mapping from SpeakerMappingSection — transcript sidebar prefers this when set. */
+  const [speakerMapOverlay, setSpeakerMapOverlay] = useState<Record<string, string> | undefined>(
+    undefined,
+  );
 
   // 삭제 (STATUS-002)
   const [deleteModal, setDeleteModal] = useState(false);
@@ -224,6 +233,8 @@ export default function MeetingDetailPage() {
   const [notionWarningModal, setNotionWarningModal] = useState(false);
   const [notionConnected, setNotionConnected] = useState<boolean | null>(null);
   const [retryAnalysisLoading, setRetryAnalysisLoading] = useState(false);
+  /** 분석 진행 중: 진행 타임라인 vs AI 결과 미리보기 (147:9848 → 147:10026). */
+  const [analyzingUiStep, setAnalyzingUiStep] = useState<"timeline" | "preview">("timeline");
 
   const loadMembers = useCallback(async (wsId: string) => {
     const supabase = createClient();
@@ -397,6 +408,33 @@ export default function MeetingDetailPage() {
 
   useEffect(() => { fetchMeeting(); }, [fetchMeeting]);
 
+  /** View Draft email links — ?workspace=<id> aligns context with Home draft card UX */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const wid = new URLSearchParams(window.location.search).get("workspace")?.trim();
+    if (!wid) return;
+    const allowed = memberships.some((m) => m.workspace_id === wid);
+    if (!allowed || wid === workspaceId) return;
+    setCurrentWorkspace(wid);
+  }, [memberships, workspaceId, setCurrentWorkspace, id]);
+
+  useEffect(() => {
+    setSpeakerMapOverlay(undefined);
+    setTranscriptPanelOpen(false);
+    setAnalyzingUiStep("timeline");
+  }, [id]);
+
+  useEffect(() => {
+    if (transcriptLines.length === 0) setTranscriptPanelOpen(false);
+  }, [transcriptLines.length]);
+
+  useEffect(() => {
+    if (!meeting) return;
+    if (!(isProcessing(meeting.status) && meeting.status !== "error")) {
+      setAnalyzingUiStep("timeline");
+    }
+  }, [meeting?.status]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -434,6 +472,20 @@ export default function MeetingDetailPage() {
     const interval = setInterval(fetchMeeting, 5000);
     return () => clearInterval(interval);
   }, [meeting, fetchMeeting]);
+
+  const wasProcessingRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!meeting) return;
+    const proc = isProcessing(meeting.status);
+    if (
+      wasProcessingRef.current === true &&
+      !proc &&
+      meeting.status === "ready"
+    ) {
+      router.refresh();
+    }
+    wasProcessingRef.current = proc;
+  }, [meeting, router]);
 
   useEffect(() => {
     if (!meeting?.workspace_id) return;
@@ -831,6 +883,7 @@ export default function MeetingDetailPage() {
   const dateStr = new Date(meeting.meeting_date ?? meeting.created_at).toLocaleDateString("en-US", {
     year: "numeric", month: "long", day: "numeric",
   });
+  const transcriptSpeakerMapping = speakerMapOverlay ?? speakerMapping;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -945,8 +998,9 @@ export default function MeetingDetailPage() {
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-10">
-        <div className="max-w-3xl space-y-6">
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <div className="min-h-0 flex-1 overflow-y-auto p-10">
+          <div className="mx-auto max-w-3xl space-y-6">
           {/* 뒤로가기 */}
           <button onClick={() => router.push("/meetings")} className="inline-flex items-center gap-1.5 text-sm text-[#64748b] hover:text-[#0a2540] transition-colors">
             <ArrowLeft className="h-4 w-4" /> Back to Meetings
@@ -970,6 +1024,20 @@ export default function MeetingDetailPage() {
               )}
               <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                 <StatusBadge status={meeting.status} />
+                {isReady && transcriptLines.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setTranscriptPanelOpen((prev) => !prev)}
+                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
+                      transcriptPanelOpen
+                        ? "border-[#ff6b35] bg-[#fff4f0] text-[#ff6b35]"
+                        : "border-[#e2e8f0] text-[#64748b] hover:bg-[#f8fafc]"
+                    }`}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    {transcriptPanelOpen ? "Hide transcript" : "View transcript"}
+                  </button>
+                ) : null}
                 {canEdit && !editMode && (
                   <button onClick={enterEditMode} type="button" className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] px-3 py-1.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc] transition-colors">
                     <Pencil className="h-3.5 w-3.5" /> Edit
@@ -1089,12 +1157,79 @@ export default function MeetingDetailPage() {
                     </div>
                   </dl>
                 </div>
-                <ProcessingProgress
-                  status={meeting.status}
-                  errorMessage={meeting.status === "error" ? meeting.error_message : null}
-                  onRetry={meeting.status === "error" ? handleRetryAnalysis : undefined}
-                  retryLoading={retryAnalysisLoading}
-                />
+                {meeting.status === "error" ? (
+                  <ProcessingProgress
+                    status={meeting.status}
+                    errorMessage={meeting.error_message ?? null}
+                    onRetry={handleRetryAnalysis}
+                    retryLoading={retryAnalysisLoading}
+                  />
+                ) : isProcessing(meeting.status) ? (
+                  analyzingUiStep === "timeline" ? (
+                    <>
+                      <MeetingPipelineSteps status={meeting.status} />
+                      <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] pt-5">
+                        {canDeleteMeeting ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteError(null);
+                              setDeleteModal(true);
+                            }}
+                            className="flex h-12 min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] bg-white px-6 text-[14px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc]"
+                          >
+                            Delete
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => setAnalyzingUiStep("preview")}
+                          className="flex h-12 items-center rounded-[10px] px-7 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90"
+                          style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <MeetingAiAnalysisPreview
+                        analyzing={isProcessing(meeting.status)}
+                        title={meeting.title ?? ""}
+                        meetingType={meeting.meeting_type}
+                        summary={meeting.summary}
+                        decisions={meeting.decisions}
+                        referencedDocuments={meeting.referenced_documents}
+                        actions={actionItems
+                          .filter((x) => x.status !== "cancelled")
+                          .map((x) => ({ content: x.content, assignee: x.assignee }))}
+                      />
+                      <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-[#e2e8f0] pt-5">
+                        <button
+                          type="button"
+                          onClick={() => setAnalyzingUiStep("timeline")}
+                          className="rounded-[10px] border-2 border-[#e2e8f0] bg-white px-5 py-2.5 text-[14px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc]"
+                        >
+                          Back
+                        </button>
+                        <div className="flex min-w-[min(100%,12rem)] flex-1 justify-end">
+                          {canDeleteMeeting ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDeleteError(null);
+                                setDeleteModal(true);
+                              }}
+                              className="flex min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 py-2.5 text-[14px] font-bold text-red-700 hover:bg-red-100/80"
+                            >
+                              Delete
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </>
+                  )
+                ) : null}
               </>
             )}
             {publishDone && (
@@ -1103,14 +1238,6 @@ export default function MeetingDetailPage() {
               </div>
             )}
           </div>
-
-          {!isReady && transcriptLines.length > 0 && (
-            <TranscriptViewer
-              transcripts={transcriptLines}
-              speakerMapping={speakerMapping}
-              members={members}
-            />
-          )}
 
           {/* 편집 모드 저장/취소 바 */}
           {editMode && canEdit && (
@@ -1161,6 +1288,8 @@ export default function MeetingDetailPage() {
                   members={members}
                   canEdit={canMapSpeakers}
                   onSaved={fetchMeeting}
+                  hideEmbeddedTranscript={transcriptLines.length > 0}
+                  onMappingLiveChange={setSpeakerMapOverlay}
                 />
               )}
 
@@ -1318,6 +1447,47 @@ export default function MeetingDetailPage() {
             </>
           )}
         </div>
+      </div>
+
+      {isReady && transcriptPanelOpen && transcriptLines.length > 0 ? (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-[35] bg-[#0a2540]/20 backdrop-blur-[1px] md:hidden"
+            aria-label="Close transcript"
+            onClick={() => setTranscriptPanelOpen(false)}
+          />
+          <aside
+            className="fixed inset-y-0 right-0 z-[38] flex h-full w-[min(440px,100vw)] flex-col border-[#e2e8f0] bg-white shadow-[0px_-4px_24px_rgba(10,37,64,0.08)] md:relative md:inset-auto md:z-0 md:h-full md:min-h-0 md:w-[400px] md:min-w-[400px] md:max-w-[400px] md:flex-shrink-0 md:border-l md:shadow-none"
+            aria-labelledby="draft-transcript-side-title"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e2e8f0] px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <FileText className="h-4 w-4 shrink-0 text-[#2e5c8a]" aria-hidden />
+                <h2 id="draft-transcript-side-title" className="text-[14px] font-bold text-[#0a2540]">
+                  Transcript
+                </h2>
+              </div>
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
+                aria-label="Close transcript panel"
+                onClick={() => setTranscriptPanelOpen(false)}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4">
+              <TranscriptViewer
+                bare
+                transcripts={transcriptLines}
+                speakerMapping={transcriptSpeakerMapping}
+                members={members}
+              />
+            </div>
+          </aside>
+        </>
+      ) : null}
       </div>
     </div>
   );

@@ -49,7 +49,7 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }) {
   const thanks = searchParams.get("thanks") === "1";
   const { workspaceId, workspaceName } = useWorkspaceContext();
 
-  const [row, setRow] = useState<LoadedMeeting | null>(undefined);
+  const [row, setRow] = useState<LoadedMeeting | null | undefined>(undefined);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);

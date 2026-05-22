@@ -370,7 +370,9 @@ function NewMeetingPageInner() {
     setConfirmAnalysisModal(false);
     setNetworkErrorModalOpen(false);
     setAnalysisInitiatedOpen(false);
-    if (pendingNavTarget) router.push(pendingNavTarget);
+    const target = pendingNavTarget;
+    setPendingNavTarget(null);
+    if (target) router.push(target);
   }
 
   function addParticipantFromMember(m: WorkspaceMemberRow): void {
@@ -723,36 +725,29 @@ function NewMeetingPageInner() {
         </div>
       ) : null}
 
-      {/* Leave confirmation modal */}
+      {/* Leave confirmation — draft summary (Figma 152:13946); same when dirty back/cancel */}
       {leaveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="relative w-full max-w-sm rounded-2xl bg-white p-7 shadow-xl mx-4">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-50">
-                <AlertTriangle className="h-5 w-5 text-[#ff6b35]" />
-              </div>
-              <div>
-                <p className="text-[15px] font-bold text-[#0a2540]">Leave this page?</p>
-                <p className="text-[13px] text-[#64748b]">All entered content will be lost.</p>
-              </div>
-            </div>
-            <div className="flex gap-3 mt-5">
-              <button
-                onClick={() => setLeaveModal(false)}
-                className="flex-1 h-11 rounded-xl border-2 border-[#e2e8f0] text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc] transition-colors"
-              >
-                Keep Editing
-              </button>
-              <button
-                onClick={confirmLeave}
-                className="flex-1 h-11 rounded-xl text-[14px] font-bold text-white hover:opacity-90 transition-opacity"
-                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-              >
-                Leave
-              </button>
-            </div>
-          </div>
-        </div>
+        <LeaveMeetingDraftModal
+          meetingTitle={title.trim() || "—"}
+          meetingTypeLabel={meetingTypeLabelFromValue(meetingType)}
+          dateTimeDisplay={formatDatetimeLocalEn(datetime) || "—"}
+          description={
+            description.trim()
+              ? description.trim().length > 220
+                ? `${description.trim().slice(0, 220)}…`
+                : description.trim()
+              : "—"
+          }
+          participantsLine={
+            participants.length > 0 ? participants.map((p) => p.value).join(", ") : "—"
+          }
+          responsibleLabel={
+            workspaceMembers.find((m) => m.user_id === responsibleUserId)?.label ?? "—"
+          }
+          recordingFileName={file?.name ?? "—"}
+          onKeepEditing={() => setLeaveModal(false)}
+          onDiscardAndLeave={confirmLeave}
+        />
       )}
 
       {/* Ready to analysis? — Figma 142:7434 / 142:7570 */}
@@ -1416,6 +1411,95 @@ function ConfirmRow({ label, value }: { label: string; value: string }) {
     <li className="break-words">
       <span className="font-medium">{label}:</span> {value || "—"}
     </li>
+  );
+}
+
+/** Figma 152:13946 — show entered draft summary, confirm discard on Cancel / dirty back-nav. */
+interface LeaveMeetingDraftModalProps {
+  meetingTitle: string;
+  meetingTypeLabel: string;
+  dateTimeDisplay: string;
+  description: string;
+  participantsLine: string;
+  responsibleLabel: string;
+  recordingFileName: string;
+  onKeepEditing: () => void;
+  onDiscardAndLeave: () => void;
+}
+
+function LeaveMeetingDraftModal({
+  meetingTitle,
+  meetingTypeLabel,
+  dateTimeDisplay,
+  description,
+  participantsLine,
+  responsibleLabel,
+  recordingFileName,
+  onKeepEditing,
+  onDiscardAndLeave,
+}: LeaveMeetingDraftModalProps) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 py-8 backdrop-blur-sm">
+      <div
+        className="flex w-full max-w-[460px] flex-col rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="leave-draft-title"
+        aria-describedby="leave-draft-desc"
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-50">
+            <AlertTriangle className="h-6 w-6 text-[#ff6b35]" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 id="leave-draft-title" className="text-[19px] font-bold leading-snug text-[#0a2540]">
+              Discard your draft?
+            </h2>
+            <p id="leave-draft-desc" className="mt-1.5 text-[13px] leading-relaxed text-[#64748b]">
+              You&apos;ve entered meeting details below. Nothing will be saved if you leave this page.
+              Still exit?
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 w-full rounded-[10px] border border-[#fed7aa] bg-[#fffbeb] px-[17px] py-4">
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="text-[11px]" aria-hidden>
+              📋
+            </span>
+            <span className="text-[13.6px] font-bold uppercase tracking-wide text-[#78716c]">
+              Draft you&apos;ll lose
+            </span>
+          </div>
+          <ul className="list-disc space-y-1.5 pl-4 text-[12.1px] leading-[19.5px] text-[#0a2540]">
+            <ConfirmRow label="Meeting title" value={meetingTitle || "—"} />
+            <ConfirmRow label="Meeting type" value={meetingTypeLabel} />
+            <ConfirmRow label="Date & time" value={dateTimeDisplay} />
+            <ConfirmRow label="Description" value={description} />
+            <ConfirmRow label="Participants" value={participantsLine} />
+            <ConfirmRow label="Responsible person" value={responsibleLabel} />
+            <ConfirmRow label="Recording" value={recordingFileName} />
+          </ul>
+        </div>
+
+        <div className="mt-8 flex w-full flex-col gap-3 sm:flex-row-reverse sm:justify-center">
+          <button
+            type="button"
+            onClick={onDiscardAndLeave}
+            className="h-12 w-full shrink-0 rounded-[10px] bg-[#ff8150] text-[15px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.2)] transition-opacity hover:opacity-90 sm:max-w-[200px]"
+          >
+            Discard and leave
+          </button>
+          <button
+            type="button"
+            onClick={onKeepEditing}
+            className="h-12 w-full shrink-0 rounded-[10px] border-2 border-[#e2e8f0] bg-white text-[15px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc] sm:max-w-[204px]"
+          >
+            Keep editing
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
