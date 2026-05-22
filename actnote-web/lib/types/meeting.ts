@@ -63,14 +63,6 @@ export interface MeetingDetail {
   action_items: ActionItem[];
 }
 
-export const PROCESSING_STEPS: MeetingStatus[] = [
-  "uploaded",
-  "transcribing",
-  "diarizing",
-  "summarizing",
-  "ready",
-];
-
 export const STEP_LABELS: Record<MeetingStatus, string> = {
   uploaded: "Uploaded",
   transcribing: "Transcribing…",
@@ -94,11 +86,4 @@ export const STATUS_DISPLAY: Record<MeetingStatus, string> = {
 
 export function isProcessing(status: MeetingStatus): boolean {
   return status === "transcribing" || status === "diarizing" || status === "summarizing" || status === "uploaded";
-}
-
-export function getProcessingProgress(status: MeetingStatus): number {
-  if (status === "error") return 0;
-  const idx = PROCESSING_STEPS.indexOf(status);
-  if (idx === -1) return 0;
-  return Math.round((idx / (PROCESSING_STEPS.length - 1)) * 100);
 }
