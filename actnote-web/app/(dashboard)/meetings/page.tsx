@@ -28,7 +28,7 @@ function tabActiveShellClasses(tabId: Tab): string {
     case "all":
       return "bg-[#f1f5f9] text-[#0a2540]";
     case "analyzing":
-      return "bg-green-50 text-green-800";
+      return "bg-[#dcfbe7] text-[#34c759]";
     case "drafts":
       return "bg-amber-50 text-amber-900";
     case "published":
@@ -44,7 +44,7 @@ function tabCountBadgeClasses(tabId: Tab, isActive: boolean): string {
     case "all":
       return "bg-[#e2e8f0] text-[#64748b]";
     case "analyzing":
-      return "bg-green-100 text-green-800";
+      return "bg-[#bbf7d0] text-[#15803d]";
     case "drafts":
       return "bg-amber-100 text-amber-900";
     case "published":
@@ -74,40 +74,21 @@ function sortMeetings(meetings: Meeting[], order: SortOrder): Meeting[] {
 
 export default function MeetingsPage() {
   const router = useRouter();
-  const { meetings, deleteMeeting, hydrated, reloadMeetings } = useMeetings();
+  const { meetings, deleteMeeting, hydrated } = useMeetings();
 
   const [activeTab, setActiveTab] = useState<Tab>("all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [page, setPage] = useState(1);
   const [deleteBanner, setDeleteBanner] = useState<string | null>(null);
-  const [retryBanner, setRetryBanner] = useState<string | null>(null);
-  const [retryingId, setRetryingId] = useState<string | null>(null);
 
-  async function handleDeleteMeeting(id: string) {
+  async function handleDeleteMeeting(id: string): Promise<boolean> {
     setDeleteBanner(null);
     const r = await deleteMeeting(id);
     if (!r.ok) {
       setDeleteBanner(r.error);
+      return false;
     }
-  }
-
-  async function handleRetryMeeting(id: string) {
-    const m = meetings.find((x) => x.id === id);
-    if (!m) return;
-    setRetryBanner(null);
-    setRetryingId(id);
-    const { retryMeetingPipeline } = await import("@/lib/meetings/retry-pipeline");
-    const r = await retryMeetingPipeline({
-      id: m.id,
-      workspace_id: m.workspace_id,
-      audio_url: m.audio_url,
-    });
-    setRetryingId(null);
-    if (!r.ok) {
-      setRetryBanner(r.error);
-      return;
-    }
-    await reloadMeetings();
+    return true;
   }
 
   // 탭 변경 시 페이지 리셋
@@ -150,18 +131,6 @@ export default function MeetingsPage() {
               type="button"
               onClick={() => setDeleteBanner(null)}
               className="shrink-0 font-semibold text-red-900 hover:underline"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-        {retryBanner && (
-          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex justify-between gap-4 items-start">
-            <span>{retryBanner}</span>
-            <button
-              type="button"
-              onClick={() => setRetryBanner(null)}
-              className="shrink-0 font-semibold text-amber-950 hover:underline"
             >
               Dismiss
             </button>
@@ -248,8 +217,6 @@ export default function MeetingsPage() {
                   key={meeting.id}
                   meeting={meeting}
                   onDelete={handleDeleteMeeting}
-                  onRetry={handleRetryMeeting}
-                  retrying={retryingId === meeting.id}
                   onClick={() => router.push(`/meetings/${meeting.id}`)}
                 />
               ))}

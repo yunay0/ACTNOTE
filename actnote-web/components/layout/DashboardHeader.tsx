@@ -160,7 +160,11 @@ export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardH
     if (!n.is_read) markRead(n.id);
     if (n.meeting_id) {
       setBellOpen(false);
-      router.push(`/meetings/${n.meeting_id}`);
+      if (n.type === "analysis_failed") {
+        router.push(`/meetings/${n.meeting_id}/analysis-error`);
+      } else {
+        router.push(`/meetings/${n.meeting_id}`);
+      }
     }
   }
 

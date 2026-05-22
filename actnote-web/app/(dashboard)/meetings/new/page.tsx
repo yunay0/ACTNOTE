@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useRef, useCallback, useEffect, useMemo, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { X, AlertTriangle } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
@@ -98,8 +98,13 @@ interface PipelineCheckpoint {
   storageUploadDone: boolean;
 }
 
-export default function NewMeetingPage() {
+function NewMeetingPageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const reattachMeetingId = useMemo(
+    () => (searchParams.get("reattach") ?? "").trim(),
+    [searchParams],
+  );
   const { workspaceId } = useWorkspaceContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -137,7 +142,9 @@ export default function NewMeetingPage() {
   const [leaveModal, setLeaveModal] = useState(false);
   const [pendingNavTarget, setPendingNavTarget] = useState<string | null>(null);
   const pipelineCheckpointRef = useRef<PipelineCheckpoint | null>(null);
-
+  /** Reattach-from-error: server-prefetched row + gate submit until hydrate. */
+  const [reattachLoadErr, setReattachLoadErr] = useState<string | null>(null);
+  const [reattachReady, setReattachReady] = useState(true);
   // 폼에 입력값이 하나라도 있으면 dirty
   const isDirty =
     title.trim() !== "" ||
@@ -150,6 +157,7 @@ export default function NewMeetingPage() {
     return Boolean(
       workspaceId &&
         membersLoaded &&
+        reattachReady &&
         title.trim() &&
         datetime &&
         file &&
@@ -160,6 +168,7 @@ export default function NewMeetingPage() {
   }, [
     workspaceId,
     membersLoaded,
+    reattachReady,
     title,
     datetime,
     file,
@@ -167,7 +176,6 @@ export default function NewMeetingPage() {
     participants.length,
     responsibleUserId,
   ]);
-
   const participantsNotYetAdded = useMemo(() => {
     const emails = new Set(participants.map((p) => p.value.toLowerCase()));
     return workspaceMembers.filter((m) => m.email && !emails.has(m.email.toLowerCase()));
@@ -257,6 +265,75 @@ export default function NewMeetingPage() {
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [participantPickerOpen]);
+
+  useEffect(() => {
+    if (!reattachMeetingId || !workspaceId) {
+      setReattachLoadErr(null);
+      setReattachReady(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function prefetchFailedMeeting(): Promise<void> {
+      setReattachReady(false);
+      setReattachLoadErr(null);
+
+      const supabase = createClient();
+      const { data: row, error } = await (supabase as any)
+        .from("meetings")
+        .select(
+          "id, title, meeting_date, meeting_type, description, responsible_user_id, participants, status",
+        )
+        .eq("id", reattachMeetingId)
+        .eq("workspace_id", workspaceId)
+        .is("deleted_at", null)
+        .maybeSingle();
+
+      if (cancelled) return;
+
+      if (error || !row) {
+        setReattachLoadErr(
+          typeof error?.message === "string"
+            ? error.message
+            : "That meeting ID was not found in this workspace.",
+        );
+        setReattachReady(true);
+        return;
+      }
+
+      if (typeof row.status === "string" && row.status !== "error") {
+        setReattachLoadErr(
+          "Reattach file is available only after an analysis stops with Error.",
+        );
+        setReattachReady(true);
+        return;
+      }
+
+      setTitle(
+        typeof row.title === "string" && row.title.trim() ? row.title : "Untitled meeting",
+      );
+      setDescription(typeof row.description === "string" ? row.description : "");
+      setMeetingType(typeof row.meeting_type === "string" ? row.meeting_type : "");
+
+      const partList = Array.isArray(row.participants) ? (row.participants as unknown[]) : [];
+      setParticipants(partList.map((em) => ({ id: crypto.randomUUID(), value: String(em) })));
+
+      const resp = typeof row.responsible_user_id === "string" ? row.responsible_user_id : null;
+      setResponsibleUserId(resp);
+
+      const iso = row.meeting_date as string | null | undefined;
+      const dl = isoUtcToDatetimeLocalInput(iso ?? null);
+      if (dl) setDatetime(dl);
+      setFile(null);
+      setReattachReady(true);
+    }
+
+    void prefetchFailedMeeting();
+    return () => {
+      cancelled = true;
+    };
+  }, [reattachMeetingId, workspaceId]);
 
   useEffect(() => {
     if (!analysisInitiatedOpen) return undefined;
@@ -398,6 +475,8 @@ export default function NewMeetingPage() {
         return;
       }
 
+      const ridTrim = reattachMeetingId.trim();
+
       const ext = file.name.split(".").pop() ?? "wav";
       let meetingId: string;
       let audioPath: string;
@@ -408,6 +487,46 @@ export default function NewMeetingPage() {
       if (useCheckpoint) {
         meetingId = useCheckpoint.meetingId;
         audioPath = useCheckpoint.audioPath;
+      } else if (ridTrim) {
+        const { data: updatedRow, error: updErr } = await (supabase as any)
+          .from("meetings")
+          .update({
+            title: title.trim(),
+            status: "uploaded",
+            meeting_date: new Date(datetime).toISOString(),
+            audio_file_size_bytes: file.size,
+            meeting_type: meetingType.trim(),
+            description: description.trim() || null,
+            responsible_user_id: responsibleUserId,
+            participants: participants.map((p) => p.value),
+            error_message: null,
+          })
+          .eq("id", ridTrim)
+          .eq("workspace_id", workspaceId)
+          .select("id")
+          .maybeSingle();
+
+        if (updErr || !updatedRow?.id) {
+          const raw =
+            typeof updErr?.message === "string"
+              ? updErr.message
+              : updErr ? String(updErr) : "Meeting update returned no rows.";
+          setLoading(false);
+          if (submissionLooksLikeNetworkFailure(raw)) {
+            openNetworkFailureModal();
+          } else {
+            setAlertMsg(`Failed to attach new recording to this meeting: ${raw}`);
+          }
+          return;
+        }
+
+        meetingId = ridTrim;
+        audioPath = `${meetingId}/audio.${ext}`;
+        pipelineCheckpointRef.current = {
+          meetingId,
+          audioPath,
+          storageUploadDone: false,
+        };
       } else {
         const { data: meetingRow, error: insertError } = await (supabase as any)
           .from("meetings")
@@ -452,8 +571,9 @@ export default function NewMeetingPage() {
       const ckUpload = pipelineCheckpointRef.current;
       const needUpload = !(ckUpload?.storageUploadDone);
 
-      const upsertHeader =
-        resume && ckUpload && !ckUpload.storageUploadDone ? "true" : "false";
+      const wantsStorageUpsert =
+        ridTrim.length > 0 ||
+        Boolean(resume && ckUpload && !ckUpload.storageUploadDone);
 
       if (needUpload) {
         setUploading(true);
@@ -468,7 +588,7 @@ export default function NewMeetingPage() {
           xhr.open("POST", `${supabaseUrl}/storage/v1/object/meetings/${audioPath}`);
           xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
           xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-          xhr.setRequestHeader("x-upsert", upsertHeader);
+          xhr.setRequestHeader("x-upsert", wantsStorageUpsert ? "true" : "false");
 
           xhr.upload.onprogress = (e) => {
             if (e.lengthComputable) {
@@ -577,7 +697,31 @@ export default function NewMeetingPage() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-white">
-      <DashboardHeader title="New Meeting" onBack={() => safeNavigate("/meetings")} />
+      <DashboardHeader
+        title={reattachMeetingId.trim() ? "Replace recording" : "New Meeting"}
+        onBack={() => safeNavigate("/meetings")}
+      />
+      {reattachMeetingId.trim() ? (
+        <div
+          className={`border-b px-10 py-3 text-[13px] ${
+            reattachLoadErr
+              ? "border-red-200 bg-red-50 text-red-900"
+              : "border-amber-200 bg-amber-50 text-amber-950"
+          }`}
+          role="status"
+        >
+          {!reattachReady ? (
+            <span>Loading existing meeting metadata…</span>
+          ) : reattachLoadErr ? (
+            <span>{reattachLoadErr}</span>
+          ) : (
+            <span>
+              Re-upload a recording below. Saving will restart AI analysis on the same meeting ({title.trim() ? `“${title.trim()}”` : "Untitled"})
+              .
+            </span>
+          )}
+        </div>
+      ) : null}
 
       {/* Leave confirmation modal */}
       {leaveModal && (
@@ -1311,6 +1455,15 @@ function parseDatetimeLocal(value: string): Date | null {
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
+/** Pre-fill datetime-local control from Postgres timestamptz / ISO strings. */
+function isoUtcToDatetimeLocalInput(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return null;
+  parsed.setMinutes(parsed.getMinutes() - parsed.getTimezoneOffset());
+  return parsed.toISOString().slice(0, 16);
+}
+
 /** Visible label uses English AM/PM; native control stays hidden but receives clicks (OS picker may still locale). */
 function formatDatetimeLocalEn(value: string): string {
   const dt = parseDatetimeLocal(value);
@@ -1333,5 +1486,23 @@ function Field({ label, required, children }: { label: string; required?: boolea
       </label>
       {children}
     </div>
+  );
+}
+
+export default function NewMeetingPage(): JSX.Element {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[50vh] flex-1 flex-col items-center justify-center gap-3 bg-white text-[#64748b]">
+          <div
+            aria-hidden
+            className="h-9 w-9 animate-spin rounded-full border-2 border-[#e2e8f0] border-t-[#ff6b35]"
+          />
+          <p className="text-[14px] font-medium">Loading form…</p>
+        </div>
+      }
+    >
+      <NewMeetingPageInner />
+    </Suspense>
   );
 }
