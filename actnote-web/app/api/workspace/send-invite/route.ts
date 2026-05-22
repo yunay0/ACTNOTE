@@ -40,6 +40,19 @@ export async function POST(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
+  // 초대는 오너/admin만 가능
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: callerMember } = await (supabase as any)
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", invite.workspace_id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!callerMember || !["owner", "admin"].includes(callerMember.role as string)) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [{ data: inviter }, { data: ws }] = await Promise.all([
     (supabase as any).from("users").select("name, email").eq("id", user.id).single(),

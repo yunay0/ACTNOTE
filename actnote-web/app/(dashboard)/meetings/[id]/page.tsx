@@ -8,6 +8,7 @@ import {
   AlertCircle, ExternalLink,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
 import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { StatusBadge } from "@/components/meetings/StatusBadge";
@@ -188,6 +189,7 @@ export default function MeetingDetailPage() {
 
   const [meeting, setMeeting] = useState<MeetingRow | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
@@ -399,12 +401,26 @@ export default function MeetingDetailPage() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (!cancelled) setCurrentUserId(user?.id ?? null);
+      if (!cancelled) {
+        setCurrentUserId(user?.id ?? null);
+        setCurrentUserEmail(user?.email ?? null);
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const meetingRole = useMemo<MeetingRole>(() => {
+    if (!meeting || !currentUserId) return "member";
+    return getMeetingRole(
+      currentUserId,
+      currentUserEmail,
+      meeting.workspace_id,
+      meeting,
+      memberships
+    );
+  }, [meeting, currentUserId, currentUserEmail, memberships]);
 
   useEffect(() => {
     if (meeting?.approval_status === "published") setEditMode(false);
@@ -439,8 +455,7 @@ export default function MeetingDetailPage() {
 
   function enterEditMode() {
     if (!meeting || meeting.approval_status === "published") return;
-    const role = memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role;
-    if (role !== "owner" && role !== "admin") return;
+    if (meetingRole !== "owner") return;
     setEditTitle(meeting.title ?? "");
     setEditSummary(meeting.summary ?? "");
     setEditDecisions((meeting.decisions ?? []).map((d) => d.content));
@@ -455,8 +470,7 @@ export default function MeetingDetailPage() {
 
   async function saveEdits() {
     if (!meeting || meeting.approval_status === "published") return;
-    const role = memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role;
-    if (role !== "owner" && role !== "admin") return;
+    if (meetingRole !== "owner") return;
     setSaving(true);
     const supabase = createClient();
 
@@ -543,8 +557,7 @@ export default function MeetingDetailPage() {
   // PUB-001: validate_meeting_for_publication RPC 사용
   async function handlePublishClick() {
     if (!meeting || publishing) return;
-    const role = memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role;
-    if (role !== "owner" && role !== "admin") return;
+    if (meetingRole !== "owner") return;
 
     const supabase = createClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -586,8 +599,7 @@ export default function MeetingDetailPage() {
 
   async function doPublish() {
     if (!meeting) return;
-    const role = memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role;
-    if (role !== "owner" && role !== "admin") return;
+    if (meetingRole !== "owner") return;
     setPublishing(true);
     setNotionWarningModal(false);
 
@@ -641,13 +653,8 @@ export default function MeetingDetailPage() {
 
   async function handleDelete() {
     if (!meeting) return;
-    const role = memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role ?? null;
-    const manage = role === "owner" || role === "admin";
-    const ownMeeting =
-      currentUserId != null &&
-      meeting.created_by != null &&
-      meeting.created_by === currentUserId;
-    if (!manage && !(role === "member" && ownMeeting)) return;
+    if (meetingRole !== "owner" && meetingRole !== "creator") return;
+    if (meetingRole === "creator" && meeting.approval_status === "published") return;
     setDeleteError(null);
     setDeleting(true);
     const supabase = createClient();
@@ -694,23 +701,56 @@ export default function MeetingDetailPage() {
 
   if (!meeting) return null;
 
+  const isPublished = meeting.approval_status === "published";
+  const isAnalyzingOrError = isProcessing(meeting.status) || meeting.status === "error";
+
+  // 비참석 멤버: Published 외 모두 차단
+  if (meetingRole === "member" && !isPublished) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-10 text-center">
+        <p className="text-[16px] font-semibold text-[#0a2540]">Access restricted</p>
+        <p className="text-sm text-[#64748b]">
+          This meeting is not yet published. Only participants and owners can view it before publication.
+        </p>
+        <button
+          onClick={() => router.push("/meetings")}
+          className="mt-2 flex items-center gap-1.5 rounded-xl bg-[#0a2540] px-5 py-2.5 text-sm font-bold text-white hover:opacity-90"
+        >
+          <ArrowLeft className="h-4 w-4" /> Back to Meetings
+        </button>
+      </div>
+    );
+  }
+
+  // 참석자: Analyzing/Error 상태는 오너·생성자만 열람 가능
+  if (meetingRole === "participant" && isAnalyzingOrError) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-10 text-center">
+        <p className="text-[16px] font-semibold text-[#0a2540]">Analysis in progress</p>
+        <p className="text-sm text-[#64748b]">
+          You can view this meeting once the draft is ready.
+        </p>
+        <button
+          onClick={() => router.push("/meetings")}
+          className="mt-2 flex items-center gap-1.5 rounded-xl bg-[#0a2540] px-5 py-2.5 text-sm font-bold text-white hover:opacity-90"
+        >
+          <ArrowLeft className="h-4 w-4" /> Back to Meetings
+        </button>
+      </div>
+    );
+  }
+
   const isReady = meeting.status === "ready" || meeting.status === "published";
-  const myRole =
-    memberships.find((x) => x.workspace_id === meeting.workspace_id)?.role ?? null;
-  /** 발행 RPC(`set_meeting_ready` / `publish_meeting`)과 동일: owner | admin */
-  const canManagePublication = myRole === "owner" || myRole === "admin";
-  const canEdit = isReady && meeting.approval_status !== "published" && canManagePublication;
+  /** 발행·수정·삭제(모든 상태): 오너만 (docs/permissions.md §2) */
+  const canManagePublication = meetingRole === "owner";
+  const canEdit = isReady && !isPublished && canManagePublication;
   const canPublish = canEdit;
-  /** DRAFT-010: any workspace member may confirm speaker labels while meeting is still draft */
-  const canMapSpeakers =
-    isReady && meeting.approval_status !== "published" && myRole != null;
-  /** docs/permissions.md: Owner는 전체, Member는 본인이 생성한 회의만 */
+  /** 화자 정보 편집: 오너만 (docs/permissions.md §2) */
+  const canMapSpeakers = isReady && !isPublished && meetingRole === "owner";
+  /** 오너: 모든 상태 삭제 / 생성자: published 전 상태만 삭제 */
   const canDeleteMeeting =
-    canManagePublication ||
-    (myRole === "member" &&
-      currentUserId != null &&
-      meeting.created_by != null &&
-      meeting.created_by === currentUserId);
+    meetingRole === "owner" ||
+    (meetingRole === "creator" && !isPublished);
   const dateStr = new Date(meeting.meeting_date ?? meeting.created_at).toLocaleDateString("en-US", {
     year: "numeric", month: "long", day: "numeric",
   });

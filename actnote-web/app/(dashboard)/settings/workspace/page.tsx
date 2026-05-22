@@ -239,6 +239,13 @@ export default function WorkspaceSettingsPage() {
     loadWorkspace();
   }, [loadWorkspace]);
 
+  // 일반 멤버는 워크스페이스 관리 화면 접근 차단 (docs/permissions.md §2)
+  useEffect(() => {
+    if (!loading && currentDbRole === "member") {
+      router.replace("/settings/personal");
+    }
+  }, [loading, currentDbRole, router]);
+
   /** Owner email deep link: /settings/workspace?workspace=<uuid>&join=requests */
   useEffect(() => {
     const wsParam = searchParams.get("workspace");

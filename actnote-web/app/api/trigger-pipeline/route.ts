@@ -34,6 +34,19 @@ export async function POST(request: Request) {
     );
   }
 
+  // 워크스페이스 멤버인지 확인 (소유권 검증)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: member } = await (supabase as any)
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", workspace_id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!member) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const modalUrl = process.env.MODAL_PIPELINE_TRIGGER_URL?.trim();
   const triggerSecret = process.env.MODAL_TRIGGER_SECRET?.trim();
   if (!modalUrl || !triggerSecret) {
