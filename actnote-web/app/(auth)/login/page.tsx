@@ -6,6 +6,7 @@ import { AuthSplitShell } from "@/components/auth/AuthSplitShell";
 import { AuthSocialChrome } from "@/components/auth/AuthSocialChrome";
 import { PersonalEmailBlockModal } from "@/components/auth/PersonalEmailBlockModal";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
+import { extractInviteEmailFromReturnPath } from "@/lib/auth/invite-token";
 
 /**
  * Figma S-02-01 (137:11440) — Google-only sign-in; email/password removed.
@@ -17,6 +18,11 @@ function LoginForm() {
   const verified = searchParams.get("verified") === "1";
   const urlError = searchParams.get("error");
   const blockedDomain = searchParams.get("domain") ?? "";
+  const inviteEmailFromQuery = searchParams.get("invite_email")?.trim();
+  const loginHintEmail =
+    (inviteEmailFromQuery && inviteEmailFromQuery.includes("@")
+      ? inviteEmailFromQuery
+      : extractInviteEmailFromReturnPath(returnTo ?? null)) ?? null;
 
   const isPersonalEmailBlocked = urlError === "personal_email";
 
@@ -30,6 +36,12 @@ function LoginForm() {
     queryBanner = {
       kind: "error",
       text: "This verification link is invalid or has expired. Continue with Google or contact support.",
+    };
+  } else if (urlError === "account_deleted") {
+    queryBanner = {
+      kind: "error",
+      text:
+        "This account is no longer active in ACTNOTE (Supabase auth may still show Google sign-in — we cleared your session here). Continue with Google to sign up fresh if needed.",
     };
   } else if (urlError === "auth_failed") {
     queryBanner = {
@@ -69,7 +81,10 @@ function LoginForm() {
           </p>
         ) : null}
 
-        <AuthSocialChrome redirectAfterAuth={returnTo ?? "/workspace/select"} />
+        <AuthSocialChrome
+          redirectAfterAuth={returnTo ?? "/workspace/select"}
+          loginHintEmail={loginHintEmail}
+        />
       </AuthSplitShell>
     </>
   );

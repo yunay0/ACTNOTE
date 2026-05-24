@@ -22,8 +22,26 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
-      const { data: { user } } = await supabase.auth.getUser();
-      const email = user?.email ?? "";
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        await supabase.auth.signOut();
+        return NextResponse.redirect(`${origin}/login?error=auth_failed`);
+      }
+
+      const { data: dbUser, error: profileErr } = await supabase
+        .from("users")
+        .select("id")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (profileErr || !dbUser) {
+        await supabase.auth.signOut();
+        return NextResponse.redirect(`${origin}/login?error=account_deleted`);
+      }
+
+      const email = user.email ?? "";
 
       if (isFreeEmailDomain(email)) {
         const domain = email.split("@")[1] ?? "";

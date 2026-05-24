@@ -30,22 +30,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const rawInvite = (body as { invite?: InviteRow }).invite;
-  if (!rawInvite?.token || !rawInvite.workspace_id || !rawInvite.invited_email) {
-    return NextResponse.json({ error: "invite with token, workspace_id, invited_email required" }, { status: 400 });
+  const invite = (body as { invite?: InviteRow }).invite;
+  if (!invite?.id || !invite?.token || !invite.workspace_id || !invite.invited_email) {
+    return NextResponse.json(
+      { error: "invite with id, token, workspace_id, invited_email required" },
+      { status: 400 },
+    );
   }
 
-  // Bug 5: 프론트가 보낸 invited_email 을 그대로 신뢰하지 말고 lower+trim 으로 정규화.
-  // create_invite RPC 가 LOWER(TRIM(...)) 으로 저장하므로 메일 발송 주소도 같은 정규화를 유지해야
-  // 이후 accept_invite 이메일 비교와 어긋나지 않는다.
-  const normalizedEmail = rawInvite.invited_email.trim().toLowerCase();
-  if (!normalizedEmail.includes("@")) {
-    return NextResponse.json({ error: "invalid invited_email" }, { status: 400 });
-  }
-  const invite: InviteRow = { ...rawInvite, invited_email: normalizedEmail };
+  const normalizedEmail = invite.invited_email.trim().toLowerCase();
 
-  if (isFreeEmailDomain(invite.invited_email)) {
-    const domain = invite.invited_email.split("@")[1] ?? "";
+  if (isFreeEmailDomain(normalizedEmail)) {
+    const domain = normalizedEmail.split("@")[1] ?? "";
     return NextResponse.json(
       { error: "personal_email_not_allowed", domain },
       { status: 400 }
@@ -72,9 +68,20 @@ export async function POST(req: NextRequest) {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sb = supabase as any;
+  const { error: dedupeErr } = await sb.rpc("revoke_pending_workspace_invites_except_one", {
+    p_keep_invite_id: invite.id,
+  });
+  if (dedupeErr) {
+    console.warn(
+      "[send-invite] revoke_pending_workspace_invites_except_one:",
+      dedupeErr.message,
+    );
+  }
+
   const [{ data: inviter }, { data: ws }] = await Promise.all([
-    (supabase as any).from("users").select("name, email").eq("id", user.id).single(),
-    (supabase as any).from("workspaces").select("name").eq("id", invite.workspace_id).single(),
+    sb.from("users").select("name, email").eq("id", user.id).single(),
+    sb.from("workspaces").select("name").eq("id", invite.workspace_id).single(),
   ]);
 
   const inviterName: string = inviter?.name || (inviter?.email?.split("@")[0] ?? "A teammate");
@@ -99,7 +106,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (isSmtpConfigured()) {
-    const out = await sendViaSmtp(invite.invited_email, mail, {
+    const out = await sendViaSmtp(normalizedEmail, mail, {
       replyTo: inviter?.email || undefined,
     });
     if (!out.ok) {
@@ -122,7 +129,7 @@ export async function POST(req: NextRequest) {
 
   const resendKey = process.env.RESEND_API_KEY?.trim();
   if (resendKey) {
-    const out = await sendViaResend(invite.invited_email, mail);
+    const out = await sendViaResend(normalizedEmail, mail);
     if (!out.ok) {
       const notice_code = isResendRecipientRestrictedError(out.message)
         ? "RESEND_RECIPIENT_RESTRICTED"

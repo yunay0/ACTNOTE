@@ -1,14 +1,27 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
 import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
 import { MAX_WORKSPACE_NAME_LENGTH, validateWorkspaceName } from "@/lib/workspace-name";
 
-export default function OnboardingPage() {
+function OnboardingInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    const raw = searchParams.get("invite_slug")?.trim();
+    if (!raw) return;
+    const emailHint = searchParams.get("invite_email")?.trim();
+    const qs =
+      emailHint && emailHint.includes("@")
+        ? `?invite_email=${encodeURIComponent(emailHint)}`
+        : "";
+    router.replace(`/invite/${raw}${qs}`);
+  }, [router, searchParams]);
+
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -19,6 +32,23 @@ export default function OnboardingPage() {
     supabase.auth.getUser().then(async ({ data }) => {
       if (!data.user) {
         router.replace("/login");
+        return;
+      }
+
+      const { data: memberships, error: memErr } = await (supabase as any)
+        .from("workspace_members")
+        .select("workspace_id")
+        .eq("user_id", data.user.id)
+        .limit(1);
+
+      if (memErr) {
+        setError(memErr.message);
+        setCheckingAuth(false);
+        return;
+      }
+
+      if ((memberships?.length ?? 0) > 0) {
+        router.replace("/workspace/select");
         return;
       }
 
@@ -87,6 +117,15 @@ export default function OnboardingPage() {
   const charCount = name.length;
   const isDisabled = name.trim().length === 0 || loading;
 
+  const inviteSlugEarly = searchParams.get("invite_slug")?.trim();
+  if (inviteSlugEarly) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#f8fafc]">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
+      </div>
+    );
+  }
+
   if (checkingAuth) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#f8fafc]">
@@ -101,7 +140,6 @@ export default function OnboardingPage() {
 
       <main className="flex flex-1 justify-center px-6 py-[80px] sm:px-10">
         <div className="flex w-full max-w-[520px] flex-col justify-center">
-          {/* Figma 146:7540 — step 1 / 2 indicator */}
           <div className="pb-12">
             <div className="flex w-full gap-3">
               <div className="h-1 flex-1 rounded-[2px] bg-[#ff6b35]" />
@@ -177,5 +215,19 @@ export default function OnboardingPage() {
         </div>
       </main>
     </OnboardingLayout>
+  );
+}
+
+export default function OnboardingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-screen items-center justify-center bg-[#f8fafc]">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
+        </div>
+      }
+    >
+      <OnboardingInner />
+    </Suspense>
   );
 }
