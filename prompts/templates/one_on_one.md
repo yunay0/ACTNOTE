@@ -73,10 +73,22 @@ Identify documents, materials, or references mentioned in the meeting.
 좋은 예시: "PRD v2", "Q3 roadmap", "프로젝트 기획서", "와이어프레임 v3"
 나쁜 예시: "문서" (너무 일반적), "회의 자료" (모호함), "지난주에 본 거" (구체적이지 않음)
 
+[Key Topics — required]
+Write "key_topics" as an English bullet list (T1., T2., … or plain lines).
+Capture main themes: performance, growth, feedback, role expectations, blockers.
+Use "" if nothing beyond the summary.
+
+[Follow-up — required]
+Write "follow_up" as an English bullet list (F1., F2., …).
+Items to revisit in the next 1:1 (open questions, deferred topics, check-ins).
+Use "" when none.
+
 Output schema:
 {
   "title": "...",
   "summary": "...",
+  "key_topics": "...",
+  "follow_up": "...",
   "decisions": ["..."],
   "action_items": [
     {

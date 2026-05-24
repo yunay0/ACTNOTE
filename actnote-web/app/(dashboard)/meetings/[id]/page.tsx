@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft, CalendarDays, CheckCircle2, ListTodo, Sparkles,
-  Clock, User, Send, Pencil, Trash2, Plus, X, Save,
+  ArrowLeft, CalendarDays, ListTodo,
+  Send, Pencil, Trash2, Plus, X, Save,
   AlertCircle, ExternalLink,
   FileText,
+  Check,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
@@ -25,6 +26,16 @@ import { MeetingPipelineSteps } from "@/components/meetings/MeetingPipelineSteps
 import { MeetingAiAnalysisPreview } from "@/components/meetings/MeetingAiAnalysisPreview";
 import { retryMeetingPipeline } from "@/lib/meetings/retry-pipeline";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
+import {
+  meetingAnalysisSegmentsForRow,
+  mergeAnalysisExtrasIntoDraftDoc,
+  readDraftAnalysisText,
+} from "@/lib/meetings/meeting-analysis-layout";
+import { DraftGuidanceSidebar } from "@/components/meetings/DraftGuidanceSidebar";
+import { DraftOverviewPanel } from "@/components/meetings/DraftOverviewPanel";
+import { MeetingDraftActionItemsSection } from "@/components/meetings/MeetingDraftActionItemsSection";
+import { MeetingAnalysisResultsBlock } from "@/components/meetings/MeetingAnalysisResultsBlock";
+import { draftHasActionPublishBlockers } from "@/lib/meetings/draft-action-gaps";
 import type { MeetingStatus } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 import { workspaceMemberDisplayName } from "@/lib/user/member-display";
@@ -47,6 +58,7 @@ interface MeetingRow {
   description: string | null;
   participants: string[];
   responsible_user_id: string | null;
+  duration_seconds?: number | null;
 }
 
 interface ActionItem {
@@ -55,6 +67,7 @@ interface ActionItem {
   assignee: string | null;
   assignee_user_id: string | null;
   due_date: string | null;
+  due_at: string | null;
   confidence: number | null;
   status: "open" | "done" | "cancelled";
 }
@@ -68,6 +81,7 @@ function emptyDraftActionItem(): ActionItem {
     assignee: null,
     assignee_user_id: null,
     due_date: null,
+    due_at: null,
     confidence: null,
     status: "open",
   };
@@ -93,11 +107,6 @@ function isValidYmd(value: string | null): boolean {
   return (
     dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d
   );
-}
-
-/** Actnote orange border when draft row has content but assignee/due is missing. */
-function draftActionAccentBorder(active: boolean): string {
-  return active ? "border-2 border-[#ff6b35]" : "border border-[#e2e8f0]";
 }
 
 interface Member {
@@ -198,7 +207,6 @@ export default function MeetingDetailPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [publishDone, setPublishDone] = useState(false);
   /** 발행 전 DB에 현재 Speakers & transcript 드롭다운 상태를 반영 (검증·RPC 와 동기화) */
   const speakerMappingRef = useRef<SpeakerMappingSectionHandle>(null);
 
@@ -207,6 +215,12 @@ export default function MeetingDetailPage() {
   const [editTitle, setEditTitle] = useState("");
   const [editSummary, setEditSummary] = useState("");
   const [editDecisions, setEditDecisions] = useState<string[]>([]);
+  /** `meetings.ai_draft_notes` JSON (speaker_*·분석 확장 필드 보존) */
+  const [draftNotesDoc, setDraftNotesDoc] = useState<Record<string, unknown>>({});
+  const [editKeyTopics, setEditKeyTopics] = useState("");
+  const [editRisksAndIssues, setEditRisksAndIssues] = useState("");
+  const [editFollowUp, setEditFollowUp] = useState("");
+  const [editBlockers, setEditBlockers] = useState("");
   const [editActionItems, setEditActionItems] = useState<ActionItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [saving, setSaving] = useState(false);
@@ -220,8 +234,10 @@ export default function MeetingDetailPage() {
     undefined,
   );
 
-  // 삭제 (STATUS-002)
+  // 삭제 (STATUS-002) — draft 편집 중 Delete 시 오버레이·폭 분기 (Figma 157:8979 vs 157:9196)
   const [deleteModal, setDeleteModal] = useState(false);
+  /** true: 편집 모드 스티키에서 연 경우 — 진한 블루 배경 블러 + max-w-[480px] */
+  const [deleteModalDraftEditChrome, setDeleteModalDraftEditChrome] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -233,8 +249,12 @@ export default function MeetingDetailPage() {
   const [notionWarningModal, setNotionWarningModal] = useState(false);
   const [notionConnected, setNotionConnected] = useState<boolean | null>(null);
   const [retryAnalysisLoading, setRetryAnalysisLoading] = useState(false);
-  /** 분석 진행 중: 진행 타임라인 vs AI 결과 미리보기 (147:9848 → 147:10026). */
-  const [analyzingUiStep, setAnalyzingUiStep] = useState<"timeline" | "preview">("timeline");
+  /** 발행 성공 후 Figma S-20 모달 + 홈 이동 카운트다운 (157:8809) */
+  const [publishSuccessModal, setPublishSuccessModal] = useState(false);
+  const [publishHomeCountdown, setPublishHomeCountdown] = useState(3);
+  const publishSuccessNavLockRef = useRef(false);
+  /** 분석 완료 Draft: 요약 카드 단계 ↔ AI 상세 분석 단계 */
+  const [draftSurfaceStep, setDraftSurfaceStep] = useState<"overview" | "detail">("overview");
 
   const loadMembers = useCallback(async (wsId: string) => {
     const supabase = createClient();
@@ -275,7 +295,7 @@ export default function MeetingDetailPage() {
       (supabase as any)
         .from("meetings")
         .select(
-          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id, created_by, error_message, description, meeting_type, participants, responsible_user_id, ai_draft_notes"
+          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id, created_by, error_message, description, meeting_type, participants, responsible_user_id, ai_draft_notes, duration_seconds"
         )
         .eq("id", id)
         .is("deleted_at", null)
@@ -316,6 +336,8 @@ export default function MeetingDetailPage() {
       referenced_documents: normalizeReferencedDocuments(row.referenced_documents),
       participants: normalizeParticipants(row.participants),
       meeting_type: typeof row.meeting_type === "string" ? row.meeting_type : null,
+      duration_seconds:
+        typeof row.duration_seconds === "number" ? row.duration_seconds : null,
       description: typeof row.description === "string" ? row.description : null,
       created_by:
         createdByRaw != null && createdByRaw !== ""
@@ -374,6 +396,7 @@ export default function MeetingDetailPage() {
       }
     }
     setSpeakerMapping(nextMap);
+    setDraftNotesDoc(draftObj ?? {});
 
     if (!txRes.error && Array.isArray(txRes.data)) {
       setTranscriptLines(
@@ -392,7 +415,7 @@ export default function MeetingDetailPage() {
 
     const { data: items } = await (supabase as any)
       .from("action_items")
-      .select("id, content, assignee, assignee_user_id, due_date, confidence, status")
+      .select("id, content, assignee, assignee_user_id, due_date, due_at, confidence, status")
       .eq("meeting_id", id)
       .is("valid_until", null)
       .order("created_at", { ascending: true });
@@ -401,12 +424,20 @@ export default function MeetingDetailPage() {
       ...row,
       assignee_user_id: row.assignee_user_id ?? null,
       due_date: toYmdInput(row.due_date != null ? String(row.due_date) : null),
+      due_at: row.due_at != null ? String(row.due_at) : null,
     }));
     setActionItems(normalized);
     setLoading(false);
   }, [id]);
 
   useEffect(() => { fetchMeeting(); }, [fetchMeeting]);
+
+  /** 다른 회의 상세로 이동 시 이전 페이지의 분석 초안 상태가 보이지 않도록 리셋 */
+  useEffect(() => {
+    setDraftNotesDoc({});
+    setDraftSurfaceStep("overview");
+    setPublishSuccessModal(false);
+  }, [id]);
 
   /** View Draft email links — ?workspace=<id> aligns context with Home draft card UX */
   useEffect(() => {
@@ -514,9 +545,14 @@ export default function MeetingDetailPage() {
     setEditTitle(meeting.title ?? "");
     setEditSummary(meeting.summary ?? "");
     setEditDecisions((meeting.decisions ?? []).map((d) => d.content));
+    setEditKeyTopics(readDraftAnalysisText(draftNotesDoc, "key_topics"));
+    setEditRisksAndIssues(readDraftAnalysisText(draftNotesDoc, "risks_and_issues"));
+    setEditFollowUp(readDraftAnalysisText(draftNotesDoc, "follow_up"));
+    setEditBlockers(readDraftAnalysisText(draftNotesDoc, "blockers"));
     setEditActionItems(actionItems.map((a) => ({ ...a })));
     loadMembers(meeting.workspace_id);
     setEditMode(true);
+    setDraftSurfaceStep("detail");
   }
 
   function cancelEdit() {
@@ -535,15 +571,29 @@ export default function MeetingDetailPage() {
 
     const trimmedDecisions = editDecisions.map((d) => d.trim()).filter(Boolean);
 
-    await (supabase as any)
+    const mergedDraft = mergeAnalysisExtrasIntoDraftDoc(draftNotesDoc, meeting.meeting_type, {
+      key_topics: editKeyTopics,
+      risks_and_issues: editRisksAndIssues,
+      follow_up: editFollowUp,
+      blockers: editBlockers,
+    });
+
+    const { error: meetUpErr } = await (supabase as any)
       .from("meetings")
       .update({
         title: editTitle.trim() || null,
         summary: editSummary || null,
         decisions: trimmedDecisions.map((d) => ({ content: d })),
+        ai_draft_notes: JSON.stringify(mergedDraft),
       })
       .eq("id", meeting.id);
 
+    if (meetUpErr) {
+      alert(`Failed to save meeting: ${meetUpErr.message}`);
+      return false;
+    }
+
+    setDraftNotesDoc(mergedDraft);
     const nowIso = new Date().toISOString();
     const { error: decExpireErr } = await (supabase as any)
       .from("decisions")
@@ -613,6 +663,8 @@ export default function MeetingDetailPage() {
         assignee: item.assignee,
         assignee_user_id: item.assignee_user_id ?? null,
         due_date: dueNorm && isValidYmd(dueNorm) ? dueNorm : null,
+        due_at:
+          typeof item.due_at === "string" && item.due_at.trim() ? item.due_at.trim() : null,
         status: item.status,
       };
       if (item.id.startsWith(NEW_ACTION_ITEM_PREFIX)) {
@@ -641,6 +693,63 @@ export default function MeetingDetailPage() {
 
     await fetchMeeting();
     return true;
+  }
+
+  /**
+   * 액션 담당/마감 인라인 수정(Figma 오렌지 셀) — 즉시 DB 반영 후 로컬 상태 동기화.
+   */
+  async function patchDraftAction(
+    rowId: string,
+    patch: { assignee?: string | null; assignee_user_id?: string | null; due_date?: string | null; due_at?: string | null },
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (!meeting || meeting.approval_status === "published") return { ok: false, error: "Not editable." };
+    if (meetingRole !== "owner") return { ok: false, error: "Permission denied." };
+
+    const supabase = createClient();
+    const sanitized: Record<string, string | null> = {};
+    if (patch.assignee !== undefined) sanitized.assignee = patch.assignee;
+    if (patch.assignee_user_id !== undefined) sanitized.assignee_user_id = patch.assignee_user_id;
+    if (patch.due_date !== undefined) {
+      const raw = patch.due_date == null ? "" : String(patch.due_date).trim();
+      sanitized.due_date = raw ? raw.slice(0, 10) : null;
+    }
+    if (patch.due_at !== undefined) sanitized.due_at = patch.due_at;
+
+    const { data, error } = await (supabase as any)
+      .from("action_items")
+      .update(sanitized)
+      .eq("id", rowId)
+      .select("due_date, due_at, assignee, assignee_user_id")
+      .maybeSingle();
+
+    if (error) return { ok: false, error: error.message };
+
+    const row = data as {
+      due_date: string | null;
+      due_at: string | null;
+      assignee: string | null;
+      assignee_user_id: string | null;
+    } | null;
+
+    const normalize = (partial: Partial<ActionItem>) => {
+      setActionItems((prev) =>
+        prev.map((a) => (a.id === rowId ? { ...a, ...partial } : a)),
+      );
+      setEditActionItems((prev) =>
+        prev.map((a) => (a.id === rowId ? { ...a, ...partial } : a)),
+      );
+    };
+
+    if (row) {
+      normalize({
+        due_date: row.due_date ? toYmdInput(String(row.due_date)) : null,
+        due_at: row.due_at ? String(row.due_at) : null,
+        assignee: row.assignee,
+        assignee_user_id: row.assignee_user_id,
+      });
+    }
+
+    return { ok: true };
   }
 
   async function saveEdits() {
@@ -776,7 +885,8 @@ export default function MeetingDetailPage() {
 
     setMeeting((prev) => prev ? { ...prev, approval_status: "published" } : prev);
     setEditMode(false);
-    setPublishDone(true);
+    publishSuccessNavLockRef.current = false;
+    setPublishSuccessModal(true);
     setPublishing(false);
   }
 
@@ -793,9 +903,22 @@ export default function MeetingDetailPage() {
       setDeleting(false);
       return;
     }
+    setDeleteModalDraftEditChrome(false);
     setDeleteModal(false);
     setDeleting(false);
     router.push("/meetings");
+  }
+
+  function openDeleteMeetingModal(fromDraftEditChrome: boolean): void {
+    setDeleteError(null);
+    setDeleteModalDraftEditChrome(fromDraftEditChrome);
+    setDeleteModal(true);
+  }
+
+  function closeDeleteMeetingModal(): void {
+    setDeleteError(null);
+    setDeleteModalDraftEditChrome(false);
+    setDeleteModal(false);
   }
 
   const responsibleDisplayLabel = useMemo(() => {
@@ -804,6 +927,40 @@ export default function MeetingDetailPage() {
     if (!mem) return null;
     return mem.email ? `${mem.displayName} (${mem.email})` : mem.displayName;
   }, [meeting?.responsible_user_id, members]);
+
+  const analysisSegments = useMemo(
+    () => meetingAnalysisSegmentsForRow(meeting?.meeting_type ?? null),
+    [meeting?.meeting_type],
+  );
+
+  const publishBlockedByActions = useMemo(
+    () => draftHasActionPublishBlockers(actionItems),
+    [actionItems],
+  );
+
+  const finalizePublishSuccessNavigation = useCallback(() => {
+    if (publishSuccessNavLockRef.current) return;
+    publishSuccessNavLockRef.current = true;
+    setPublishSuccessModal(false);
+    router.push("/meetings");
+  }, [router]);
+
+  /** 발행 성공 모달 카운트다운 — 3→2→1초 후 자동 홈 이동 (Figma 157:8809) */
+  useEffect(() => {
+    if (!publishSuccessModal) return undefined;
+    setPublishHomeCountdown(3);
+    let remaining = 3;
+    const timerId = window.setInterval(() => {
+      if (remaining === 1) {
+        window.clearInterval(timerId);
+        finalizePublishSuccessNavigation();
+        return;
+      }
+      remaining -= 1;
+      setPublishHomeCountdown(remaining);
+    }, 1000);
+    return () => window.clearInterval(timerId);
+  }, [publishSuccessModal, finalizePublishSuccessNavigation]);
 
   // ─── 로딩 / 에러 ────────────────────────────────────────────
   if (loading) {
@@ -885,34 +1042,75 @@ export default function MeetingDetailPage() {
   });
   const transcriptSpeakerMapping = speakerMapOverlay ?? speakerMapping;
 
+  const draftStickyChrome = Boolean(canEdit && draftSurfaceStep === "detail");
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* 삭제 확인 모달 (STATUS-002) */}
       {deleteModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-7 shadow-xl mx-4">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50">
-                <Trash2 className="h-5 w-5 text-red-500" />
-              </div>
-              <div>
-                <p className="text-[15px] font-bold text-[#0a2540]">Delete this meeting?</p>
-                <p className="text-[13px] text-[#64748b]">This action cannot be undone.</p>
-              </div>
+        <div
+          className={
+            deleteModalDraftEditChrome
+              ? "fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(10,37,64,0.6)] p-4 backdrop-blur-[2px]"
+              : "fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+          }
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-draft-dialog-title"
+            className={`mx-4 flex w-full flex-col items-center gap-4 rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)] ${
+              deleteModalDraftEditChrome ? "max-w-[480px]" : "max-w-[440px]"
+            }`}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div
+              className="flex size-16 shrink-0 items-center justify-center rounded-full bg-[#fef2f2]"
+              aria-hidden
+            >
+              <span className="text-[29px] leading-none">🗑️</span>
             </div>
-            {deleteError && (
-              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
+
+            <div className="w-full pt-1 text-center">
+              <h2 id="delete-draft-dialog-title" className="text-2xl font-bold leading-snug text-[#0a2540]">
+                Delete this page?
+              </h2>
+            </div>
+
+            <p className="text-center text-[14px] leading-6 text-[#64748b]">
+              Are you sure you want to delete this?
+            </p>
+
+            <div className="flex w-full flex-col gap-1.5 rounded-[10px] border border-[#fee2e2] bg-[#fef2f2] px-[17px] pb-6 pt-6">
+              <div className="flex items-center gap-1.5 text-[13.6px] font-bold leading-tight text-[#dc2626]">
+                <span aria-hidden className="text-[11px]">
+                  🗑️
+                </span>
+                <span>What will be deleted:</span>
+              </div>
+              <p className="text-[12px] leading-[19.5px] text-[#991b1b]">
+                The following information will be permanently lost:
+              </p>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-[12.1px] leading-normal text-[#991b1b]">
+                <li>Meeting title and details</li>
+                <li>Key Topics</li>
+                <li>Summary</li>
+                <li>Action Items</li>
+              </ul>
+            </div>
+
+            {deleteError ? (
+              <div className="w-full rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
                 {deleteError}
               </div>
-            )}
-            <div className="flex gap-3 mt-5">
+            ) : null}
+
+            <div className="flex w-full gap-3 pt-2">
               <button
                 type="button"
-                onClick={() => {
-                  setDeleteError(null);
-                  setDeleteModal(false);
-                }}
-                className="flex-1 h-11 rounded-xl border-2 border-[#e2e8f0] text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc]"
+                onClick={closeDeleteMeetingModal}
+                className="flex h-12 min-h-12 flex-1 items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] bg-white text-[15px] font-bold text-[#64748b] hover:bg-[#f8fafc]"
               >
                 Cancel
               </button>
@@ -920,14 +1118,70 @@ export default function MeetingDetailPage() {
                 type="button"
                 onClick={handleDelete}
                 disabled={deleting}
-                className="flex-1 h-11 rounded-xl bg-red-500 text-[14px] font-bold text-white hover:opacity-90 disabled:opacity-60"
+                className="flex h-12 min-h-12 flex-1 items-center justify-center rounded-[10px] bg-[#ef4444] text-[15px] font-bold text-white hover:bg-red-600 disabled:opacity-60"
               >
-                {deleting ? "Deleting..." : "Delete"}
+                {deleting ? "Deleting…" : "Delete"}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {publishSuccessModal ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(10,37,64,0.6)] p-4 backdrop-blur-[2px]"
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="publish-success-title"
+            className="mx-4 flex w-full max-w-[480px] flex-col items-center gap-4 rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <div
+              className="flex size-16 shrink-0 items-center justify-center rounded-full bg-[#ff8150]"
+              aria-hidden
+            >
+              <Check className="size-9 text-white" strokeWidth={2.75} />
+            </div>
+
+            <div className="w-full pt-1 text-center">
+              <h2 id="publish-success-title" className="text-2xl font-bold leading-snug text-[#0a2540]">
+                Success!
+              </h2>
+            </div>
+
+            <p className="text-center text-[14px] leading-6 text-[#64748b]">
+              Successfully Published to ACTNOTE Workspace
+            </p>
+
+            <div className="flex w-full max-w-[416px] flex-col gap-[11px] rounded-[10px] border border-[#fee2e2] bg-[#edf1f5] px-[25px] py-6">
+              <div className="flex items-start gap-1.5 text-left">
+                <span className="shrink-0 text-[13px]" aria-hidden>
+                  ✅
+                </span>
+                <p className="text-[13.6px] leading-snug text-[#0a2540]">
+                  Check the &apos;Published&apos; tab to see your final notes.
+                </p>
+              </div>
+              <p className="text-center text-[13px] leading-6 text-[#0a2540]" aria-live="polite">
+                🏠 Moving to your Home in a moment.
+              </p>
+            </div>
+
+            <div className="flex w-full justify-center pt-2">
+              <button
+                type="button"
+                onClick={finalizePublishSuccessNavigation}
+                className="flex h-12 min-h-12 w-full max-w-[200px] items-center justify-center rounded-[10px] bg-[#ff8150] text-[15px] font-bold text-white shadow-[0px_2px_4px_rgba(255,107,53,0.2)] transition-opacity hover:opacity-90"
+              >
+                Go Home Now ({publishHomeCountdown}s)
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* PUB-001 — 필수 필드 검증 모달 */}
       {pubValidModal && (
@@ -999,8 +1253,13 @@ export default function MeetingDetailPage() {
       )}
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <div className="min-h-0 flex-1 overflow-y-auto p-10">
-          <div className="mx-auto max-w-3xl space-y-6">
+        <div className={`min-h-0 flex-1 overflow-y-auto p-10 ${draftStickyChrome ? "pb-44" : ""}`}>
+          <div
+            className={`mx-auto flex w-full gap-10 lg:items-start ${
+              canEdit ? "max-w-[1100px] flex-col lg:flex-row" : "max-w-3xl flex-col"
+            }`}
+          >
+            <div className={`min-w-0 space-y-6 ${canEdit ? "flex-1 lg:max-w-3xl" : "w-full"}`}>
           {/* 뒤로가기 */}
           <button onClick={() => router.push("/meetings")} className="inline-flex items-center gap-1.5 text-sm text-[#64748b] hover:text-[#0a2540] transition-colors">
             <ArrowLeft className="h-4 w-4" /> Back to Meetings
@@ -1038,32 +1297,18 @@ export default function MeetingDetailPage() {
                     {transcriptPanelOpen ? "Hide transcript" : "View transcript"}
                   </button>
                 ) : null}
-                {canEdit && !editMode && (
-                  <button onClick={enterEditMode} type="button" className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] px-3 py-1.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc] transition-colors">
-                    <Pencil className="h-3.5 w-3.5" /> Edit
-                  </button>
-                )}
-                {canPublish && (
-                  <button onClick={handlePublishClick} disabled={publishing || saving} className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60 transition-opacity" style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}>
-                    {publishing ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" /> : <Send className="h-3.5 w-3.5" />}
-                    Publish
-                  </button>
-                )}
                 {meeting.approval_status === "published" && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-1.5 text-sm font-bold text-green-700">✅ Published</span>
                 )}
-                {canDeleteMeeting && (
+                {canDeleteMeeting && (!canEdit || draftSurfaceStep === "overview") ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    setDeleteError(null);
-                    setDeleteModal(true);
-                  }}
+                  onClick={() => openDeleteMeetingModal(false)}
                   className="flex items-center justify-center h-8 w-8 rounded-lg text-[#94a3b8] hover:bg-red-50 hover:text-red-500 transition-colors"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
-                )}
+                ) : null}
               </div>
             </div>
             <div className="flex items-center gap-1.5 text-sm text-[#64748b]">
@@ -1172,10 +1417,7 @@ export default function MeetingDetailPage() {
                         {canDeleteMeeting ? (
                           <button
                             type="button"
-                            onClick={() => {
-                              setDeleteError(null);
-                              setDeleteModal(true);
-                            }}
+                            onClick={() => openDeleteMeetingModal(false)}
                             className="flex h-12 min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] bg-white px-6 text-[14px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc]"
                           >
                             Delete
@@ -1200,6 +1442,7 @@ export default function MeetingDetailPage() {
                         summary={meeting.summary}
                         decisions={meeting.decisions}
                         referencedDocuments={meeting.referenced_documents}
+                        draftNotes={draftNotesDoc}
                         actions={actionItems
                           .filter((x) => x.status !== "cancelled")
                           .map((x) => ({ content: x.content, assignee: x.assignee }))}
@@ -1216,10 +1459,7 @@ export default function MeetingDetailPage() {
                           {canDeleteMeeting ? (
                             <button
                               type="button"
-                              onClick={() => {
-                                setDeleteError(null);
-                                setDeleteModal(true);
-                              }}
+                              onClick={() => openDeleteMeetingModal(false)}
                               className="flex min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 py-2.5 text-[14px] font-bold text-red-700 hover:bg-red-100/80"
                             >
                               Delete
@@ -1232,12 +1472,6 @@ export default function MeetingDetailPage() {
                 ) : null}
               </>
             )}
-            {publishDone && (
-              <div className="flex items-center gap-2 rounded-lg bg-green-50 border border-green-200 px-4 py-2.5">
-                <p className="text-sm font-medium text-green-700">✅ Meeting notes published successfully!</p>
-              </div>
-            )}
-          </div>
 
           {/* 편집 모드 저장/취소 바 */}
           {editMode && canEdit && (
@@ -1255,24 +1489,70 @@ export default function MeetingDetailPage() {
             </div>
           )}
 
-          {isReady && (
+          {isReady && canEdit && draftSurfaceStep === "overview" ? (
+            <DraftOverviewPanel
+              meetingTitle={meeting.title}
+              meetingTypeRaw={meeting.meeting_type}
+              meetingScheduledAtIso={meeting.meeting_date ?? meeting.created_at ?? null}
+              description={meeting.description}
+              participantNames={meeting.participants}
+              responsibleLabel={responsibleDisplayLabel}
+              recordingUrl={meeting.audio_file_url}
+              durationSeconds={meeting.duration_seconds}
+              transcriptReady={transcriptLines.length > 0}
+              onOpenTranscript={() => setTranscriptPanelOpen(true)}
+              onNext={() => {
+                void loadMembers(meeting.workspace_id);
+                setDraftSurfaceStep("detail");
+              }}
+            />
+          ) : null}
+
+          {isReady && (!canEdit || draftSurfaceStep === "detail") ? (
             <>
-              {/* AI 요약 (DRAFT-001) */}
-              <Section icon={<Sparkles className="h-4 w-4 text-[#ff6b35]" />} title="AI Summary">
-                {editMode && canEdit ? (
-                  <textarea
-                    value={editSummary}
-                    onChange={(e) => setEditSummary(e.target.value)}
-                    rows={5}
-                    placeholder="Enter meeting summary..."
-                    className="w-full resize-none rounded-xl border border-[#e2e8f0] px-4 py-3 text-sm text-[#0a2540] placeholder-[#94a3b8] outline-none focus:border-[#ff6b35] focus:ring-2 focus:ring-[#ff6b35]/10"
-                  />
-                ) : meeting.summary ? (
-                  <p className="text-sm leading-relaxed text-[#0a2540]">{meeting.summary}</p>
-                ) : (
-                  <EmptyNote text="Summary will appear here after AI processing completes." />
-                )}
-              </Section>
+              {canEdit && draftSurfaceStep === "detail" ? (
+                <button
+                  type="button"
+                  onClick={() => setDraftSurfaceStep("overview")}
+                  className="inline-flex items-center gap-1.5 rounded-lg py-2 text-sm font-semibold text-[#64748b] transition-colors hover:text-[#0a2540]"
+                >
+                  <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden /> Back to meeting info
+                </button>
+              ) : null}
+              <MeetingAnalysisResultsBlock
+                meetingTypeRaw={meeting.meeting_type}
+                mode={editMode && canEdit ? "edit" : "read"}
+                segments={analysisSegments}
+                summary={editMode && canEdit ? editSummary : meeting.summary ?? ""}
+                onSummaryChange={editMode && canEdit ? setEditSummary : undefined}
+                decisionsRead={meeting.decisions ?? []}
+                decisionsEdit={editDecisions}
+                onDecisionsChange={editMode && canEdit ? setEditDecisions : undefined}
+                keyTopicsText={
+                  editMode && canEdit ? editKeyTopics : readDraftAnalysisText(draftNotesDoc, "key_topics")
+                }
+                risksAndIssuesText={
+                  editMode && canEdit
+                    ? editRisksAndIssues
+                    : readDraftAnalysisText(draftNotesDoc, "risks_and_issues")
+                }
+                followUpText={
+                  editMode && canEdit ? editFollowUp : readDraftAnalysisText(draftNotesDoc, "follow_up")
+                }
+                blockersText={
+                  editMode && canEdit ? editBlockers : readDraftAnalysisText(draftNotesDoc, "blockers")
+                }
+                onExtrasChange={
+                  editMode && canEdit
+                    ? (key, val) => {
+                        if (key === "key_topics") setEditKeyTopics(val);
+                        else if (key === "risks_and_issues") setEditRisksAndIssues(val);
+                        else if (key === "follow_up") setEditFollowUp(val);
+                        else if (key === "blockers") setEditBlockers(val);
+                      }
+                    : undefined
+                }
+              />
 
               {/* 화자 매핑: 오너만 접근 (docs/permissions.md §2 "화자 정보 편집") */}
               {canMapSpeakers &&
@@ -1293,161 +1573,101 @@ export default function MeetingDetailPage() {
                 />
               )}
 
-              {/* 결정사항 (DRAFT-001) */}
-              <Section icon={<CheckCircle2 className="h-4 w-4 text-[#2e5c8a]" />} title="Decisions">
-                {editMode && canEdit ? (
-                  <div className="space-y-2">
-                    {editDecisions.map((d, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <input
-                          value={d}
-                          onChange={(e) => setEditDecisions((prev) => prev.map((v, idx) => idx === i ? e.target.value : v))}
-                          placeholder="Decision..."
-                          className="flex-1 h-10 rounded-xl border border-[#e2e8f0] px-4 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
-                        />
-                        <button onClick={() => setEditDecisions((prev) => prev.filter((_, idx) => idx !== i))} className="text-[#94a3b8] hover:text-red-500 transition-colors">
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                    <button onClick={() => setEditDecisions((prev) => [...prev, ""])} className="flex items-center gap-1.5 text-sm font-semibold text-[#ff6b35] hover:opacity-80">
-                      <Plus className="h-4 w-4" /> Add Decision
-                    </button>
-                  </div>
-                ) : meeting.decisions && meeting.decisions.length > 0 ? (
-                  <ul className="space-y-2">
-                    {meeting.decisions.map((d, i) => (
-                      <li key={i} className="flex items-start gap-2.5">
-                        <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[#2e5c8a]" />
-                        <p className="text-sm text-[#0a2540]">{d.content}</p>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <EmptyNote text="No decisions recorded. They will be extracted automatically after AI processing." />
-                )}
-              </Section>
-
               {/* 액션 아이템 (DRAFT-001 + DRAFT-005) */}
-              <Section icon={<ListTodo className="h-4 w-4 text-[#2e5c8a]" />} title="Action Items">
+              <Section icon={<ListTodo className="h-4 w-4 text-[#2e5c8a]" />} title="4 Action Items">
+                <MeetingDraftActionItemsSection
+                  items={editMode && canEdit ? editActionItems : actionItems}
+                  members={members.map((m) => ({
+                    user_id: m.user_id,
+                    displayName: m.displayName,
+                    email: m.email ?? "",
+                  }))}
+                  editMode={Boolean(editMode && canEdit)}
+                  canPatchInteractive={Boolean(editMode && canEdit)}
+                  onPatchRow={(rowId, patch) =>
+                    patchDraftAction(
+                      rowId,
+                      patch as {
+                        assignee?: string | null;
+                        assignee_user_id?: string | null;
+                        due_date?: string | null;
+                        due_at?: string | null;
+                      },
+                    )
+                  }
+                  onContentDraftChange={
+                    editMode && canEdit
+                      ? (rowId, next) => {
+                          setEditActionItems((prev) =>
+                            prev.map((a) => (a.id === rowId ? { ...a, content: next } : a)),
+                          );
+                        }
+                      : undefined
+                  }
+                />
                 {editMode && canEdit ? (
-                  <div className="space-y-3" lang="en-US">
-                    {editActionItems.map((item, i) => {
-                      const rowHasContent = item.content.trim().length > 0;
-                      const dueStr = item.due_date ?? "";
-                      const highlightAssignee =
-                        rowHasContent && !item.assignee_user_id;
-                      const highlightDue =
-                        rowHasContent && (!dueStr.trim() || !isValidYmd(dueStr));
-                      const accentSelect = draftActionAccentBorder(highlightAssignee);
-                      const accentDue = draftActionAccentBorder(highlightDue);
-                      return (
-                      <div key={item.id} className="flex gap-3 rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-4">
-                        <div className="min-w-0 flex-1 space-y-3">
-                          <input
-                            value={item.content}
-                            onChange={(e) => setEditActionItems((prev) => prev.map((a, idx) => idx === i ? { ...a, content: e.target.value } : a))}
-                            placeholder="Action item..."
-                            className="w-full h-10 rounded-xl border border-[#e2e8f0] bg-white px-4 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35]"
-                          />
-                          <div className="flex gap-3 min-w-0">
-                            <select
-                            aria-invalid={highlightAssignee}
-                            value={item.assignee_user_id ?? ""}
-                            onChange={(e) => {
-                              const uid = e.target.value || null;
-                              const m = members.find((x) => x.user_id === uid);
-                              setEditActionItems((prev) =>
-                                prev.map((a, idx) =>
-                                  idx === i
-                                    ? {
-                                        ...a,
-                                        assignee_user_id: uid,
-                                        assignee: uid ? (m?.displayName ?? m?.email ?? null) : null,
-                                      }
-                                    : a
-                                )
-                              );
-                            }}
-                            className={`flex-[7] min-w-0 h-9 rounded-xl border bg-white px-3 text-sm text-[#0a2540] outline-none focus:border-[#ff6b35] ${accentSelect}`}
-                          >
-                            <option value="">Unassigned</option>
-                            {members.map((m) => (
-                              <option key={m.user_id} value={m.user_id}>
-                                {m.displayName}
-                                {m.email ? ` (${m.email})` : ""}
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="YYYY-MM-DD"
-                            maxLength={10}
-                            aria-invalid={highlightDue}
-                            value={dueStr}
-                            onChange={(e) => {
-                              const next = e.target.value.slice(0, 10);
-                              setEditActionItems((prev) =>
-                                prev.map((a, idx) =>
-                                  idx === i ? { ...a, due_date: next || null } : a
-                                )
-                              );
-                            }}
-                            className={`flex-[3] min-w-0 shrink-0 h-9 rounded-xl border bg-white px-3 text-sm tabular-nums text-[#0a2540] outline-none placeholder:text-[#94a3b8] focus:border-[#ff6b35] ${accentDue}`}
-                          />
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          aria-label="Remove action item"
-                          title="Remove action item"
-                          onClick={() => setEditActionItems((prev) => prev.filter((_, idx) => idx !== i))}
-                          className="shrink-0 self-center rounded-lg p-2 text-[#94a3b8] hover:bg-red-50 hover:text-red-500 transition-colors"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                      );
-                    })}
+                  <div className="pt-4" lang="en-US">
                     <button
                       type="button"
                       onClick={() => setEditActionItems((prev) => [...prev, emptyDraftActionItem()])}
                       className="flex items-center gap-1.5 text-sm font-semibold text-[#ff6b35] hover:opacity-80"
                     >
-                      <Plus className="h-4 w-4" /> Add action item
+                      <Plus className="h-4 w-4" aria-hidden /> Add action item
                     </button>
-                    {editActionItems.length === 0 && (
-                      <p className="text-sm italic text-[#94a3b8]">No action items yet.</p>
-                    )}
+                    {editActionItems.length === 0 ? (
+                      <p className="mt-2 text-sm italic text-[#94a3b8]">No action items yet.</p>
+                    ) : null}
                   </div>
-                ) : actionItems.length > 0 ? (
-                  <ul className="space-y-3">
-                    {actionItems.map((item) => (
-                      <li key={item.id} className="flex items-start gap-3 rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-4">
-                        <span className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 ${item.status === "done" ? "border-green-500 bg-green-500" : item.status === "cancelled" ? "border-[#94a3b8] bg-[#94a3b8]" : "border-[#ff6b35]"}`} />
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm font-medium ${item.status !== "open" ? "line-through text-[#94a3b8]" : "text-[#0a2540]"}`}>{item.content}</p>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-3">
-                            {item.assignee && <span className="flex items-center gap-1 text-xs text-[#64748b]"><User className="h-3 w-3" />{item.assignee}</span>}
-                            {item.due_date && <span className="flex items-center gap-1 text-xs text-[#64748b]"><Clock className="h-3 w-3" />{new Date(item.due_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>}
-                            {item.confidence != null && <span className="text-xs text-[#94a3b8]">{Math.round(item.confidence * 100)}% confidence</span>}
-                          </div>
-                        </div>
-                        <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${item.status === "done" ? "bg-green-100 text-green-700" : item.status === "cancelled" ? "bg-[#f1f5f9] text-[#94a3b8]" : "bg-[#fff4f0] text-[#ff6b35]"}`}>
-                          {item.status}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <EmptyNote text="No action items yet. They will be extracted automatically after AI processing." />
-                )}
+                ) : null}
               </Section>
+
+              {draftStickyChrome ? (
+                <div className="sticky bottom-3 z-30 mt-8 flex flex-col gap-4 rounded-xl border border-[#e2e8f0] bg-white/95 p-5 shadow-[0_-8px_32px_rgba(10,37,64,0.12)] backdrop-blur supports-[backdrop-filter]:bg-white/85 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!editMode ? (
+                      <button
+                        type="button"
+                        onClick={enterEditMode}
+                        className="flex h-11 min-w-[5.5rem] items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white px-5 text-[14px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc]"
+                      >
+                        <Pencil className="h-4 w-4" aria-hidden /> Edit
+                      </button>
+                    ) : null}
+                    {canDeleteMeeting ? (
+                      <button
+                        type="button"
+                        onClick={() => openDeleteMeetingModal(editMode && canEdit)}
+                        className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 text-[14px] font-bold text-red-700 transition-colors hover:bg-red-100/80"
+                      >
+                        Delete
+                      </button>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handlePublishClick()}
+                    disabled={publishing || saving || publishBlockedByActions || editMode}
+                    className="inline-flex h-11 min-w-[8rem] items-center justify-center gap-2 rounded-[10px] px-8 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:opacity-50"
+                    style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
+                  >
+                    {publishing ? (
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" aria-hidden />
+                    ) : (
+                      <Send className="h-4 w-4" aria-hidden />
+                    )}
+                    Publish
+                  </button>
+                </div>
+              ) : null}
             </>
-          )}
+          ) : null}
+            </div>
+
+          {canEdit ? (
+            <DraftGuidanceSidebar publishBlockedForActions={publishBlockedByActions} />
+          ) : null}
+          </div>
         </div>
-      </div>
 
       {isReady && transcriptPanelOpen && transcriptLines.length > 0 ? (
         <>
@@ -1505,6 +1725,3 @@ function Section({ icon, title, children }: { icon: React.ReactNode; title: stri
   );
 }
 
-function EmptyNote({ text }: { text: string }) {
-  return <p className="text-sm italic text-[#94a3b8]">{text}</p>;
-}

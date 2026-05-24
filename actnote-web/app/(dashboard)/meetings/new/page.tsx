@@ -15,6 +15,7 @@ import {
 } from "@/lib/meeting/recordingFilename";
 import { workspaceMemberDisplayName } from "@/lib/user/member-display";
 import { RecordingUploadErrorModal } from "@/components/meetings/RecordingUploadErrorModal";
+import { UploadedRecordingPreviewCard } from "@/components/meetings/UploadedRecordingPreviewCard";
 import { MEETING_TYPE_OPTIONS } from "@/lib/meetings/meeting-types";
 import { submissionLooksLikeNetworkFailure } from "@/lib/meetings/submission-network-errors";
 
@@ -1041,27 +1042,35 @@ function NewMeetingPageInner() {
                 </h2>
               </div>
 
-              <div
-                onDrop={handleDrop}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setIsDragging(true);
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={fileAcceptAttribute()}
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleFileSelect(f);
                 }}
-                onDragLeave={() => setIsDragging(false)}
-                onClick={() => fileInputRef.current?.click()}
-                className={`flex min-h-[180px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-[50px] py-4 text-center transition-colors ${
-                  isDragging ? "border-[#ff6b35] bg-[#fff4f0]" : "border-[#cbd5e1] bg-white hover:border-[#2e5c8a]/40"
-                }`}
-              >
-                <input ref={fileInputRef} type="file" accept={fileAcceptAttribute()} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileSelect(f); }} />
+              />
 
-                {uploading ? (
-                  <div className="flex flex-col items-center gap-3 w-full max-w-xs">
+              {uploading ? (
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  className={`flex min-h-[180px] flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-[50px] py-4 text-center transition-colors ${
+                    isDragging ? "border-[#ff6b35] bg-[#fff4f0]" : "border-[#cbd5e1] bg-white hover:border-[#2e5c8a]/40"
+                  }`}
+                >
+                  <div className="flex w-full max-w-xs flex-col items-center gap-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-[#0a2540]">
                       <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
                       Uploading... {uploadProgress}%
                     </div>
-                    <div className="w-full h-2 rounded-full bg-[#e2e8f0] overflow-hidden">
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-[#e2e8f0]">
                       <div
                         className="h-full rounded-full transition-all duration-200"
                         style={{
@@ -1076,35 +1085,58 @@ function NewMeetingPageInner() {
                         : "Processing..."}
                     </p>
                   </div>
-                ) : file ? (
-                  <div className="flex flex-col items-center gap-2">
-                    <span className="text-3xl">🎵</span>
-                    <p className="text-sm font-semibold text-[#0a2540]">{file.name}</p>
-                    <p className="text-xs text-[#94a3b8]">{formatRecordingSizeMbDecimal(file.size)}</p>
+                </div>
+              ) : file ? (
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  className={isDragging ? "rounded-xl bg-[#fff4f0] p-2 ring-2 ring-[#ff6b35] ring-offset-2" : ""}
+                >
+                  <UploadedRecordingPreviewCard
+                    file={file}
+                    onRemove={() => {
+                      setFile(null);
+                      if (fileInputRef.current) fileInputRef.current.value = "";
+                    }}
+                  />
+                </div>
+              ) : (
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragging(true);
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`flex min-h-[180px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-[50px] py-4 text-center transition-colors ${
+                    isDragging ? "border-[#ff6b35] bg-[#fff4f0]" : "border-[#cbd5e1] bg-white hover:border-[#2e5c8a]/40"
+                  }`}
+                >
+                  <span className="text-[36px] leading-none">📁</span>
+                  <div>
+                    <p className="text-base font-bold text-[#0a2540]">Drag & drop your recording here</p>
+                    <p className="mt-1 text-[13px] text-[#64748b]">or click to browse files</p>
                   </div>
-                ) : (
-                  <>
-                    <span className="text-[36px] leading-none">📁</span>
-                    <div>
-                      <p className="text-base font-bold text-[#0a2540]">Drag & drop your recording here</p>
-                      <p className="mt-1 text-[13px] text-[#64748b]">or click to browse files</p>
-                    </div>
-                    <button
-                      type="button"
-                      className="rounded-lg bg-[#2e5c8a] px-5 py-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        fileInputRef.current?.click();
-                      }}
-                    >
-                      Choose File
-                    </button>
-                    <p className="text-[11px] text-[#94a3b8]">
-                      Supported : {allowedRecordingExtensionsLabel()} (max {MAX_SIZE_MB}MB)
-                    </p>
-                  </>
-                )}
-              </div>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-[#2e5c8a] px-5 py-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    Choose File
+                  </button>
+                  <p className="text-[11px] text-[#94a3b8]">
+                    Supported : {allowedRecordingExtensionsLabel()} (max {MAX_SIZE_MB}MB)
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

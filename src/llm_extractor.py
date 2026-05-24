@@ -357,6 +357,20 @@ def _parse_json_strict(raw: str) -> dict | None:
         return None
 
 
+def _normalize_multiline_field(raw: object) -> str:
+    """JSON 내 다줄 블록(문자열·문자열 배열·빈 값)을 UI용 단일 문자열로 정규화."""
+    if raw is None:
+        return ""
+    if isinstance(raw, list):
+        lines: list[str] = []
+        for item in raw:
+            s = str(item).strip()
+            if s:
+                lines.append(s)
+        return "\n".join(lines)
+    return str(raw).strip()
+
+
 def _normalize_result(data: dict) -> ExtractedResult:
     title = str(data.get("title", "")).strip()[:50] or "Meeting"
     summary = str(data.get("summary", "")).strip()
@@ -386,7 +400,7 @@ def _normalize_result(data: dict) -> ExtractedResult:
     referenced_documents = [
         str(d).strip() for d in raw_docs if isinstance(d, str) and str(d).strip()
     ]
-    return {
+    out: ExtractedResult = {
         "title": title,
         "summary": summary,
         "decisions": decisions,
@@ -394,6 +408,15 @@ def _normalize_result(data: dict) -> ExtractedResult:
         "referenced_documents": referenced_documents,
         "document_links": [],
     }
+    if "key_topics" in data:
+        out["key_topics"] = _normalize_multiline_field(data["key_topics"])
+    if "risks_and_issues" in data:
+        out["risks_and_issues"] = _normalize_multiline_field(data["risks_and_issues"])
+    if "follow_up" in data:
+        out["follow_up"] = _normalize_multiline_field(data["follow_up"])
+    if "blockers" in data:
+        out["blockers"] = _normalize_multiline_field(data["blockers"])
+    return out
 
 
 def _print_result(out: ExtractedResult) -> None:
