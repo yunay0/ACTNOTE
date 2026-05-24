@@ -255,6 +255,8 @@ export default function MeetingDetailPage() {
   const publishSuccessNavLockRef = useRef(false);
   /** 분석 완료 Draft: 요약 카드 단계 ↔ AI 상세 분석 단계 */
   const [draftSurfaceStep, setDraftSurfaceStep] = useState<"overview" | "detail">("overview");
+  /** 분석 중 UX: 파이프라인 타임라인 ↔ AI 미리보기 단계 */
+  const [analyzingUiStep, setAnalyzingUiStep] = useState<"timeline" | "preview">("timeline");
 
   const loadMembers = useCallback(async (wsId: string) => {
     const supabase = createClient();
@@ -1668,6 +1670,7 @@ export default function MeetingDetailPage() {
           ) : null}
           </div>
         </div>
+      </div>
 
       {isReady && transcriptPanelOpen && transcriptLines.length > 0 ? (
         <>

@@ -75,7 +75,13 @@ Identify documents, materials, or references mentioned in the meeting.
 
 [Blockers — required]
 Write "blockers" as an English bullet list (B1., B2., …).
-Immediate impediments needing help: technical, dependency, approval, or capacity issues.
+Extract impediments team members explicitly raised, blocked work items, and things where help is needed:
+- Technical issues stalling progress
+- Dependency waits (blocked on another team, API, decision, etc.)
+- Approval / sign-off blocks
+- Capacity gaps or resourcing issues
+Only include blockers that were actually mentioned by participants. Do not infer from absence or generalize.
+When the blocker has an owner or helper, name them inline (e.g., "B1. Auth API spec — waiting on Sarah").
 Use "" when no blockers were stated.
 
 Output schema:

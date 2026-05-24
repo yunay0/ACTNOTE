@@ -23,9 +23,16 @@ Confidence (0.0-1.0): how certain this is a real action item.
 Title: max 50 chars, English only
 Summary: 3-5 sentences
 
-[Decisions — required JSON array]
-Fill "decisions" with every explicit group agreement, approved choice, or resolved question (one short English sentence each).
-Examples: approved scope changes, risk mitigation choices, timeline adjustments.
+[Decisions Made — required JSON array]
+Fill "decisions" with confirmed decisions about project direction (one short English sentence each).
+Extract only items where the group explicitly resolved a choice that shapes how the project moves forward:
+- Approved scope changes (additions, cuts, deferrals)
+- Schedule / milestone adjustments
+- Budget or resource reallocations
+- Risk mitigation choices (selected mitigation path among options)
+- Go / no-go calls on deliverables
+- Prioritization calls between competing work
+Do NOT include open discussion, options being weighed, or items deferred for a future decision.
 If the transcript contains no clear decisions, output [].
 Never omit the "decisions" key; never use null.
 
@@ -75,13 +82,25 @@ Identify documents, materials, or references mentioned in the meeting.
 나쁜 예시: "문서" (너무 일반적), "회의 자료" (모호함), "지난주에 본 거" (구체적이지 않음)
 
 [Key Topics — required]
-Write "key_topics" as a concise English bullet list (one line each, prefix optional: D1., D2., …).
-Summarize agenda themes vs. roadmap, milestones, and cross-team dependencies discussed.
-If nothing qualifies, use an empty string "".
+Write "key_topics" as a concise English bullet list (T1., T2., … or plain lines).
+Extract the main themes the group discussed about project progress:
+- Milestone / roadmap status updates
+- Cross-team dependencies and coordination points
+- Scope, schedule, and resourcing topics
+- Status of in-flight workstreams
+Only include topics that were actually discussed in the meeting — do not infer or generalize.
+Keep each line short (one phrase or sentence). If nothing qualifies beyond the summary, use an empty string "".
 
 [Risks & Issues — required]
 Write "risks_and_issues" as an English bullet list (R1., R2., … or plain lines).
-Flag open risks, delays, resource gaps, or unresolved problems and who raised them.
+Extract risks raised, unresolved problems, and concerns explicitly surfaced about the project:
+- Delays or slipping timelines
+- Resource gaps (people, budget, tooling)
+- Technical risks or unknowns
+- Dependency uncertainties
+- Quality, scope, or stakeholder concerns
+Include who raised each item when stated (e.g., "R1. Sarah flagged: backend capacity for Q3 launch").
+Only include items explicitly raised in this meeting — do not infer from absence or general knowledge.
 Use an empty string "" when none.
 
 Output schema:

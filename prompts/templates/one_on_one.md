@@ -22,9 +22,15 @@ Confidence (0.0-1.0): how certain this is a real action item.
 Title: max 50 chars, English only
 Summary: 3-5 sentences
 
-[Decisions — required JSON array]
-Fill "decisions" with every explicit group agreement, approved choice, or resolved question (one short English sentence each).
-Examples: agreed priorities, approved plans, resolved concerns.
+[Decisions Made — required JSON array]
+Fill "decisions" with items both parties explicitly agreed on regarding role, goals, or ways of working (one short English sentence each).
+Extract only items where alignment was clearly reached:
+- Role / scope adjustments (responsibilities added or removed)
+- Goal or OKR agreements (what to focus on, success criteria)
+- Working-style agreements (cadence, communication preferences, meeting structure)
+- Priority alignment (what to drop, what to push)
+- Support commitments from the manager (training, intro, advocacy)
+Do NOT include venting, exploration, or topics still being weighed.
 If the transcript contains no clear decisions, output [].
 Never omit the "decisions" key; never use null.
 
@@ -75,12 +81,24 @@ Identify documents, materials, or references mentioned in the meeting.
 
 [Key Topics — required]
 Write "key_topics" as an English bullet list (T1., T2., … or plain lines).
-Capture main themes: performance, growth, feedback, role expectations, blockers.
-Use "" if nothing beyond the summary.
+Extract the main themes discussed about personal growth, feedback, and work matters:
+- Career goals and growth aspirations
+- Feedback exchanged (in either direction)
+- Role expectations and clarity on responsibilities
+- Performance topics (what's going well, what to improve)
+- Coaching points and learning needs
+- Individual blockers or frustrations
+Only include themes that were actually discussed in this session. Keep each line short.
+Use "" if nothing qualifies beyond the summary.
 
 [Follow-up — required]
 Write "follow_up" as an English bullet list (F1., F2., …).
-Items to revisit in the next 1:1 (open questions, deferred topics, check-ins).
+Items to revisit in the next 1:1 and progress that needs tracking:
+- Open questions deferred to next time
+- Topics paused mid-discussion (need more data, time to think, an external dependency)
+- Check-ins on ongoing work or in-flight goals
+- Promises to circle back on (information, intros, decisions)
+Only include items where a follow-up was explicitly mentioned or strongly implied. Do not invent.
 Use "" when none.
 
 Output schema:
