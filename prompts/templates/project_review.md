@@ -74,10 +74,22 @@ Identify documents, materials, or references mentioned in the meeting.
 좋은 예시: "PRD v2", "Q3 roadmap", "프로젝트 기획서", "와이어프레임 v3"
 나쁜 예시: "문서" (너무 일반적), "회의 자료" (모호함), "지난주에 본 거" (구체적이지 않음)
 
+[Key Topics — required]
+Write "key_topics" as a concise English bullet list (one line each, prefix optional: D1., D2., …).
+Summarize agenda themes vs. roadmap, milestones, and cross-team dependencies discussed.
+If nothing qualifies, use an empty string "".
+
+[Risks & Issues — required]
+Write "risks_and_issues" as an English bullet list (R1., R2., … or plain lines).
+Flag open risks, delays, resource gaps, or unresolved problems and who raised them.
+Use an empty string "" when none.
+
 Output schema:
 {
   "title": "...",
   "summary": "...",
+  "key_topics": "...",
+  "risks_and_issues": "...",
   "decisions": ["..."],
   "action_items": [
     {

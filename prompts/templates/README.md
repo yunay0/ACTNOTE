@@ -46,8 +46,13 @@
 
 ## 운영 노트
 
-- 모든 템플릿은 동일한 출력 JSON 스키마를 유지해야 함 (`title`, `summary`, `decisions`, `action_items`, `referenced_documents`)
-- 스키마 변경 시 모든 템플릿을 동시에 수정. `schemas.py::ExtractedResult` 도 같이 갱신.
+- 공통 출력 키: `title`, `summary`, `decisions`, `action_items`, `referenced_documents`.
+- **Draft UI 제3섹션** 과 맞추기 위해 유형별 추가 키(영어 문자열 또는 문자열 리스트→정규화; `meetings.ai_draft_notes`에 저장):
+  - `project_review`: `key_topics`, `risks_and_issues`
+  - `one_on_one`: `key_topics`, `follow_up`
+  - `standup`: `blockers`
+  - `other`/`default`: `key_topics`
+- 레이아웃 분기는 `actnote-web/lib/meetings/meeting-analysis-layout.ts`; 추출 타입은 `schemas.py::ExtractedResult` (`NotRequired` 필드).
 - 비용 가드레일은 system prompt 길이도 토큰 추정에 포함하므로, 템플릿이 크게 늘면 단가도 상승.
 
 ## 빠른 검증

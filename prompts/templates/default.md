@@ -64,10 +64,16 @@ Format rules:
 Good: "PRD v2", "Q3 roadmap", "architecture RFC"
 Bad: "document", "the deck", "that thing from last week"
 
+[Key Topics — required for "Other" meetings]
+Write "key_topics" as an English bullet list (T1., T2., …).
+Main discussion themes not already covered by the summary alone.
+Use "" when none.
+
 Output schema:
 {
   "title": "...",
   "summary": "...",
+  "key_topics": "...",
   "decisions": ["..."],
   "action_items": [
     {
