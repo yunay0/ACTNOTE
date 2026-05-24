@@ -44,29 +44,28 @@ export function meetingAnalysisSegments(mt: MeetingAnalysisCanonical): MeetingAn
   switch (mt) {
     case "standup":
       return [
-        { draftKey: "summary", title: "Summary", subtitle: "Progress and focus this period" },
+        { draftKey: "summary", title: "Summary" },
         { draftKey: "blockers", title: "Blockers", subtitle: "(if any) Issues needing immediate attention" },
       ];
     case "project_review":
       return [
-        { draftKey: "summary", title: "Summary", subtitle: "High-level recap of the review" },
-        { draftKey: "key_topics", title: "Key Topics", subtitle: "Main themes discussed" },
+        { draftKey: "summary", title: "Summary" },
+        { draftKey: "key_topics", title: "Key Topics" },
         { draftKey: "risks_and_issues", title: "Risks & Issues", subtitle: "Flagged risks or unresolved problems" },
-        { draftKey: "decisions", title: "Decisions Made", subtitle: "Agreements reached in the meeting" },
+        { draftKey: "decisions", title: "Decisions Made" },
       ];
     case "one_on_one":
       return [
-        { draftKey: "summary", title: "Summary", subtitle: "Session recap" },
+        { draftKey: "summary", title: "Summary" },
         { draftKey: "key_topics", title: "Key Topics", subtitle: "Main themes discussed" },
-        { draftKey: "decisions", title: "Decisions Made", subtitle: "Agreements reached in the session" },
         { draftKey: "follow_up", title: "Follow-up", subtitle: "Items to revisit in the next 1:1" },
       ];
     case "workshop":
     default:
       return [
-        { draftKey: "summary", title: "Summary", subtitle: "Workshop recap" },
-        { draftKey: "key_topics", title: "Key Topics", subtitle: "Main themes discussed" },
-        { draftKey: "decisions", title: "Decisions Made", subtitle: "Agreements reached" },
+        { draftKey: "summary", title: "Summary" },
+        { draftKey: "key_topics", title: "Key Topics" },
+        { draftKey: "decisions", title: "Decisions Made" },
       ];
   }
 }
