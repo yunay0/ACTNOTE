@@ -96,6 +96,28 @@ function WorkspaceSelectInner() {
       clearStoredWorkspaceId();
     }
 
+    // Bug 2 — Pending invite 가드: 같은 이메일로 진행 중인 초대가 있으면 join-request/onboarding 으로
+    // 빠지지 않고 invite 수락 화면으로 직접 보낸다. (workspace_invites RLS 가 본인 이메일 행만 허용)
+    if (searchParams.get("switch") !== "1") {
+      const { data: pendingInvite } = await supabase
+        .from("workspace_invites")
+        .select("token")
+        .eq("status", "pending")
+        .gt("expires_at", new Date().toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const token =
+        pendingInvite && typeof (pendingInvite as { token?: unknown }).token === "string"
+          ? (pendingInvite as { token: string }).token
+          : null;
+      if (token) {
+        router.replace(`/invite/${encodeURIComponent(token)}`);
+        return;
+      }
+    }
+
     const [{ data: ownedRows }, { data: profileRow, error: profileErr }] = await Promise.all([
       supabase.from("workspaces").select("id, name").eq("owner_id", user.id),
       supabase.from("users").select("name, email, avatar_url").eq("id", user.id).maybeSingle(),
