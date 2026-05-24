@@ -71,12 +71,15 @@ export async function GET(request: Request) {
 
         // Bug 2 — 같은 이메일로 pending invite 가 존재하면 invite 페이지로 강제 라우팅.
         // Supabase OAuth redirect allowlist 누락 등으로 `next` 가 손실되더라도 초대 수락 화면으로
-        // 정확히 안내한다. (RLS: invited_email = LOWER(auth.jwt() ->> 'email') 허용)
+        // 정확히 안내한다.
+        // 주의: RLS 는 워크스페이스 admin/owner 에게 워크스페이스 내 모든 초대를 노출하므로
+        //       invited_email 을 명시적으로 필터링하지 않으면 다른 사람 초대 링크로 리다이렉트됨.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: pendingInvite } = await (supabase as any)
           .from("workspace_invites")
           .select("token")
           .eq("status", "pending")
+          .eq("invited_email", (user.email ?? "").toLowerCase())
           .gt("expires_at", new Date().toISOString())
           .order("created_at", { ascending: false })
           .limit(1)
