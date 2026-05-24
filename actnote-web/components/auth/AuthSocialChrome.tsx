@@ -7,12 +7,17 @@ import { AuthLegalFooter } from "@/components/auth/AuthLegalFooter";
 type AuthSocialChromeProps = {
   /** Internal path after OAuth (e.g. `/workspace/select` or `next` query). */
   redirectAfterAuth: string;
+  /** Google `login_hint` — reduces wrong cached Google account picks on invite links. */
+  loginHintEmail?: string | null;
 };
 
 /**
  * Figma S-02-01 (137:11440): Google OAuth, "or" divider, terms (no email/password).
  */
-export function AuthSocialChrome({ redirectAfterAuth }: AuthSocialChromeProps) {
+export function AuthSocialChrome({
+  redirectAfterAuth,
+  loginHintEmail,
+}: AuthSocialChromeProps) {
   const [busy, setBusy] = useState(false);
   const [oauthError, setOauthError] = useState<string | null>(null);
 
@@ -24,10 +29,15 @@ export function AuthSocialChrome({ redirectAfterAuth }: AuthSocialChromeProps) {
       redirectAfterAuth.startsWith("/") ? redirectAfterAuth : `/${redirectAfterAuth}`;
     const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
 
+    const hint = (loginHintEmail ?? "").trim();
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo,
+        queryParams:
+          hint.length > 0
+            ? { login_hint: hint, prompt: "select_account" }
+            : undefined,
       },
     });
 

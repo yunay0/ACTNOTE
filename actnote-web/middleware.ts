@@ -81,8 +81,13 @@ export async function middleware(request: NextRequest) {
   }
 
   if (user && isAuthPage) {
+    const nextSafe = getSafeInternalReturnPath(request.nextUrl.searchParams.get("next"));
+    if (nextSafe) {
+      return NextResponse.redirect(new URL(nextSafe, request.nextUrl.origin));
+    }
     const url = request.nextUrl.clone();
     url.pathname = "/workspace/select";
+    url.search = "";
     return NextResponse.redirect(url);
   }
 

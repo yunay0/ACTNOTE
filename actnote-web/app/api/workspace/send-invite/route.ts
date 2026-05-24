@@ -31,12 +31,17 @@ export async function POST(req: NextRequest) {
   }
 
   const invite = (body as { invite?: InviteRow }).invite;
-  if (!invite?.token || !invite.workspace_id || !invite.invited_email) {
-    return NextResponse.json({ error: "invite with token, workspace_id, invited_email required" }, { status: 400 });
+  if (!invite?.id || !invite?.token || !invite.workspace_id || !invite.invited_email) {
+    return NextResponse.json(
+      { error: "invite with id, token, workspace_id, invited_email required" },
+      { status: 400 },
+    );
   }
 
-  if (isFreeEmailDomain(invite.invited_email)) {
-    const domain = invite.invited_email.split("@")[1] ?? "";
+  const normalizedEmail = invite.invited_email.trim().toLowerCase();
+
+  if (isFreeEmailDomain(normalizedEmail)) {
+    const domain = normalizedEmail.split("@")[1] ?? "";
     return NextResponse.json(
       { error: "personal_email_not_allowed", domain },
       { status: 400 }
@@ -63,9 +68,20 @@ export async function POST(req: NextRequest) {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const sb = supabase as any;
+  const { error: dedupeErr } = await sb.rpc("revoke_pending_workspace_invites_except_one", {
+    p_keep_invite_id: invite.id,
+  });
+  if (dedupeErr) {
+    console.warn(
+      "[send-invite] revoke_pending_workspace_invites_except_one:",
+      dedupeErr.message,
+    );
+  }
+
   const [{ data: inviter }, { data: ws }] = await Promise.all([
-    (supabase as any).from("users").select("name, email").eq("id", user.id).single(),
-    (supabase as any).from("workspaces").select("name").eq("id", invite.workspace_id).single(),
+    sb.from("users").select("name, email").eq("id", user.id).single(),
+    sb.from("workspaces").select("name").eq("id", invite.workspace_id).single(),
   ]);
 
   const inviterName: string = inviter?.name || (inviter?.email?.split("@")[0] ?? "A teammate");
@@ -90,7 +106,7 @@ export async function POST(req: NextRequest) {
   });
 
   if (isSmtpConfigured()) {
-    const out = await sendViaSmtp(invite.invited_email, mail, {
+    const out = await sendViaSmtp(normalizedEmail, mail, {
       replyTo: inviter?.email || undefined,
     });
     if (!out.ok) {
@@ -113,7 +129,7 @@ export async function POST(req: NextRequest) {
 
   const resendKey = process.env.RESEND_API_KEY?.trim();
   if (resendKey) {
-    const out = await sendViaResend(invite.invited_email, mail);
+    const out = await sendViaResend(normalizedEmail, mail);
     if (!out.ok) {
       const notice_code = isResendRecipientRestrictedError(out.message)
         ? "RESEND_RECIPIENT_RESTRICTED"

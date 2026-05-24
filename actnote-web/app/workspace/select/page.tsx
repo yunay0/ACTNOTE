@@ -92,6 +92,17 @@ function WorkspaceSelectInner() {
       return;
     }
 
+    const inviteSlug = searchParams.get("invite_slug")?.trim();
+    if (inviteSlug) {
+      const emailHint = searchParams.get("invite_email")?.trim();
+      const qs =
+        emailHint && emailHint.includes("@")
+          ? `?invite_email=${encodeURIComponent(emailHint)}`
+          : "";
+      router.replace(`/invite/${inviteSlug}${qs}`);
+      return;
+    }
+
     if (searchParams.get("switch") === "1") {
       clearStoredWorkspaceId();
     }
@@ -174,13 +185,10 @@ function WorkspaceSelectInner() {
       }),
     );
 
-    // Case 1 수정: 초대 수락 후 실제 WS 멤버십이 있으면 onboarding 스킵.
-    // 기본 생성된 pending WS만 있는 경우는 여전히 onboarding 필요.
     const pendingIds = new Set(pending.map((p) => p.id));
     const hasFinalizedMembership = list.some((m) => !pendingIds.has(m.workspace_id));
     const needsOnboarding = !hasFinalizedMembership;
 
-    // Case 2 수정: onboarding 필요 + 같은 도메인 WS가 있으면 request-access 화면으로.
     let domainWorkspace: { slug: string; name: string } | null = null;
     if (needsOnboarding) {
       try {
@@ -190,10 +198,9 @@ function WorkspaceSelectInner() {
           domainWorkspace = data.workspace ?? null;
         }
       } catch {
-        // 도메인 WS 조회 실패 시 일반 onboarding으로 진행
+        /* ignore domain lookup failures; fall back to onboarding */
       }
     }
-
     let workspaces: WorkspaceWelcomeTile[] = [];
 
     if (!needsOnboarding) {

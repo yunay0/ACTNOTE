@@ -1,16 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Users, CheckCircle2, ArrowRight, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { WorkspaceAccessGate } from "@/components/workspace/WorkspaceAccessGate";
 import { WorkspaceAccessRequestSent } from "@/components/workspace/WorkspaceAccessRequestSent";
+import { setStoredWorkspaceId } from "@/lib/workspace/storage";
+import { isLikelyEmailInviteToken } from "@/lib/auth/invite-token";
 
 interface WorkspaceInfo {
   id: string;
   name: string;
   slug: string;
+}
+
+function invitePathWithEmail(slugPart: string, inviteEmailQs: string): string {
+  if (inviteEmailQs && inviteEmailQs.includes("@")) {
+    return `/invite/${slugPart}?invite_email=${encodeURIComponent(inviteEmailQs)}`;
+  }
+  return `/invite/${slugPart}`;
 }
 
 type PageState =
@@ -19,7 +28,6 @@ type PageState =
   | "token_found"
   | "not_found"
   | "already_member"
-  | "joined"
   | "request_sent"
   | "request_pending"
   | "invite_expired"
@@ -27,9 +35,14 @@ type PageState =
   | "wrong_email"
   | "error";
 
-export default function InvitePage() {
-  const { slug } = useParams<{ slug: string }>();
+function InvitePageInner() {
+  const params = useParams();
   const router = useRouter();
+  const searchQs = useSearchParams();
+  const slugRaw = params.slug;
+  const slugPart = typeof slugRaw === "string" ? slugRaw : Array.isArray(slugRaw) ? slugRaw[0] : "";
+
+  const inviteEmailFromUrl = searchQs.get("invite_email")?.trim() ?? "";
 
   const [pageState, setPageState] = useState<PageState>("loading");
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
@@ -45,11 +58,13 @@ export default function InvitePage() {
   useEffect(() => {
     async function checkInvite() {
       const supabase = createClient();
+      const loginNext = invitePathWithEmail(slugPart, inviteEmailFromUrl);
+
       const {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) {
-        router.push(`/login?next=/invite/${slug}`);
+        router.push(`/login?next=${encodeURIComponent(loginNext)}`);
         return;
       }
 
@@ -61,13 +76,13 @@ export default function InvitePage() {
         "";
       setUserDisplayName(fromMeta);
 
-      const token = typeof slug === "string" ? slug : "";
+      const token = slugPart;
 
-      // 1) Email invite token — use RPC so RLS cannot hide the row from the invitee
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: rawPreview, error: prevErr } = await (supabase as any).rpc("preview_workspace_invite", {
-        p_token: token,
-      });
+      const { data: rawPreview, error: prevErr } = await (supabase as any).rpc(
+        "preview_workspace_invite",
+        { p_token: token },
+      );
 
       if (!prevErr && rawPreview && typeof rawPreview === "object" && "ok" in rawPreview) {
         const preview = rawPreview as {
@@ -112,14 +127,17 @@ export default function InvitePage() {
         }
 
         if (preview.ok === false && preview.reason === "invalid_token") {
-          // fall through to workspace slug / join-request flow
+          if (isLikelyEmailInviteToken(token)) {
+            setPageState("not_found");
+            return;
+          }
+          // slug-based join-request flow (non-invite-token only)
         } else {
           setPageState("not_found");
           return;
         }
       }
 
-      // 2) Workspace slug link — owner approval (join request), not token invite
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: previewRows, error: previewErr } = await (supabase as any).rpc(
         "public_workspace_preview_by_slug",
@@ -162,7 +180,12 @@ export default function InvitePage() {
     }
 
     void checkInvite();
-  }, [slug, router]);
+  }, [slugPart, router, inviteEmailFromUrl]);
+
+  async function goToWorkspaceHome(ws: WorkspaceInfo): Promise<void> {
+    setStoredWorkspaceId(ws.id);
+    router.replace("/workspace/select");
+  }
 
   async function handleJoinOrRequest() {
     if (!workspace || joining) return;
@@ -170,11 +193,13 @@ export default function InvitePage() {
     setEmailNotice(null);
 
     const supabase = createClient();
+    const loginNext = invitePathWithEmail(slugPart, inviteEmailFromUrl);
+
     const {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
-      router.push(`/login?next=/invite/${slug}`);
+      router.push(`/login?next=${encodeURIComponent(loginNext)}`);
       setJoining(false);
       return;
     }
@@ -182,7 +207,7 @@ export default function InvitePage() {
     if (isTokenMode) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error } = await (supabase as any).rpc("accept_invite", {
-        p_token: slug,
+        p_token: slugPart,
       });
       if (error) {
         const msgs: Record<string, string> = {
@@ -195,7 +220,8 @@ export default function InvitePage() {
         setErrorMsg(msgs[error.message] ?? error.message);
         setPageState("error");
       } else {
-        setPageState("joined");
+        await goToWorkspaceHome(workspace);
+        return;
       }
     } else {
       const sendRes = await fetch("/api/workspace/join-request", {
@@ -255,7 +281,7 @@ export default function InvitePage() {
   }
 
   if (pageState === "request_sent" && workspace) {
-    const slugStr = typeof slug === "string" ? slug : "";
+    const nextPath = invitePathWithEmail(slugPart, inviteEmailFromUrl);
     return (
       <WorkspaceAccessRequestSent
         workspaceName={workspace.name}
@@ -266,12 +292,21 @@ export default function InvitePage() {
         onSignInDifferentAccount={async () => {
           const supabase = createClient();
           await supabase.auth.signOut();
-          const next = slugStr ? `/invite/${slugStr}` : "/workspace/select";
-          router.push(`/login?next=${encodeURIComponent(next)}`);
+          router.push(`/login?next=${encodeURIComponent(nextPath)}`);
         }}
       />
     );
   }
+
+  const wrongEmailNext = (): string => {
+    const hint =
+      (invitedEmailHint && invitedEmailHint.includes("@") ? invitedEmailHint : "") ||
+      (inviteEmailFromUrl.includes("@") ? inviteEmailFromUrl : "");
+    if (hint && slugPart) {
+      return `/invite/${slugPart}?invite_email=${encodeURIComponent(hint)}`;
+    }
+    return invitePathWithEmail(slugPart, inviteEmailFromUrl);
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#0a2540] via-[#1e3a5f] to-[#0a2540] p-4">
@@ -334,14 +369,15 @@ export default function InvitePage() {
               </div>
               <h2 className="text-[18px] font-bold text-[#0a2540]">Wrong account</h2>
               <p className="text-sm text-[#64748b]">
-                This invite was sent to <strong className="text-[#0a2540]">{invitedEmailHint || "another email"}</strong>
-                . Sign out and sign back in with that address to accept.
+                This invite was sent to{" "}
+                <strong className="text-[#0a2540]">{invitedEmailHint || "another email"}</strong>. Sign out and sign
+                back in with that address to accept.
               </p>
               <button
                 onClick={async () => {
                   const supabase = createClient();
                   await supabase.auth.signOut();
-                  router.push(`/login?next=/invite/${slug}`);
+                  router.push(`/login?next=${encodeURIComponent(wrongEmailNext())}`);
                 }}
                 className="mx-auto mt-3 flex items-center justify-center rounded-xl px-6 py-2.5 text-sm font-bold text-white"
                 style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
@@ -377,24 +413,7 @@ export default function InvitePage() {
                 You&apos;re already in <strong>{workspace.name}</strong>.
               </p>
               <button
-                onClick={() => router.push("/workspace/select")}
-                className="mx-auto mt-3 flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-bold text-white"
-                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-              >
-                Go to dashboard <ArrowRight className="h-4 w-4" />
-              </button>
-            </div>
-          )}
-
-          {pageState === "joined" && workspace && (
-            <div className="space-y-3 py-6 text-center">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50">
-                <CheckCircle2 className="h-7 w-7 text-green-500" />
-              </div>
-              <h2 className="text-[18px] font-bold text-[#0a2540]">Welcome to {workspace.name}!</h2>
-              <p className="text-sm text-[#64748b]">You&apos;ve successfully joined the workspace.</p>
-              <button
-                onClick={() => router.push("/workspace/select")}
+                onClick={() => void goToWorkspaceHome(workspace)}
                 className="mx-auto mt-3 flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-bold text-white"
                 style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
               >
@@ -409,9 +428,7 @@ export default function InvitePage() {
               <p className="text-sm text-[#64748b]">{errorMsg || "Unable to complete this action."}</p>
               <button
                 onClick={() =>
-                  setPageState(
-                    isTokenMode ? "token_found" : workspace ? "found" : "not_found"
-                  )
+                  setPageState(isTokenMode ? "token_found" : workspace ? "found" : "not_found")
                 }
                 className="text-sm font-semibold text-[#ff6b35] hover:underline"
               >
@@ -422,5 +439,19 @@ export default function InvitePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function InvitePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-[#f8fafc]">
+          <Loader2 className="h-8 w-8 animate-spin text-[#ff6b35]" />
+        </div>
+      }
+    >
+      <InvitePageInner />
+    </Suspense>
   );
 }
