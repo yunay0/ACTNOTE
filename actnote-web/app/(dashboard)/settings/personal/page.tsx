@@ -359,6 +359,14 @@ export default function PersonalSettingsPage() {
         setDeleteBusy(false);
         return;
       }
+      // auth.users 가 사라져도 클라이언트 세션 쿠키는 만료될 때까지 남는다.
+      // 명시적 signOut 으로 즉시 무효화하지 않으면 새로고침 전까지 "로그인된 상태"처럼 동작한다.
+      try {
+        const supabase = createClient();
+        await supabase.auth.signOut();
+      } catch {
+        /* 세션이 이미 무효이면 무시 */
+      }
       clearStoredWorkspaceId();
       closeDeleteModal();
       window.location.href = "/";

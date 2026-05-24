@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Users, CheckCircle2, ArrowRight, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { setStoredWorkspaceId } from "@/lib/workspace/storage";
 import { WorkspaceAccessGate } from "@/components/workspace/WorkspaceAccessGate";
 import { WorkspaceAccessRequestSent } from "@/components/workspace/WorkspaceAccessRequestSent";
 import { setStoredWorkspaceId } from "@/lib/workspace/storage";
@@ -185,6 +186,17 @@ function InvitePageInner() {
   async function goToWorkspaceHome(ws: WorkspaceInfo): Promise<void> {
     setStoredWorkspaceId(ws.id);
     router.replace("/workspace/select");
+  }
+
+  /**
+   * 수락한(또는 이미 멤버인) 워크스페이스를 현재 워크스페이스로 설정하고 /meetings 로 이동.
+   * /workspace/select 를 거치지 않아 사용자가 바로 회의 목록을 본다.
+   */
+  function goToWorkspaceMeetings(ws: WorkspaceInfo | null): void {
+    if (ws?.id) {
+      setStoredWorkspaceId(ws.id);
+    }
+    router.push("/meetings");
   }
 
   async function handleJoinOrRequest() {
