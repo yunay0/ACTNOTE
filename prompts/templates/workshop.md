@@ -24,9 +24,15 @@ Confidence (0.0-1.0): how certain this is a real action item.
 Title: max 50 chars, English only
 Summary: 3-5 sentences
 
-[Decisions — required JSON array]
-Fill "decisions" with every explicit group agreement, approved choice, or resolved question (one short English sentence each).
-Examples: agreed process changes, selected approaches, adopted frameworks.
+[Decisions Made — required JSON array]
+Fill "decisions" with conclusions and directional choices the group reached through the workshop (one short English sentence each).
+Extract only outcomes the participants explicitly converged on:
+- Selected approach among options explored
+- Adopted framework, method, or process
+- Agreed process or behavior changes coming out of the session
+- Group consensus on next steps or direction
+- Confirmed answers to questions the workshop was designed to resolve
+Do NOT extract from open brainstorming, ideas being floated, or items left for later.
 If the transcript contains no clear decisions, output [].
 Never omit the "decisions" key; never use null.
 
@@ -75,10 +81,21 @@ Identify documents, materials, or references mentioned in the meeting.
 좋은 예시: "PRD v2", "Q3 roadmap", "프로젝트 기획서", "와이어프레임 v3"
 나쁜 예시: "문서" (너무 일반적), "회의 자료" (모호함), "지난주에 본 거" (구체적이지 않음)
 
+[Key Topics — required]
+Write "key_topics" as a concise English bullet list (T1., T2., … or plain lines).
+Extract the main learning and discussion topics actually covered in the workshop:
+- Exercises or group activities the participants worked through
+- Frameworks, methods, or models taught or applied
+- Agenda themes and core discussion areas
+- Concepts the group explored together
+Only include topics that were actually covered — do not invent agenda items.
+Keep each line short. Use "" if nothing qualifies beyond the summary.
+
 Output schema:
 {
   "title": "...",
   "summary": "...",
+  "key_topics": "...",
   "decisions": ["..."],
   "action_items": [
     {
