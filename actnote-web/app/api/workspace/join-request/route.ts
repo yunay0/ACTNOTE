@@ -75,12 +75,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "unexpected rpc response" }, { status: 500 });
   }
 
-  const appUrl = resolvePublicAppUrl(req);
+  const appUrl = resolvePublicAppUrl(req) ?? process.env.NEXT_PUBLIC_APP_URL ?? null;
   const reviewUrl = appUrl
-    ? `${appUrl}/settings/workspace`
-    : process.env.NEXT_PUBLIC_APP_URL
-      ? `${process.env.NEXT_PUBLIC_APP_URL}/settings/workspace`
-      : null;
+    ? `${appUrl}/workspace/join-request?id=${row.request_id}`
+    : null;
 
   if (reviewUrl) {
     const mail = buildJoinRequestEmailToOwner({
