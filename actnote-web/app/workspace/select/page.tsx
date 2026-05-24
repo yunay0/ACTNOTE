@@ -24,8 +24,10 @@ type BootState =
       displayName: string;
       email: string | null;
       avatarUrl: string | null;
-      /** Owner has default-name workspace — complete onboarding first. */
+      /** 실제 워크스페이스 멤버십이 없을 때 true → onboarding 또는 request-access로 이동. */
       needsOnboarding: boolean;
+      /** needsOnboarding=true이고 같은 도메인 WS가 존재할 때 설정 → request-access 화면으로 이동. */
+      domainWorkspace: { slug: string; name: string } | null;
       workspaces: WorkspaceWelcomeTile[];
       preferredWorkspaceId: string | null;
       /** Matches `create_workspace_for_self`: no second owned workspace after name is finalized. */
@@ -128,7 +130,7 @@ function WorkspaceSelectInner() {
         ((w.name as string) ?? "").endsWith("'s workspace"),
       ) ?? [];
 
-    const ownedList = (ownedRows as { name?: string | null }[]) ?? [];
+    const ownedList = (ownedRows as { id: string; name?: string | null }[]) ?? [];
     const hasFinalizedOwnedWorkspace = ownedList.some((w) => {
       const n = (w.name ?? "").trim();
       return n.length > 0 && !n.endsWith("'s workspace");
@@ -172,14 +174,34 @@ function WorkspaceSelectInner() {
       }),
     );
 
-    const needsOnboarding = pending.length > 0 || list.length === 0;
+    // Case 1 수정: 초대 수락 후 실제 WS 멤버십이 있으면 onboarding 스킵.
+    // 기본 생성된 pending WS만 있는 경우는 여전히 onboarding 필요.
+    const pendingIds = new Set(pending.map((p) => p.id));
+    const hasFinalizedMembership = list.some((m) => !pendingIds.has(m.workspace_id));
+    const needsOnboarding = !hasFinalizedMembership;
+
+    // Case 2 수정: onboarding 필요 + 같은 도메인 WS가 있으면 request-access 화면으로.
+    let domainWorkspace: { slug: string; name: string } | null = null;
+    if (needsOnboarding) {
+      try {
+        const res = await fetch("/api/workspace/find-by-domain");
+        if (res.ok) {
+          const data = (await res.json()) as { workspace?: { slug: string; name: string } | null };
+          domainWorkspace = data.workspace ?? null;
+        }
+      } catch {
+        // 도메인 WS 조회 실패 시 일반 onboarding으로 진행
+      }
+    }
 
     let workspaces: WorkspaceWelcomeTile[] = [];
 
     if (!needsOnboarding) {
-      const ids = list.map((m) => m.workspace_id);
+      // pending 워크스페이스(기본 생성된 것)는 목록에서 제외
+      const nonPendingList = list.filter((m) => !pendingIds.has(m.workspace_id));
+      const ids = nonPendingList.map((m) => m.workspace_id);
       const statsMap = await fetchWorkspaceStats(supabase, ids);
-      workspaces = list.map((m) => {
+      workspaces = nonPendingList.map((m) => {
         const s = statsMap.get(m.workspace_id);
         return {
           id: m.workspace_id,
@@ -198,6 +220,7 @@ function WorkspaceSelectInner() {
       email,
       avatarUrl,
       needsOnboarding,
+      domainWorkspace,
       workspaces,
       preferredWorkspaceId: stored && workspaces.some((w) => w.id === stored) ? stored : null,
       canCreateOwnedWorkspace,
@@ -219,7 +242,15 @@ function WorkspaceSelectInner() {
   const handleContinueAccount = (): void => {
     if (boot.status !== "ready") return;
     if (boot.needsOnboarding) {
-      router.replace("/onboarding");
+      if (boot.domainWorkspace) {
+        // Case 2: 같은 도메인 WS 존재 → 액세스 요청 화면으로
+        router.replace(
+          `/workspace/request-access?slug=${encodeURIComponent(boot.domainWorkspace.slug)}`,
+        );
+      } else {
+        // 일반 onboarding: 새 WS 생성
+        router.replace("/onboarding");
+      }
       return;
     }
     setAccountConfirmed(true);
