@@ -30,10 +30,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const invite = (body as { invite?: InviteRow }).invite;
-  if (!invite?.token || !invite.workspace_id || !invite.invited_email) {
+  const rawInvite = (body as { invite?: InviteRow }).invite;
+  if (!rawInvite?.token || !rawInvite.workspace_id || !rawInvite.invited_email) {
     return NextResponse.json({ error: "invite with token, workspace_id, invited_email required" }, { status: 400 });
   }
+
+  // Bug 5: 프론트가 보낸 invited_email 을 그대로 신뢰하지 말고 lower+trim 으로 정규화.
+  // create_invite RPC 가 LOWER(TRIM(...)) 으로 저장하므로 메일 발송 주소도 같은 정규화를 유지해야
+  // 이후 accept_invite 이메일 비교와 어긋나지 않는다.
+  const normalizedEmail = rawInvite.invited_email.trim().toLowerCase();
+  if (!normalizedEmail.includes("@")) {
+    return NextResponse.json({ error: "invalid invited_email" }, { status: 400 });
+  }
+  const invite: InviteRow = { ...rawInvite, invited_email: normalizedEmail };
 
   if (isFreeEmailDomain(invite.invited_email)) {
     const domain = invite.invited_email.split("@")[1] ?? "";
