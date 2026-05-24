@@ -51,7 +51,6 @@ function RequestAccessInner() {
 
   const [pageState, setPageState] = useState<PageState>("loading");
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
-  const [requestMessage, setRequestMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [userDisplayName, setUserDisplayName] = useState("");
@@ -133,7 +132,6 @@ function RequestAccessInner() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         workspace_slug: workspace.slug,
-        message: requestMessage.trim() || undefined,
       }),
     });
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -325,23 +323,6 @@ function RequestAccessInner() {
               </div>
             )}
 
-            {/* 선택적 메시지 입력 (request_access 전용) */}
-            {!isPending && (
-              <div className="w-full space-y-1 text-left">
-                <label htmlFor="access-message" className="text-xs font-semibold text-[#64748b]">
-                  Message to admins (optional)
-                </label>
-                <textarea
-                  id="access-message"
-                  value={requestMessage}
-                  onChange={(e) => setRequestMessage(e.target.value)}
-                  rows={3}
-                  maxLength={500}
-                  placeholder="e.g. I'm on the design team for Project X…"
-                  className="w-full rounded-xl border-2 border-[#e2e8f0] px-3 py-2 text-sm text-[#0a2540] outline-none focus:border-[#2e5c8a]"
-                />
-              </div>
-            )}
 
             {/* Component 1 — Request Access CTA (request_access 전용)
                 gradient: 94.65deg, shadow: 0px 6px 24px rgba(255,107,53,0.35) */}
