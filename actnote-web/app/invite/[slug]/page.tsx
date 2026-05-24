@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Users, CheckCircle2, ArrowRight, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { setStoredWorkspaceId } from "@/lib/workspace/storage";
 import { WorkspaceAccessGate } from "@/components/workspace/WorkspaceAccessGate";
 import { WorkspaceAccessRequestSent } from "@/components/workspace/WorkspaceAccessRequestSent";
 
@@ -163,6 +164,17 @@ export default function InvitePage() {
 
     void checkInvite();
   }, [slug, router]);
+
+  /**
+   * 수락한(또는 이미 멤버인) 워크스페이스를 현재 워크스페이스로 설정하고 /meetings 로 이동.
+   * /workspace/select 를 거치지 않아 사용자가 바로 회의 목록을 본다.
+   */
+  function goToWorkspaceMeetings(ws: WorkspaceInfo | null): void {
+    if (ws?.id) {
+      setStoredWorkspaceId(ws.id);
+    }
+    router.push("/meetings");
+  }
 
   async function handleJoinOrRequest() {
     if (!workspace || joining) return;
@@ -377,7 +389,7 @@ export default function InvitePage() {
                 You&apos;re already in <strong>{workspace.name}</strong>.
               </p>
               <button
-                onClick={() => router.push("/workspace/select")}
+                onClick={() => goToWorkspaceMeetings(workspace)}
                 className="mx-auto mt-3 flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-bold text-white"
                 style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
               >
@@ -394,7 +406,7 @@ export default function InvitePage() {
               <h2 className="text-[18px] font-bold text-[#0a2540]">Welcome to {workspace.name}!</h2>
               <p className="text-sm text-[#64748b]">You&apos;ve successfully joined the workspace.</p>
               <button
-                onClick={() => router.push("/workspace/select")}
+                onClick={() => goToWorkspaceMeetings(workspace)}
                 className="mx-auto mt-3 flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-bold text-white"
                 style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
               >
