@@ -11,6 +11,8 @@ import { MeetingDeleteConfirmModal } from "@/components/meetings/MeetingDeleteCo
 
 interface MeetingCardProps {
   meeting: Meeting;
+  /** 발행 직후 홈에서 방금 발행한 카드 강조 (Figma 157:11051) */
+  highlighted?: boolean;
   onDelete?: (id: string) => boolean | Promise<boolean>;
   onClick?: () => void;
 }
@@ -19,7 +21,7 @@ const STATUS_STYLE: Record<string, { bg: string; dot: string; text: string; labe
   /** Figma 147:8793 analyzing pill (#dcfbe7 / #34c759) — no pulse dot */
   analyzing: { bg: "bg-[#dcfbe7]", dot: "", text: "text-[#34c759]", label: "Analyzing" },
   draft: { bg: "bg-amber-50", dot: "bg-amber-500", text: "text-amber-900", label: "Draft" },
-  published: { bg: "bg-blue-50", dot: "bg-blue-500", text: "text-blue-800", label: "Published" },
+  published: { bg: "bg-[#e3f2fd]", dot: "", text: "text-[#2e5c8a]", label: "Published" },
   /** Figma ERROR pill (#ffc6c7 surface, red wording) */
   error: { bg: "bg-[#ffc6c7]", dot: "", text: "text-red-700", label: "Error" },
 };
@@ -54,7 +56,7 @@ function showPersistentMenu(meeting: Meeting): boolean {
   return isProcessing(meeting.status) || meeting.status === "error";
 }
 
-export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
+export function MeetingCard({ meeting, highlighted = false, onDelete, onClick }: MeetingCardProps) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -111,7 +113,12 @@ export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
       />
 
       <div
-        className="group relative flex cursor-pointer flex-col rounded-xl border border-[#e2e8f0] bg-white p-[25px] transition-all hover:border-[#2e5c8a]/30 hover:shadow-md"
+        id={`meeting-card-${meeting.id}`}
+        className={`group relative flex cursor-pointer flex-col rounded-xl border bg-white p-[25px] transition-all hover:border-[#2e5c8a]/30 hover:shadow-md ${
+          highlighted
+            ? "border-[#ff6b35]/50 shadow-[0_0_0_2px_rgba(255,107,53,0.25)]"
+            : "border-[#e2e8f0]"
+        }`}
         onClick={() => {
           if (isErr) {
             router.push(`/meetings/${meeting.id}/analysis-error`);
@@ -178,7 +185,7 @@ export function MeetingCard({ meeting, onDelete, onClick }: MeetingCardProps) {
           <span
             className={`rounded-[6px] px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.5px] ${style.bg} ${style.text}`}
           >
-            {statusKey === "analyzing" || statusKey === "error" ? (
+            {statusKey === "analyzing" || statusKey === "error" || statusKey === "published" ? (
               style.label
             ) : (
               <span className="inline-flex items-center gap-1.5">

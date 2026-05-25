@@ -7,10 +7,10 @@ interface DraftGuidanceSidebarProps {
   publishBlockedForActions: boolean;
 }
 
-/** Draft 오른쪽 패널: 안내 카드·CAUTION (Figma 157:11140, 우측 456px 레일). */
+/** Draft 오른쪽 패널: 안내 카드·CAUTION (Figma 157:11140). 부모가 폭·sticky를 제어. */
 export function DraftGuidanceSidebar(props: DraftGuidanceSidebarProps): ReactElement {
   return (
-    <aside className="flex w-full max-w-[456px] flex-col gap-4 lg:sticky lg:top-6 lg:w-[456px] lg:max-w-[456px] lg:shrink-0 lg:self-start">
+    <div className="flex w-full flex-col gap-4">
       <div className="rounded-xl border border-[#e2e8f0] bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2 border-b border-[#f1f5f9] pb-3">
           <Sparkles className="size-5 text-[#ff6b35]" aria-hidden />
@@ -50,6 +50,6 @@ export function DraftGuidanceSidebar(props: DraftGuidanceSidebarProps): ReactEle
           </p>
         </div>
       ) : null}
-    </aside>
+    </div>
   );
 }

@@ -1,16 +1,22 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { Suspense, useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, ArrowUpDown } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { MeetingCard } from "@/components/meetings/MeetingCard";
 import { useMeetings } from "@/lib/hooks/useMeetings";
 import { isProcessing } from "@/lib/types/meeting";
 import type { Meeting } from "@/lib/types/meeting";
+import {
+  MEETINGS_HOME_HIGHLIGHT_PARAM,
+  MEETINGS_HOME_TAB_PARAM,
+  parseMeetingsHomeTab,
+  type MeetingsHomeTab,
+} from "@/lib/meetings/post-publish-home";
 
-type Tab = "all" | "analyzing" | "drafts" | "published";
+type Tab = MeetingsHomeTab;
 type SortOrder = "newest" | "oldest";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -32,7 +38,7 @@ function tabActiveShellClasses(tabId: Tab): string {
     case "drafts":
       return "bg-amber-50 text-amber-900";
     case "published":
-      return "bg-blue-50 text-blue-800";
+      return "bg-[#e3f2fd] text-[#446f99]";
     default:
       return "bg-[#f1f5f9] text-[#0a2540]";
   }
@@ -48,7 +54,7 @@ function tabCountBadgeClasses(tabId: Tab, isActive: boolean): string {
     case "drafts":
       return "bg-amber-100 text-amber-900";
     case "published":
-      return "bg-blue-100 text-blue-800";
+      return "bg-[#cfe8fc] text-[#446f99]";
     default:
       return "bg-[#e2e8f0] text-[#64748b]";
   }
@@ -72,11 +78,15 @@ function sortMeetings(meetings: Meeting[], order: SortOrder): Meeting[] {
   });
 }
 
-export default function MeetingsPage() {
+function MeetingsPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { meetings, deleteMeeting, hydrated } = useMeetings();
 
-  const [activeTab, setActiveTab] = useState<Tab>("all");
+  const tabFromUrl = parseMeetingsHomeTab(searchParams.get(MEETINGS_HOME_TAB_PARAM));
+  const highlightId = searchParams.get(MEETINGS_HOME_HIGHLIGHT_PARAM);
+
+  const [activeTab, setActiveTab] = useState<Tab>(tabFromUrl ?? "all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [page, setPage] = useState(1);
   const [deleteBanner, setDeleteBanner] = useState<string | null>(null);
@@ -110,6 +120,41 @@ export default function MeetingsPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  useEffect(() => {
+    if (tabFromUrl) setActiveTab(tabFromUrl);
+  }, [tabFromUrl]);
+
+  /** 발행 직후: Published 탭 + 해당 회의가 있는 페이지로 맞춘 뒤 카드로 스크롤 */
+  useEffect(() => {
+    if (!highlightId || !hydrated) return undefined;
+
+    const tab = tabFromUrl ?? "published";
+    const list = sortMeetings(filterMeetings(meetings, tab), sortOrder);
+    const idx = list.findIndex((m) => m.id === highlightId);
+    if (idx < 0) return undefined;
+
+    setActiveTab(tab);
+    setPage(Math.floor(idx / PAGE_SIZE) + 1);
+
+    const scrollTimer = window.setTimeout(() => {
+      document.getElementById(`meeting-card-${highlightId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }, 150);
+
+    const cleanUrlTimer = window.setTimeout(() => {
+      const params = new URLSearchParams();
+      params.set(MEETINGS_HOME_TAB_PARAM, tab);
+      router.replace(`/meetings?${params.toString()}`, { scroll: false });
+    }, 5000);
+
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(cleanUrlTimer);
+    };
+  }, [highlightId, hydrated, meetings, tabFromUrl, sortOrder, router]);
 
   // 탭별 카운트
   const counts: Record<Tab, number> = useMemo(() => ({
@@ -216,6 +261,7 @@ export default function MeetingsPage() {
                 <MeetingCard
                   key={meeting.id}
                   meeting={meeting}
+                  highlighted={highlightId === meeting.id}
                   onDelete={handleDeleteMeeting}
                   onClick={() => router.push(`/meetings/${meeting.id}`)}
                 />
@@ -276,5 +322,26 @@ export default function MeetingsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function MeetingsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <DashboardHeader title="Home" />
+          <div className="flex-1 overflow-auto p-10">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-[178px] rounded-xl border border-[#e2e8f0] bg-white animate-pulse" />
+              ))}
+            </div>
+          </div>
+        </div>
+      }
+    >
+      <MeetingsPageContent />
+    </Suspense>
   );
 }

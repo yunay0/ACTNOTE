@@ -95,18 +95,22 @@ export async function POST(
   // Workspace slug for "Request Again" link in decline email
   let workspaceSlug: string | null = null;
   try {
+    type JoinReqPick = { workspace_id: string | null };
+    type WorkspaceSlugPick = { slug: string | null };
     const { data: reqRow } = await supabase
       .from("workspace_join_requests")
       .select("workspace_id")
       .eq("id", requestId)
       .maybeSingle();
-    if (reqRow?.workspace_id) {
+
+    const joinReq = reqRow as JoinReqPick | null;
+    if (joinReq?.workspace_id) {
       const { data: wsRow } = await supabase
         .from("workspaces")
         .select("slug")
-        .eq("id", reqRow.workspace_id as string)
+        .eq("id", joinReq.workspace_id)
         .maybeSingle();
-      workspaceSlug = (wsRow?.slug as string | null) ?? null;
+      workspaceSlug = (wsRow as WorkspaceSlugPick | null)?.slug ?? null;
     }
   } catch {
     // non-critical — just omit the request-again link
