@@ -94,10 +94,11 @@ function WorkspaceSelectInner() {
       clearStoredWorkspaceId();
     }
 
-    const [{ data: ownedRows }, { data: profileRow, error: profileErr }] = await Promise.all([
-      supabase.from("workspaces").select("id, name").eq("owner_id", user.id),
-      supabase.from("users").select("name, email, avatar_url").eq("id", user.id).maybeSingle(),
-    ]);
+    const { data: profileRow, error: profileErr } = await supabase
+      .from("users")
+      .select("name, email, avatar_url")
+      .eq("id", user.id)
+      .maybeSingle();
 
     if (profileErr) {
       setBoot({
@@ -122,13 +123,6 @@ function WorkspaceSelectInner() {
       null;
     const profileEmail = (profileRow?.email as string | null | undefined)?.trim() || null;
     const email = profileEmail || user.email || null;
-
-    const ownedList = (ownedRows as { id: string; name?: string | null }[] | null) ?? [];
-    const hasFinalizedOwnedWorkspace = ownedList.some((w) => {
-      const n = (w.name ?? "").trim();
-      return n.length > 0 && !n.endsWith("'s workspace");
-    });
-    const canCreateOwnedWorkspace = !hasFinalizedOwnedWorkspace;
 
     const { data: memberRowsData, error: memErr } = await supabase
       .from("workspace_members")
@@ -189,19 +183,22 @@ function WorkspaceSelectInner() {
       // 2. 같은 도메인 워크스페이스가 있으면 참여 요청 페이지로 이동
       try {
         const res = await fetch("/api/workspace/find-by-domain");
-        if (res.ok) {
-          const data = (await res.json()) as {
-            workspace?: { slug: string; name: string } | null;
-          };
-          if (data.workspace?.slug) {
-            router.replace(
-              `/workspace/request-access?slug=${encodeURIComponent(data.workspace.slug)}`,
-            );
-            return;
-          }
+        if (!res.ok) {
+          setBoot({ status: "error", message: "도메인 확인 중 오류가 발생했습니다. 새로고침 후 다시 시도해주세요." });
+          return;
+        }
+        const data = (await res.json()) as {
+          workspace?: { slug: string; name: string } | null;
+        };
+        if (data.workspace?.slug) {
+          router.replace(
+            `/workspace/request-access?slug=${encodeURIComponent(data.workspace.slug)}`,
+          );
+          return;
         }
       } catch {
-        // 도메인 조회 실패는 무시하고 온보딩으로 진행
+        setBoot({ status: "error", message: "도메인 확인 중 오류가 발생했습니다. 새로고침 후 다시 시도해주세요." });
+        return;
       }
     }
 
@@ -209,6 +206,9 @@ function WorkspaceSelectInner() {
     // 038 마이그레이션 이후 개인 워크스페이스 자동 생성이 없으므로
     // list.length === 0 이 곧 온보딩 필요 상태.
     const needsOnboarding = list.length === 0;
+
+    // 워크스페이스 추가 생성은 현재 비활성화 — 1회사 1워크스페이스 정책.
+    const canCreateOwnedWorkspace = false;
 
     let workspaces: WorkspaceWelcomeTile[] = [];
 

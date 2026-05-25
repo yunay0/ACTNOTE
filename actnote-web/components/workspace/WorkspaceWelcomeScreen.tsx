@@ -208,7 +208,7 @@ export function WorkspaceWelcomeScreen({
           </>
         ) : (
           <p className="mx-auto mb-8 max-w-md text-center text-[13px] leading-relaxed text-[#64748b]">
-            You already own a workspace. Join another team via an invitation, or ask an owner to invite you.
+            To join another workspace, ask the owner to send you an invite.
           </p>
         )}
       </main>
