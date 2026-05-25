@@ -52,6 +52,23 @@ function OnboardingInner() {
         return;
       }
 
+      // 멤버십 없는 경우: pending invite가 있으면 초대 수락 페이지로 이동 (워크스페이스 생성 불필요)
+      const { data: pendingInvite } = await (supabase as any)
+        .from("workspace_invites")
+        .select("token")
+        .eq("status", "pending")
+        .eq("invited_email", (data.user.email ?? "").toLowerCase())
+        .gt("expires_at", new Date().toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const inviteToken = (pendingInvite as { token?: string } | null)?.token;
+      if (inviteToken) {
+        router.replace(`/invite/${encodeURIComponent(inviteToken)}`);
+        return;
+      }
+
       const { data: rows, error: selErr } = await (supabase as any)
         .from("workspaces")
         .select("name")

@@ -172,11 +172,34 @@ function WorkspaceSelectInner() {
       }),
     );
 
-    const needsOnboarding = pending.length > 0 || list.length === 0;
+    // 워크스페이스 멤버십이 없는 경우: pending invite가 있으면 초대 수락 페이지로 바로 이동.
+    // (auth/callback이 이미 리다이렉트했어야 하지만 fallback으로 여기서도 처리)
+    if (list.length === 0) {
+      const { data: pendingInvite } = await supabase
+        .from("workspace_invites")
+        .select("token")
+        .eq("status", "pending")
+        .eq("invited_email", (user.email ?? "").toLowerCase())
+        .gt("expires_at", new Date().toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const inviteToken = (pendingInvite as { token?: string } | null)?.token;
+      if (inviteToken) {
+        router.replace(`/invite/${encodeURIComponent(inviteToken)}`);
+        return;
+      }
+    }
+
+    // needsOnboarding: 멤버십이 하나도 없을 때만 true.
+    // pending(기본명 워크스페이스 소유) 여부로는 판단하지 않음 — pending && list > 0이면
+    // onboarding → workspace/select 무한 루프가 발생하기 때문.
+    const needsOnboarding = list.length === 0;
 
     let workspaces: WorkspaceWelcomeTile[] = [];
 
-    if (!needsOnboarding) {
+    if (list.length > 0) {
       const ids = list.map((m) => m.workspace_id);
       const statsMap = await fetchWorkspaceStats(supabase, ids);
       workspaces = list.map((m) => {
