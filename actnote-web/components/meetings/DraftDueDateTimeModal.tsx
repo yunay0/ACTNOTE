@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
 import { Calendar, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { DraftModalPortal } from "@/components/meetings/DraftModalPortal";
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
@@ -141,20 +142,21 @@ export function DraftDueDateTimeModal(props: DraftDueDateTimeModalProps): ReactE
   if (!props.open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-[75] flex items-center justify-center bg-[#0a2540]/35 p-4 backdrop-blur-[2px]"
-      role="presentation"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) props.onClose();
-      }}
-    >
+    <DraftModalPortal open={props.open}>
       <div
-        className="w-full max-w-[400px] rounded-2xl border border-[#e2e8f0] bg-white p-6 shadow-[0px_20px_30px_rgba(10,37,64,0.2)]"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="due-dt-title"
-        onMouseDown={(e) => e.stopPropagation()}
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0a2540]/35 p-4 backdrop-blur-[2px]"
+        role="presentation"
+        onClick={(e) => {
+          if (e.target === e.currentTarget && !props.saving) props.onClose();
+        }}
       >
+        <div
+          className="max-h-[min(90vh,640px)] w-full max-w-[400px] overflow-y-auto rounded-2xl border border-[#e2e8f0] bg-white p-6 shadow-[0px_20px_30px_rgba(10,37,64,0.2)]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="due-dt-title"
+          onClick={(e) => e.stopPropagation()}
+        >
         <h2 id="due-dt-title" className="text-xl font-bold text-[#0a2540]">
           Due Date &amp; Time
         </h2>
@@ -307,5 +309,6 @@ export function DraftDueDateTimeModal(props: DraftDueDateTimeModalProps): ReactE
         </div>
       </div>
     </div>
+    </DraftModalPortal>
   );
 }

@@ -18,16 +18,22 @@ export function isValidDueDateYmd(value: string | null | undefined): boolean {
 export type DraftActionGapItem = {
   id: string;
   content: string;
+  assignee: string | null;
   assignee_user_id: string | null;
   due_date: string | null;
   status: "open" | "done" | "cancelled";
 };
 
 /** 본문이 있는 활성 행만 마감/담당 검사 */
+const PLACEHOLDER_ASSIGNEE_LABELS = new Set(["assigned", "unassigned", "tbd", "n/a", "na", "?"]);
+
 export function draftActionNeedsAssigneeGap(item: DraftActionGapItem): boolean {
   const content = item.content.trim();
   if (!content || item.status === "cancelled" || item.status === "done") return false;
-  return !item.assignee_user_id?.trim();
+  if (!item.assignee_user_id?.trim()) return true;
+  const label = (item.assignee ?? "").trim().toLowerCase();
+  if (!label || PLACEHOLDER_ASSIGNEE_LABELS.has(label)) return true;
+  return false;
 }
 
 export function draftActionNeedsDueGap(item: DraftActionGapItem): boolean {

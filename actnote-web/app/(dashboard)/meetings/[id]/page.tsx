@@ -33,6 +33,12 @@ import { DraftDeleteMeetingModal } from "@/components/meetings/DraftDeleteMeetin
 import { DraftPublishSuccessModal } from "@/components/meetings/DraftPublishSuccessModal";
 import { draftHasActionPublishBlockers } from "@/lib/meetings/draft-action-gaps";
 import { meetingsHomeAfterPublishUrl } from "@/lib/meetings/post-publish-home";
+import {
+  draftNoteRowsToActionItems,
+  isDraftNoteActionId,
+  parseActionItemsFromDraftNotes,
+  syncActionItemsFromDraftNotes,
+} from "@/lib/meetings/action-items-from-draft";
 import type { MeetingStatus } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 import { workspaceMemberDisplayName } from "@/lib/user/member-display";
@@ -395,18 +401,52 @@ export default function MeetingDetailPage() {
       setTranscriptLines([]);
     }
 
-    const { data: items } = await (supabase as any)
+    const actionSelectFull =
+      "id, content, assignee, assignee_user_id, due_date, confidence, status";
+    const actionSelectMinimal = "id, content, assignee, assignee_user_id, due_date, status";
+
+    let itemsRes = await (supabase as any)
       .from("action_items")
-      .select("id, content, assignee, assignee_user_id, due_date, confidence, status")
+      .select(actionSelectFull)
       .eq("meeting_id", id)
       .is("valid_until", null)
       .order("created_at", { ascending: true });
 
-    const normalized = ((items as ActionItem[]) ?? []).map((row) => ({
+    if (itemsRes.error) {
+      console.warn("[meeting detail] action_items full select:", itemsRes.error.message);
+      itemsRes = await (supabase as any)
+        .from("action_items")
+        .select(actionSelectMinimal)
+        .eq("meeting_id", id)
+        .is("valid_until", null)
+        .order("created_at", { ascending: true });
+    }
+
+    let normalized: ActionItem[] = ((itemsRes.data as ActionItem[]) ?? []).map((row) => ({
       ...row,
       assignee_user_id: row.assignee_user_id ?? null,
+      confidence: row.confidence ?? null,
+      status: (row.status as ActionItem["status"]) ?? "open",
       due_date: toYmdInput(row.due_date != null ? String(row.due_date) : null),
     }));
+
+    if (normalized.length === 0 && draftObj) {
+      const fromNotes = parseActionItemsFromDraftNotes(draftObj);
+      if (fromNotes.length > 0) {
+        const wsId = String(row.workspace_id ?? "");
+        const synced = await syncActionItemsFromDraftNotes(
+          supabase,
+          id,
+          wsId,
+          fromNotes,
+        );
+        normalized =
+          synced.length > 0
+            ? synced
+            : (draftNoteRowsToActionItems(fromNotes) as ActionItem[]);
+      }
+    }
+
     setActionItems(normalized);
     setLoading(false);
   }, [id]);
@@ -484,6 +524,7 @@ export default function MeetingDetailPage() {
       wasProcessingRef.current === true && !proc && meeting.status === "ready";
 
     if (becameReadyFromPipeline) {
+      void fetchMeeting();
       router.refresh();
       const canOwnerOpenDraft =
         meeting.approval_status !== "published" && meetingRole === "owner";
@@ -494,7 +535,7 @@ export default function MeetingDetailPage() {
       }
     }
     wasProcessingRef.current = proc;
-  }, [meeting, router, meetingRole, loadMembers]);
+  }, [meeting, router, meetingRole, loadMembers, fetchMeeting]);
 
   useEffect(() => {
     if (!meeting?.workspace_id) return;
@@ -689,6 +730,52 @@ export default function MeetingDetailPage() {
       const raw = patch.due_date == null ? "" : String(patch.due_date).trim();
       sanitized.due_date = raw ? raw.slice(0, 10) : null;
     }
+
+    const applyLocal = (partial: Partial<ActionItem>, newId?: string) => {
+      const merge = (prev: ActionItem[]) =>
+        prev.map((a) => {
+          if (a.id !== rowId) return a;
+          return { ...a, ...partial, ...(newId ? { id: newId } : {}) };
+        });
+      setActionItems(merge);
+      setEditActionItems(merge);
+    };
+
+    if (isDraftNoteActionId(rowId)) {
+      const source =
+        editActionItems.find((a) => a.id === rowId) ?? actionItems.find((a) => a.id === rowId);
+      if (!source?.content.trim()) {
+        return { ok: false, error: "Action content is missing." };
+      }
+      const { data, error } = await (supabase as any)
+        .from("action_items")
+        .insert({
+          meeting_id: meeting.id,
+          workspace_id: meeting.workspace_id,
+          content: source.content.trim(),
+          assignee: sanitized.assignee ?? source.assignee,
+          assignee_user_id: sanitized.assignee_user_id ?? source.assignee_user_id,
+          due_date: sanitized.due_date ?? source.due_date,
+          change_type: "ADD",
+          status: "open",
+        })
+        .select("id, due_date, assignee, assignee_user_id, content, confidence, status")
+        .single();
+      if (error) return { ok: false, error: error.message };
+      const row = data as ActionItem;
+      applyLocal(
+        {
+          due_date: row.due_date ? toYmdInput(String(row.due_date)) : null,
+          assignee: row.assignee,
+          assignee_user_id: row.assignee_user_id,
+          confidence: row.confidence ?? null,
+          status: row.status ?? "open",
+        },
+        String(row.id),
+      );
+      return { ok: true };
+    }
+
     const { data, error } = await (supabase as any)
       .from("action_items")
       .update(sanitized)
@@ -704,17 +791,8 @@ export default function MeetingDetailPage() {
       assignee_user_id: string | null;
     } | null;
 
-    const normalize = (partial: Partial<ActionItem>) => {
-      setActionItems((prev) =>
-        prev.map((a) => (a.id === rowId ? { ...a, ...partial } : a)),
-      );
-      setEditActionItems((prev) =>
-        prev.map((a) => (a.id === rowId ? { ...a, ...partial } : a)),
-      );
-    };
-
     if (row) {
-      normalize({
+      applyLocal({
         due_date: row.due_date ? toYmdInput(String(row.due_date)) : null,
         assignee: row.assignee,
         assignee_user_id: row.assignee_user_id,
@@ -1420,7 +1498,7 @@ export default function MeetingDetailPage() {
                       email: m.email ?? "",
                     }))}
                     editMode={Boolean(editMode && canEdit)}
-                    canPatchInteractive={Boolean(editMode && canEdit)}
+                    canPatchInteractive={canEdit}
                     onPatchRow={(rowId, patch) =>
                       patchDraftAction(
                         rowId,

@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, type ReactElement } from "react";
-import { User, CalendarClock } from "lucide-react";
+import { useState, type ReactElement, type ReactNode } from "react";
 import { DraftAssignMemberModal } from "@/components/meetings/DraftAssignMemberModal";
 import { DraftDueDateTimeModal } from "@/components/meetings/DraftDueDateTimeModal";
 import {
@@ -13,7 +12,11 @@ import {
   fromDatetimeLocalToDueFields,
 } from "@/lib/meetings/deadline-local";
 
-const ORANGE_FOCUS = "border-2 border-[#ff6b35] bg-[#fff4f0] ring-2 ring-[#ff6b35]/25";
+/** Figma 157:11934 — 필수 Assignee / Due Date 외곽 (항상 주황, 클릭 가능) */
+const MANDATORY_ORANGE_SHELL =
+  "flex min-h-[52px] w-full min-w-[7.5rem] items-center rounded-lg border-2 border-[#ff6b35] bg-[#fff4f0] px-3 py-2.5 text-left transition-colors";
+
+const MANDATORY_ORANGE_BUTTON = `${MANDATORY_ORANGE_SHELL} cursor-pointer hover:bg-[#ffe8df] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6b35]/40`;
 
 interface ActionRow {
   id: string;
@@ -33,7 +36,6 @@ interface WorkspaceMemberLite {
 interface MeetingDraftActionItemsSectionProps {
   items: ActionRow[];
   members: WorkspaceMemberLite[];
-  /** 회의 참석자 — Assign 모달 Recommended 칩 */
   participantNames?: string[];
   editMode: boolean;
   canPatchInteractive: boolean;
@@ -44,13 +46,22 @@ interface MeetingDraftActionItemsSectionProps {
   onContentDraftChange?: (rowId: string, next: string) => void;
 }
 
-function formatDueCell(date: string | null): string {
+function formatDuePill(date: string | null): string {
   if (date?.trim()) {
     const slice = date.trim().slice(0, 10);
     const d = new Date(`${slice}T12:00:00`);
-    if (!Number.isNaN(d.getTime())) return d.toLocaleDateString("en-US", { dateStyle: "medium" });
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
+    }
   }
-  return "Due missing";
+  return "";
+}
+
+function assigneePillLabel(row: ActionRow): string {
+  const raw = row.assignee?.trim();
+  if (!raw) return "";
+  const paren = raw.indexOf(" (");
+  return paren > 0 ? raw.slice(0, paren) : raw;
 }
 
 function initialDatetimePickerValue(row: ActionRow): string {
@@ -58,14 +69,101 @@ function initialDatetimePickerValue(row: ActionRow): string {
   return "";
 }
 
+/** Figma — 미입력 시 빨간 ? pill */
+function GapPill(): ReactElement {
+  return (
+    <span className="inline-flex h-5 min-w-[2.75rem] items-center justify-center gap-1 rounded-full bg-[#ef4444] px-3 text-[15px] font-bold tracking-tight text-white">
+      <span className="size-2.5 shrink-0 rounded-full bg-white/40" aria-hidden />
+      ?
+    </span>
+  );
+}
+
+/** Figma — 입력 완료 시 회색 pill (Mina, 05/09/2026) */
+function FilledValuePill({ children }: { children: ReactNode }): ReactElement {
+  return (
+    <span className="inline-flex h-5 max-w-full items-center gap-1.5 rounded-full bg-[#f4f4f4] py-0.5 pl-1.5 pr-3 text-[15px] font-medium text-[#94a3b8]">
+      <span className="size-2.5 shrink-0 rounded-full bg-[#cbd5e1]" aria-hidden />
+      <span className="truncate">{children}</span>
+    </span>
+  );
+}
+
+function MandatoryAssigneeCell({
+  row,
+  interactive,
+  onOpen,
+}: {
+  row: ActionRow;
+  interactive: boolean;
+  onOpen: () => void;
+}): ReactElement {
+  const needsA = draftActionNeedsAssigneeGap(row);
+  const label = assigneePillLabel(row);
+  const inner = needsA || !label ? <GapPill /> : <FilledValuePill>{label}</FilledValuePill>;
+
+  if (interactive) {
+    return (
+      <button
+        type="button"
+        className={MANDATORY_ORANGE_BUTTON}
+        onClick={onOpen}
+        aria-label={needsA ? "Assign member — required" : `Assignee: ${label}. Click to change.`}
+      >
+        {inner}
+      </button>
+    );
+  }
+
+  return (
+    <div className={`${MANDATORY_ORANGE_SHELL} opacity-85`} aria-label="Assignee">
+      {inner}
+    </div>
+  );
+}
+
+function MandatoryDueCell({
+  row,
+  interactive,
+  onOpen,
+}: {
+  row: ActionRow;
+  interactive: boolean;
+  onOpen: () => void;
+}): ReactElement {
+  const needsD = draftActionNeedsDueGap(row);
+  const dateLabel = formatDuePill(row.due_date ?? null);
+  const inner = needsD || !dateLabel ? <GapPill /> : <FilledValuePill>{dateLabel}</FilledValuePill>;
+
+  if (interactive) {
+    return (
+      <button
+        type="button"
+        className={MANDATORY_ORANGE_BUTTON}
+        onClick={onOpen}
+        aria-label={needsD ? "Set due date — required" : `Due date: ${dateLabel}. Click to change.`}
+      >
+        {inner}
+      </button>
+    );
+  }
+
+  return (
+    <div className={`${MANDATORY_ORANGE_SHELL} opacity-85`} aria-label="Due date">
+      {inner}
+    </div>
+  );
+}
+
 /**
- * Draft 상세 단계에서 액션 아이템 표 + 담당/마감 누락 오렌지 클릭 수정.
+ * Draft Action Items — Figma 157:11934 (주황 필수 칸 + ? / 회색 pill).
  */
 export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSectionProps): ReactElement {
   const [dueModalRowId, setDueModalRowId] = useState<string | null>(null);
   const [assignModalRowId, setAssignModalRowId] = useState<string | null>(null);
   const [duePickerInitial, setDuePickerInitial] = useState("");
-  const [pickLoading, setPickLoading] = useState(false);
+  const [assignSaving, setAssignSaving] = useState(false);
+  const [dueSaving, setDueSaving] = useState(false);
 
   function openDeadlineModal(row: ActionRow): void {
     setDuePickerInitial(initialDatetimePickerValue(row));
@@ -79,11 +177,9 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
       alert("Choose a valid date and time.");
       return;
     }
-    setPickLoading(true);
-    const r = await props.onPatchRow(dueModalRowId, {
-      due_date: parsed.due_date,
-    });
-    setPickLoading(false);
+    setDueSaving(true);
+    const r = await props.onPatchRow(dueModalRowId, { due_date: parsed.due_date });
+    setDueSaving(false);
     if (!r.ok) {
       alert(r.error ?? "Failed to save deadline.");
       return;
@@ -93,13 +189,13 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
 
   async function assignMemberFromModal(m: WorkspaceMemberLite): Promise<void> {
     if (!assignModalRowId) return;
-    setPickLoading(true);
+    setAssignSaving(true);
     const label = `${m.displayName}${m.email ? ` (${m.email})` : ""}`;
     const r = await props.onPatchRow(assignModalRowId, {
       assignee_user_id: m.user_id,
       assignee: label,
     });
-    setPickLoading(false);
+    setAssignSaving(false);
     if (!r.ok) {
       alert(r.error ?? "Failed to assign member.");
       return;
@@ -107,16 +203,19 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
     setAssignModalRowId(null);
   }
 
+  const interactive = props.canPatchInteractive;
+  const activeRows = props.items.filter((row) => row.status !== "cancelled");
+
   return (
     <>
       <div className="overflow-x-auto rounded-xl border border-[#e2e8f0] bg-white shadow-sm">
-        <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
+        <table className="w-full min-w-[680px] border-collapse text-left text-[13px]">
           <thead>
             <tr className="border-b border-[#e8ecf1] bg-[#f8fafc]">
-              <th className="px-4 py-3 font-bold text-[#0a2540]">
+              <th className="w-[28%] px-4 py-3 font-bold text-[#0a2540]">
                 Assignee <span className="text-[#ff6b35]">*</span>
               </th>
-              <th className="px-4 py-3 font-bold text-[#0a2540]">
+              <th className="w-[20%] px-4 py-3 font-bold text-[#0a2540]">
                 Due Date <span className="text-[#ff6b35]">*</span>
               </th>
               <th className="px-4 py-3 font-bold text-[#0a2540]">
@@ -125,78 +224,46 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
             </tr>
           </thead>
           <tbody className="text-[#0a2540]">
-            {props.items.filter((row) => row.status !== "cancelled").length === 0 ? (
+            {activeRows.length === 0 ? (
               <tr>
                 <td colSpan={3} className="px-4 py-8 text-center text-[#94a3b8]">
-                  No action items yet.
+                  No action items yet. Run analysis again or add a row below.
                 </td>
               </tr>
             ) : (
-              props.items.map((row) => {
-                if (row.status === "cancelled") return null;
-                const needsA = draftActionNeedsAssigneeGap(row);
-                const needsD = draftActionNeedsDueGap(row);
-                return (
-                  <tr key={row.id} className="border-b border-[#f1f5f9] align-top">
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        disabled={!props.canPatchInteractive}
-                        onClick={() => {
-                          if (!needsA || !props.canPatchInteractive) return;
-                          setAssignModalRowId(row.id);
-                        }}
-                        className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${needsA ? ORANGE_FOCUS : "border border-transparent bg-[#fafbfc]"} ${props.canPatchInteractive && needsA ? "cursor-pointer hover:bg-orange-50" : ""}`}
-                      >
-                        <span className="flex items-center gap-2">
-                          {needsA ? (
-                            <span className="inline-flex h-5 min-w-[2.75rem] shrink-0 items-center justify-center gap-1 rounded-full bg-[#ef4444] px-3 text-[15px] font-bold text-white">
-                              <span className="size-2.5 rounded-full bg-white/40" aria-hidden />
-                              ?
-                            </span>
-                          ) : (
-                            <>
-                              <User className="size-4 shrink-0 text-[#64748b]" aria-hidden />
-                              <span className="truncate">{row.assignee ?? "Assigned"}</span>
-                            </>
-                          )}
-                        </span>
-                      </button>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        disabled={!props.canPatchInteractive}
-                        onClick={() => {
-                          if (!needsD || !props.canPatchInteractive) return;
-                          openDeadlineModal(row);
-                        }}
-                        className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${needsD ? ORANGE_FOCUS : "border border-transparent bg-[#fafbfc]"} ${props.canPatchInteractive && needsD ? "cursor-pointer hover:bg-orange-50" : ""}`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <CalendarClock className="size-4 shrink-0 text-[#64748b]" aria-hidden />
-                          {formatDueCell(row.due_date ?? null)}
-                        </span>
-                      </button>
-                    </td>
-                    <td className="px-4 py-3">
-                      {props.editMode ? (
-                        <textarea
-                          value={row.content}
-                          onChange={(e) => props.onContentDraftChange?.(row.id, e.target.value)}
-                          rows={Math.min(8, Math.max(2, row.content.split("\n").length + 1))}
-                          placeholder="Describe the action..."
-                          className="w-full resize-y rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#ff6b35]"
-                        />
-                      ) : (
-                        <ul className="list-disc space-y-1 pl-5 text-[13px] leading-relaxed">
-                          <li>{row.content || "—"}</li>
-                        </ul>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
+              activeRows.map((row) => (
+                <tr key={row.id} className="border-b border-[#f1f5f9] align-top">
+                  <td className="px-4 py-3">
+                    <MandatoryAssigneeCell
+                      row={row}
+                      interactive={interactive}
+                      onOpen={() => setAssignModalRowId(row.id)}
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    <MandatoryDueCell
+                      row={row}
+                      interactive={interactive}
+                      onOpen={() => openDeadlineModal(row)}
+                    />
+                  </td>
+                  <td className="px-4 py-3">
+                    {props.editMode ? (
+                      <textarea
+                        value={row.content}
+                        onChange={(e) => props.onContentDraftChange?.(row.id, e.target.value)}
+                        rows={Math.min(8, Math.max(2, row.content.split("\n").length + 1))}
+                        placeholder="Describe the action..."
+                        className="w-full resize-y rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#ff6b35]"
+                      />
+                    ) : (
+                      <ul className="list-disc space-y-1 pl-5 text-[13px] leading-relaxed text-[#64748b]">
+                        <li>{row.content || "—"}</li>
+                      </ul>
+                    )}
+                  </td>
+                </tr>
+              ))
             )}
           </tbody>
         </table>
@@ -205,8 +272,8 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
       <DraftDueDateTimeModal
         open={dueModalRowId != null}
         initialDatetimeLocal={duePickerInitial}
-        saving={pickLoading}
-        onClose={() => setDueModalRowId(null)}
+        saving={dueSaving}
+        onClose={() => !dueSaving && setDueModalRowId(null)}
         onConfirm={(v) => void saveDeadlineFromModal(v)}
       />
 
@@ -214,8 +281,8 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
         open={assignModalRowId != null}
         members={props.members}
         participantNames={props.participantNames}
-        saving={pickLoading}
-        onClose={() => setAssignModalRowId(null)}
+        saving={assignSaving}
+        onClose={() => !assignSaving && setAssignModalRowId(null)}
         onConfirm={(m) => void assignMemberFromModal(m)}
       />
     </>
