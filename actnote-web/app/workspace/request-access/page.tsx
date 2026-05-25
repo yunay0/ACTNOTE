@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
 
 interface WorkspaceInfo {
@@ -483,6 +484,7 @@ function RequestAccessInner() {
               type="button"
               onClick={async () => {
                 const supabase = createClient();
+                clearStoredWorkspaceId();
                 await supabase.auth.signOut();
                 const next = `/workspace/request-access?slug=${encodeURIComponent(slug)}`;
                 router.push(`/login?next=${encodeURIComponent(next)}`);

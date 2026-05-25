@@ -263,6 +263,7 @@ function WorkspaceSelectInner() {
 
   async function handleUseAnotherAccount(): Promise<void> {
     const supabase = createClient();
+    clearStoredWorkspaceId();
     await supabase.auth.signOut();
     router.replace("/login");
   }
