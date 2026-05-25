@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 import type { MeetingStatus } from "@/lib/types/meeting";
-import { STEP_LABELS } from "@/lib/types/meeting";
+import { STATUS_DISPLAY } from "@/lib/types/meeting";
 
 const STATUS_STYLES: Record<MeetingStatus, string> = {
   uploaded:    "bg-slate-100 text-slate-600 border-slate-200",
@@ -37,7 +37,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
       )}
     >
       <span className={cn("h-1.5 w-1.5 rounded-full", STATUS_DOTS[status])} />
-      {STEP_LABELS[status]}
+      {STATUS_DISPLAY[status]}
     </span>
   );
 }

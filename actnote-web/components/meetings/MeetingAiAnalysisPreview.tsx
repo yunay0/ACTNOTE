@@ -45,6 +45,26 @@ function PreviewSection({
 }
 
 export function MeetingAiAnalysisPreview(props: MeetingAiAnalysisPreviewProps): ReactElement {
+  /** Pipeline runs — show only progress notice; no AI draft scaffolding (Figma 157:11756). */
+  if (props.analyzing) {
+    return (
+      <div className="space-y-5">
+        <div
+          role="status"
+          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] font-medium leading-relaxed text-amber-950"
+        >
+          <span
+            className="mr-2 inline-flex size-6 items-center justify-center rounded-full bg-amber-200/80 align-middle text-[12px]"
+            aria-hidden
+          >
+            ⏳
+          </span>
+          Analysis is still in progress — this page updates automatically when the draft is ready.
+        </div>
+      </div>
+    );
+  }
+
   const doc = props.draftNotes && typeof props.draftNotes === "object" ? props.draftNotes : {};
   const extras = {
     key_topics: readDraftAnalysisText(doc, "key_topics"),
@@ -58,20 +78,6 @@ export function MeetingAiAnalysisPreview(props: MeetingAiAnalysisPreviewProps): 
 
   return (
     <div className="space-y-5">
-      {props.analyzing ? (
-        <div
-          role="status"
-          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] font-medium leading-relaxed text-amber-950"
-        >
-          <span
-            className="mr-2 inline-flex size-6 items-center justify-center rounded-full bg-amber-200/80 align-middle text-[12px]"
-            aria-hidden
-          >
-            ⏳
-          </span>
-          Analysis is still in progress — this overview updates automatically when the draft is ready.
-        </div>
-      ) : null}
 
       <div className="rounded-xl border border-[#fee2e2] bg-gradient-to-br from-[#fff4f0] to-white px-6 py-5 shadow-sm">
         <p className="text-[11px] font-bold uppercase tracking-[0.06em] text-[#ff6b35]">

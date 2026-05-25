@@ -3,11 +3,11 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft, CalendarDays, ListTodo,
+  ArrowLeft, CalendarDays,
   Send, Pencil, Trash2, Plus, X, Save,
   AlertCircle, ExternalLink,
   FileText,
-  Check,
+  Music2,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
@@ -28,7 +28,11 @@ import { DraftGuidanceSidebar } from "@/components/meetings/DraftGuidanceSidebar
 import { DraftOverviewPanel } from "@/components/meetings/DraftOverviewPanel";
 import { MeetingDraftActionItemsSection } from "@/components/meetings/MeetingDraftActionItemsSection";
 import { MeetingAnalysisResultsBlock } from "@/components/meetings/MeetingAnalysisResultsBlock";
+import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
+import { DraftDeleteMeetingModal } from "@/components/meetings/DraftDeleteMeetingModal";
+import { DraftPublishSuccessModal } from "@/components/meetings/DraftPublishSuccessModal";
 import { draftHasActionPublishBlockers } from "@/lib/meetings/draft-action-gaps";
+import { meetingsHomeAfterPublishUrl } from "@/lib/meetings/post-publish-home";
 import type { MeetingStatus } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 import { workspaceMemberDisplayName } from "@/lib/user/member-display";
@@ -188,6 +192,26 @@ function normalizeParticipants(raw: unknown): string[] {
   return out;
 }
 
+/** 분석 진행 화면 — 스토리지 URL에서 표시용 파일 이름 */
+function basenameFromAnalyzingAudioUrl(url: string | null | undefined): string {
+  if (!url?.trim()) return "Uploaded recording";
+  try {
+    const u = url.split("?")[0] ?? url;
+    const seg = decodeURIComponent(u.split("/").pop() ?? "recording");
+    return seg.trim() || "Uploaded recording";
+  } catch {
+    return "Uploaded recording";
+  }
+}
+
+function formatMmSsShort(seconds: number | null | undefined): string {
+  const s =
+    seconds == null || !Number.isFinite(seconds) ? 0 : Math.max(0, Math.floor(seconds));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${String(m)}:${String(rem).padStart(2, "0")}`;
+}
+
 export default function MeetingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -224,7 +248,6 @@ export default function MeetingDetailPage() {
   // 삭제 (STATUS-002) — draft 편집 중 Delete 시 오버레이·폭 분기 (Figma 157:8979 vs 157:9196)
   const [deleteModal, setDeleteModal] = useState(false);
   /** true: 편집 모드 스티키에서 연 경우 — 진한 블루 배경 블러 + max-w-[480px] */
-  const [deleteModalDraftEditChrome, setDeleteModalDraftEditChrome] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
@@ -460,15 +483,21 @@ export default function MeetingDetailPage() {
   useEffect(() => {
     if (!meeting) return;
     const proc = isProcessing(meeting.status);
-    if (
-      wasProcessingRef.current === true &&
-      !proc &&
-      meeting.status === "ready"
-    ) {
+    const becameReadyFromPipeline =
+      wasProcessingRef.current === true && !proc && meeting.status === "ready";
+
+    if (becameReadyFromPipeline) {
       router.refresh();
+      const canOwnerOpenDraft =
+        meeting.approval_status !== "published" && meetingRole === "owner";
+      if (canOwnerOpenDraft) {
+        void loadMembers(meeting.workspace_id);
+        /** 파이프라인 완료 직후 Draft 본문(분석+액션)을 바로 표시 — 수동 Next 불필요 (Figma 157:11934). */
+        setDraftSurfaceStep((step) => (step === "overview" ? "detail" : step));
+      }
     }
     wasProcessingRef.current = proc;
-  }, [meeting, router]);
+  }, [meeting, router, meetingRole, loadMembers]);
 
   useEffect(() => {
     if (!meeting?.workspace_id) return;
@@ -731,6 +760,8 @@ export default function MeetingDetailPage() {
       }
     }
 
+    const supabase = createClient();
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: validation, error: valErr } = await (supabase as any).rpc(
       "validate_meeting_for_publication",
@@ -780,52 +811,53 @@ export default function MeetingDetailPage() {
 
     const supabase = createClient();
 
-    // PUB-001: publish_meeting 은 approval_status === 'ready' 일 때만 허용됨.
-    // draft → ready 전환은 set_meeting_ready RPC 가 담당한다.
-    if (meeting.approval_status === "draft") {
+    try {
+      // PUB-001: publish_meeting 은 approval_status === 'ready' 일 때만 허용됨.
+      // draft → ready 전환은 set_meeting_ready RPC 가 담당한다.
+      if (meeting.approval_status === "draft") {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: readyErr } = await (supabase as any).rpc("set_meeting_ready", {
+          p_meeting_id: meeting.id,
+        });
+        if (readyErr) {
+          const msg =
+            readyErr.code === "42501"
+              ? "You don't have permission to publish. Ask an Owner."
+              : readyErr.message;
+          alert(`Failed to prepare publish: ${msg}`);
+          return;
+        }
+        setMeeting((prev) => (prev ? { ...prev, approval_status: "ready" } : prev));
+      }
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: readyErr } = await (supabase as any).rpc("set_meeting_ready", {
+      const { error } = await (supabase as any).rpc("publish_meeting", {
         p_meeting_id: meeting.id,
       });
-      if (readyErr) {
+
+      if (error) {
         const msg =
-          readyErr.code === "42501"
+          error.code === "42501"
             ? "You don't have permission to publish. Ask an Owner."
-            : readyErr.message;
-        alert(`Failed to prepare publish: ${msg}`);
-        setPublishing(false);
+            : error.message;
+        alert(`Failed to publish: ${msg}`);
         return;
       }
-      setMeeting((prev) => (prev ? { ...prev, approval_status: "ready" } : prev));
-    }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase as any).rpc("publish_meeting", {
-      p_meeting_id: meeting.id,
-    });
+      // Notion push + 임베딩 재인덱싱 비동기 트리거 (await 시 Modal/프록시 지연까지 발행 완료 단계가 막힘)
+      void fetch("/api/trigger-publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meeting_id: meeting.id }),
+      }).catch(() => null);
 
-    if (error) {
-      const msg =
-        error.code === "42501"
-          ? "You don’t have permission to publish. Ask an Owner."
-          : error.message;
-      alert(`Failed to publish: ${msg}`);
+      setMeeting((prev) => (prev ? { ...prev, approval_status: "published" } : prev));
+      setEditMode(false);
+      publishSuccessNavLockRef.current = false;
+      setPublishSuccessModal(true);
+    } finally {
       setPublishing(false);
-      return;
     }
-
-    // Notion push + 임베딩 재인덱싱 비동기 트리거
-    await fetch("/api/trigger-publish", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ meeting_id: meeting.id }),
-    }).catch(() => null);
-
-    setMeeting((prev) => prev ? { ...prev, approval_status: "published" } : prev);
-    setEditMode(false);
-    publishSuccessNavLockRef.current = false;
-    setPublishSuccessModal(true);
-    setPublishing(false);
   }
 
   async function handleDelete() {
@@ -841,21 +873,18 @@ export default function MeetingDetailPage() {
       setDeleting(false);
       return;
     }
-    setDeleteModalDraftEditChrome(false);
     setDeleteModal(false);
     setDeleting(false);
     router.push("/meetings");
   }
 
-  function openDeleteMeetingModal(fromDraftEditChrome: boolean): void {
+  function openDeleteMeetingModal(): void {
     setDeleteError(null);
-    setDeleteModalDraftEditChrome(fromDraftEditChrome);
     setDeleteModal(true);
   }
 
   function closeDeleteMeetingModal(): void {
     setDeleteError(null);
-    setDeleteModalDraftEditChrome(false);
     setDeleteModal(false);
   }
 
@@ -880,8 +909,11 @@ export default function MeetingDetailPage() {
     if (publishSuccessNavLockRef.current) return;
     publishSuccessNavLockRef.current = true;
     setPublishSuccessModal(false);
-    router.push("/meetings");
-  }, [router]);
+    const destination = meeting?.id
+      ? meetingsHomeAfterPublishUrl(meeting.id)
+      : "/meetings?tab=published";
+    router.push(destination);
+  }, [router, meeting?.id]);
 
   /** 발행 성공 모달 카운트다운 — 3→2→1초 후 자동 홈 이동 (Figma 157:8809) */
   useEffect(() => {
@@ -982,144 +1014,40 @@ export default function MeetingDetailPage() {
   const transcriptSideOpen =
     isReady && transcriptPanelOpen && transcriptLines.length > 0;
 
+  /** Figma 분석 진행: 좌측 정렬 + 우측 가이드 레일 등 — draft 완료 전 파이프라인 (error 제외). */
+  const showWideAnalyzingLayout =
+    isProcessing(meeting.status) && meeting.status !== "error";
+
+  /** 데스크톱 우측 레일: 가이드(기본) ↔ 트랜스크립트(토글 시) 동일 폭 교체 — Figma. */
+  const guidanceRailEligible = Boolean(canEdit || showWideAnalyzingLayout);
+  const showMdDraftRightRail = guidanceRailEligible || transcriptSideOpen;
+
+  const analyzingStageHeading =
+    meeting.status === "transcribing" ||
+    meeting.status === "diarizing" ||
+    meeting.status === "summarizing";
+
+  const analyzingFixedChrome = showWideAnalyzingLayout && canDeleteMeeting;
+  const scrollBottomPad =
+    draftStickyChrome || analyzingFixedChrome ? "pb-28 md:pb-24" : "";
+
+  const analyzingAudioLabel = basenameFromAnalyzingAudioUrl(meeting.audio_file_url);
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* 삭제 확인 모달 (STATUS-002) */}
-      {deleteModal && (
-        <div
-          className={
-            deleteModalDraftEditChrome
-              ? "fixed inset-0 z-[60] flex items-center justify-center bg-[rgba(10,37,64,0.6)] p-4 backdrop-blur-[2px]"
-              : "fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
-          }
-          role="presentation"
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="delete-draft-dialog-title"
-            className={`mx-4 flex w-full flex-col items-center gap-4 rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)] ${
-              deleteModalDraftEditChrome ? "max-w-[480px]" : "max-w-[440px]"
-            }`}
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div
-              className="flex size-16 shrink-0 items-center justify-center rounded-full bg-[#fef2f2]"
-              aria-hidden
-            >
-              <span className="text-[29px] leading-none">🗑️</span>
-            </div>
+      <DraftDeleteMeetingModal
+        open={deleteModal}
+        deleting={deleting}
+        errorMessage={deleteError}
+        onCancel={closeDeleteMeetingModal}
+        onConfirmDelete={() => void handleDelete()}
+      />
 
-            <div className="w-full pt-1 text-center">
-              <h2 id="delete-draft-dialog-title" className="text-2xl font-bold leading-snug text-[#0a2540]">
-                Delete this page?
-              </h2>
-            </div>
-
-            <p className="text-center text-[14px] leading-6 text-[#64748b]">
-              Are you sure you want to delete this?
-            </p>
-
-            <div className="flex w-full flex-col gap-1.5 rounded-[10px] border border-[#fee2e2] bg-[#fef2f2] px-[17px] pb-6 pt-6">
-              <div className="flex items-center gap-1.5 text-[13.6px] font-bold leading-tight text-[#dc2626]">
-                <span aria-hidden className="text-[11px]">
-                  🗑️
-                </span>
-                <span>What will be deleted:</span>
-              </div>
-              <p className="text-[12px] leading-[19.5px] text-[#991b1b]">
-                The following information will be permanently lost:
-              </p>
-              <ul className="mt-1 list-disc space-y-1 pl-5 text-[12.1px] leading-normal text-[#991b1b]">
-                <li>Meeting title and details</li>
-                <li>Key Topics</li>
-                <li>Summary</li>
-                <li>Action Items</li>
-              </ul>
-            </div>
-
-            {deleteError ? (
-              <div className="w-full rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
-                {deleteError}
-              </div>
-            ) : null}
-
-            <div className="flex w-full gap-3 pt-2">
-              <button
-                type="button"
-                onClick={closeDeleteMeetingModal}
-                className="flex h-12 min-h-12 flex-1 items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] bg-white text-[15px] font-bold text-[#64748b] hover:bg-[#f8fafc]"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={deleting}
-                className="flex h-12 min-h-12 flex-1 items-center justify-center rounded-[10px] bg-[#ef4444] text-[15px] font-bold text-white hover:bg-red-600 disabled:opacity-60"
-              >
-                {deleting ? "Deleting…" : "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {publishSuccessModal ? (
-        <div
-          className="fixed inset-0 z-[70] flex items-center justify-center bg-[rgba(10,37,64,0.6)] p-4 backdrop-blur-[2px]"
-          role="presentation"
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="publish-success-title"
-            className="mx-4 flex w-full max-w-[480px] flex-col items-center gap-4 rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div
-              className="flex size-16 shrink-0 items-center justify-center rounded-full bg-[#ff8150]"
-              aria-hidden
-            >
-              <Check className="size-9 text-white" strokeWidth={2.75} />
-            </div>
-
-            <div className="w-full pt-1 text-center">
-              <h2 id="publish-success-title" className="text-2xl font-bold leading-snug text-[#0a2540]">
-                Success!
-              </h2>
-            </div>
-
-            <p className="text-center text-[14px] leading-6 text-[#64748b]">
-              Successfully Published to ACTNOTE Workspace
-            </p>
-
-            <div className="flex w-full max-w-[416px] flex-col gap-[11px] rounded-[10px] border border-[#fee2e2] bg-[#edf1f5] px-[25px] py-6">
-              <div className="flex items-start gap-1.5 text-left">
-                <span className="shrink-0 text-[13px]" aria-hidden>
-                  ✅
-                </span>
-                <p className="text-[13.6px] leading-snug text-[#0a2540]">
-                  Check the &apos;Published&apos; tab to see your final notes.
-                </p>
-              </div>
-              <p className="text-center text-[13px] leading-6 text-[#0a2540]" aria-live="polite">
-                🏠 Moving to your Home in a moment.
-              </p>
-            </div>
-
-            <div className="flex w-full justify-center pt-2">
-              <button
-                type="button"
-                onClick={finalizePublishSuccessNavigation}
-                className="flex h-12 min-h-12 w-full max-w-[200px] items-center justify-center rounded-[10px] bg-[#ff8150] text-[15px] font-bold text-white shadow-[0px_2px_4px_rgba(255,107,53,0.2)] transition-opacity hover:opacity-90"
-              >
-                Go Home Now ({publishHomeCountdown}s)
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <DraftPublishSuccessModal
+        open={publishSuccessModal}
+        homeCountdownSeconds={publishHomeCountdown}
+        onGoHomeNow={finalizePublishSuccessNavigation}
+      />
 
       {/* PUB-001 — 필수 필드 검증 모달 */}
       {pubValidModal && (
@@ -1191,12 +1119,12 @@ export default function MeetingDetailPage() {
       )}
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <div className={`min-h-0 flex-1 overflow-y-auto p-10 ${draftStickyChrome ? "pb-28 md:pb-24" : ""}`}>
+        <div className={`min-h-0 flex-1 overflow-y-auto p-10 ${scrollBottomPad}`}>
           <div
-            className={`mx-auto w-full ${
-              canEdit
-                ? "grid max-w-[1104px] grid-cols-1 gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_456px]"
-                : "flex max-w-3xl flex-col gap-10"
+            className={`w-full ${
+              showMdDraftRightRail
+                ? "mr-auto ml-0 max-w-[min(680px,100%)]"
+                : "mx-auto flex max-w-3xl flex-col gap-10"
             }`}
           >
             <div className={`min-w-0 space-y-6 ${canEdit ? "" : "w-full"}`}>
@@ -1216,6 +1144,13 @@ export default function MeetingDetailPage() {
                   placeholder="Meeting title"
                   className="flex-1 text-xl font-bold leading-snug text-[#0a2540] rounded-xl border border-[#e2e8f0] px-3 py-2 outline-none focus:border-[#ff6b35]"
                 />
+              ) : analyzingStageHeading ? (
+                <div className="min-w-0 flex-1">
+                  <h1 className="text-xl font-bold leading-snug text-[#0a2540]">Analyzing</h1>
+                  <p className="mt-1 truncate text-sm font-semibold text-[#64748b]" title={meeting.title ?? ""}>
+                    {meeting.title?.trim() || "Untitled meeting"}
+                  </p>
+                </div>
               ) : (
                 <h1 className="text-xl font-bold leading-snug text-[#0a2540]">
                   {meeting.title || "Untitled Meeting"}
@@ -1243,7 +1178,7 @@ export default function MeetingDetailPage() {
                 {canDeleteMeeting && (!canEdit || draftSurfaceStep === "overview") ? (
                 <button
                   type="button"
-                  onClick={() => openDeleteMeetingModal(false)}
+                  onClick={openDeleteMeetingModal}
                   className="flex items-center justify-center h-8 w-8 rounded-lg text-[#94a3b8] hover:bg-red-50 hover:text-red-500 transition-colors"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -1256,11 +1191,10 @@ export default function MeetingDetailPage() {
             </div>
             {!isReady && (
               <>
-                <div className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-5">
-                  <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-[#64748b]">
-                    Meeting information
-                  </p>
-                  <dl className="mt-4 grid gap-4 sm:grid-cols-2">
+                <section className="space-y-5">
+                  <DraftSectionHeading step={1} title="Meeting Information" />
+                  <div className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-5">
+                    <dl className="grid gap-4 sm:grid-cols-2">
                     <div className="sm:col-span-2">
                       <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
                         Meeting title
@@ -1294,7 +1228,7 @@ export default function MeetingDetailPage() {
                     </div>
                     <div className="sm:col-span-2">
                       <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
-                        Participants
+                        Participants<span className="text-[#ff6b35]"> *</span>
                       </dt>
                       <dd className="mt-2">
                         {meeting.participants.length > 0 ? (
@@ -1342,6 +1276,39 @@ export default function MeetingDetailPage() {
                     </div>
                   </dl>
                 </div>
+                </section>
+                {showWideAnalyzingLayout ? (
+                  <section className="space-y-5">
+                    <DraftSectionHeading
+                      step={2}
+                      title="Uploaded Recording"
+                      titleSize="large"
+                      titleRequiredMark
+                    />
+                    {meeting.audio_file_url?.trim() ? (
+                      <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] p-[18px] shadow-none">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                          <div aria-hidden className="flex shrink-0 items-center justify-center sm:size-14">
+                            <Music2 className="size-8 text-[#64748b]" strokeWidth={2} />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="break-words text-[15px] font-bold leading-snug text-[#0a2540]">
+                              {analyzingAudioLabel}
+                            </p>
+                            <p className="mt-1 flex flex-wrap items-center gap-1 text-[13px] text-[#64748b]">
+                              <CalendarDays className="size-3.5 opacity-70" aria-hidden />
+                              Duration {formatMmSsShort(meeting.duration_seconds ?? null)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] px-[18px] py-4 text-[13px] text-[#94a3b8]">
+                        No recording attachment on this meeting.
+                      </div>
+                    )}
+                  </section>
+                ) : null}
                 {meeting.status === "error" ? (
                   <ProcessingProgress
                     status={meeting.status}
@@ -1350,31 +1317,18 @@ export default function MeetingDetailPage() {
                     retryLoading={retryAnalysisLoading}
                   />
                 ) : isProcessing(meeting.status) ? (
-                  <>
-                    <MeetingAiAnalysisPreview
-                      analyzing={isProcessing(meeting.status)}
-                      title={meeting.title ?? ""}
-                      meetingType={meeting.meeting_type}
-                      summary={meeting.summary}
-                      decisions={meeting.decisions}
-                      referencedDocuments={meeting.referenced_documents}
-                      draftNotes={draftNotesDoc}
-                      actions={actionItems
-                        .filter((x) => x.status !== "cancelled")
-                        .map((x) => ({ content: x.content, assignee: x.assignee }))}
-                    />
-                    <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] pt-5">
-                      {canDeleteMeeting ? (
-                        <button
-                          type="button"
-                          onClick={() => openDeleteMeetingModal(false)}
-                          className="flex min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 py-2.5 text-[14px] font-bold text-red-700 hover:bg-red-100/80"
-                        >
-                          Delete
-                        </button>
-                      ) : null}
-                    </div>
-                  </>
+                  <MeetingAiAnalysisPreview
+                    analyzing={isProcessing(meeting.status)}
+                    title={meeting.title ?? ""}
+                    meetingType={meeting.meeting_type}
+                    summary={meeting.summary}
+                    decisions={meeting.decisions}
+                    referencedDocuments={meeting.referenced_documents}
+                    draftNotes={draftNotesDoc}
+                    actions={actionItems
+                      .filter((x) => x.status !== "cancelled")
+                      .map((x) => ({ content: x.content, assignee: x.assignee }))}
+                  />
                 ) : null}
               </>
             )}
@@ -1422,109 +1376,169 @@ export default function MeetingDetailPage() {
                   onClick={() => setDraftSurfaceStep("overview")}
                   className="inline-flex items-center gap-1.5 rounded-lg py-2 text-sm font-semibold text-[#64748b] transition-colors hover:text-[#0a2540]"
                 >
-                  <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden /> Back to meeting info
+                  <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden /> Back
                 </button>
               ) : null}
-              <MeetingAnalysisResultsBlock
-                meetingTypeRaw={meeting.meeting_type}
-                mode={editMode && canEdit ? "edit" : "read"}
-                segments={analysisSegments}
-                summary={editMode && canEdit ? editSummary : meeting.summary ?? ""}
-                onSummaryChange={editMode && canEdit ? setEditSummary : undefined}
-                decisionsRead={meeting.decisions ?? []}
-                decisionsEdit={editDecisions}
-                onDecisionsChange={editMode && canEdit ? setEditDecisions : undefined}
-                keyTopicsText={
-                  editMode && canEdit ? editKeyTopics : readDraftAnalysisText(draftNotesDoc, "key_topics")
-                }
-                risksAndIssuesText={
-                  editMode && canEdit
-                    ? editRisksAndIssues
-                    : readDraftAnalysisText(draftNotesDoc, "risks_and_issues")
-                }
-                followUpText={
-                  editMode && canEdit ? editFollowUp : readDraftAnalysisText(draftNotesDoc, "follow_up")
-                }
-                blockersText={
-                  editMode && canEdit ? editBlockers : readDraftAnalysisText(draftNotesDoc, "blockers")
-                }
-                onExtrasChange={
-                  editMode && canEdit
-                    ? (key, val) => {
-                        if (key === "key_topics") setEditKeyTopics(val);
-                        else if (key === "risks_and_issues") setEditRisksAndIssues(val);
-                        else if (key === "follow_up") setEditFollowUp(val);
-                        else if (key === "blockers") setEditBlockers(val);
-                      }
-                    : undefined
-                }
-              />
-
-              {/* 액션 아이템 (DRAFT-001 + DRAFT-005) */}
-              <Section icon={<ListTodo className="h-4 w-4 text-[#2e5c8a]" />} title="4 Action Items">
-                <MeetingDraftActionItemsSection
-                  items={editMode && canEdit ? editActionItems : actionItems}
-                  members={members.map((m) => ({
-                    user_id: m.user_id,
-                    displayName: m.displayName,
-                    email: m.email ?? "",
-                  }))}
-                  editMode={Boolean(editMode && canEdit)}
-                  canPatchInteractive={Boolean(editMode && canEdit)}
-                  onPatchRow={(rowId, patch) =>
-                    patchDraftAction(
-                      rowId,
-                      patch as {
-                        assignee?: string | null;
-                        assignee_user_id?: string | null;
-                        due_date?: string | null;
-                        due_at?: string | null;
-                      },
-                    )
+              <div className="flex flex-col gap-[30px]">
+                <MeetingAnalysisResultsBlock
+                  meetingTypeRaw={meeting.meeting_type}
+                  mode={editMode && canEdit ? "edit" : "read"}
+                  segments={analysisSegments}
+                  summary={editMode && canEdit ? editSummary : meeting.summary ?? ""}
+                  onSummaryChange={editMode && canEdit ? setEditSummary : undefined}
+                  decisionsRead={meeting.decisions ?? []}
+                  decisionsEdit={editDecisions}
+                  onDecisionsChange={editMode && canEdit ? setEditDecisions : undefined}
+                  keyTopicsText={
+                    editMode && canEdit ? editKeyTopics : readDraftAnalysisText(draftNotesDoc, "key_topics")
                   }
-                  onContentDraftChange={
+                  risksAndIssuesText={
                     editMode && canEdit
-                      ? (rowId, next) => {
-                          setEditActionItems((prev) =>
-                            prev.map((a) => (a.id === rowId ? { ...a, content: next } : a)),
-                          );
+                      ? editRisksAndIssues
+                      : readDraftAnalysisText(draftNotesDoc, "risks_and_issues")
+                  }
+                  followUpText={
+                    editMode && canEdit ? editFollowUp : readDraftAnalysisText(draftNotesDoc, "follow_up")
+                  }
+                  blockersText={
+                    editMode && canEdit ? editBlockers : readDraftAnalysisText(draftNotesDoc, "blockers")
+                  }
+                  onExtrasChange={
+                    editMode && canEdit
+                      ? (key, val) => {
+                          if (key === "key_topics") setEditKeyTopics(val);
+                          else if (key === "risks_and_issues") setEditRisksAndIssues(val);
+                          else if (key === "follow_up") setEditFollowUp(val);
+                          else if (key === "blockers") setEditBlockers(val);
                         }
                       : undefined
                   }
                 />
-                {editMode && canEdit ? (
-                  <div className="pt-4" lang="en-US">
-                    <button
-                      type="button"
-                      onClick={() => setEditActionItems((prev) => [...prev, emptyDraftActionItem()])}
-                      className="flex items-center gap-1.5 text-sm font-semibold text-[#ff6b35] hover:opacity-80"
-                    >
-                      <Plus className="h-4 w-4" aria-hidden /> Add action item
-                    </button>
-                    {editActionItems.length === 0 ? (
-                      <p className="mt-2 text-sm italic text-[#94a3b8]">No action items yet.</p>
-                    ) : null}
-                  </div>
-                ) : null}
-              </Section>
+
+                {/* 액션 아이템 (DRAFT-001 + DRAFT-005) — Figma S-18-02 섹션 4 */}
+                <div className="space-y-4 rounded-xl border border-[#e2e8f0] bg-white p-6 shadow-sm">
+                  <DraftSectionHeading step={4} title="Action Items" />
+                  <MeetingDraftActionItemsSection
+                    items={editMode && canEdit ? editActionItems : actionItems}
+                    participantNames={meeting.participants}
+                    members={members.map((m) => ({
+                      user_id: m.user_id,
+                      displayName: m.displayName,
+                      email: m.email ?? "",
+                    }))}
+                    editMode={Boolean(editMode && canEdit)}
+                    canPatchInteractive={Boolean(editMode && canEdit)}
+                    onPatchRow={(rowId, patch) =>
+                      patchDraftAction(
+                        rowId,
+                        patch as {
+                          assignee?: string | null;
+                          assignee_user_id?: string | null;
+                          due_date?: string | null;
+                          due_at?: string | null;
+                        },
+                      )
+                    }
+                    onContentDraftChange={
+                      editMode && canEdit
+                        ? (rowId, next) => {
+                            setEditActionItems((prev) =>
+                              prev.map((a) => (a.id === rowId ? { ...a, content: next } : a)),
+                            );
+                          }
+                        : undefined
+                    }
+                  />
+                  {editMode && canEdit ? (
+                    <div className="pt-4" lang="en-US">
+                      <button
+                        type="button"
+                        onClick={() => setEditActionItems((prev) => [...prev, emptyDraftActionItem()])}
+                        className="flex items-center gap-1.5 text-sm font-semibold text-[#ff6b35] hover:opacity-80"
+                      >
+                        <Plus className="h-4 w-4" aria-hidden /> Add action item
+                      </button>
+                      {editActionItems.length === 0 ? (
+                        <p className="mt-2 text-sm italic text-[#94a3b8]">No action items yet.</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
 
             </>
           ) : null}
             </div>
 
-          {canEdit ? (
-            <DraftGuidanceSidebar publishBlockedForActions={publishBlockedByActions} />
-          ) : null}
+            {guidanceRailEligible && !transcriptPanelOpen ? (
+              <div className="mt-10 shrink-0 md:hidden">
+                <DraftGuidanceSidebar publishBlockedForActions={Boolean(canEdit && publishBlockedByActions)} />
+              </div>
+            ) : null}
           </div>
         </div>
+
+        {showMdDraftRightRail ? (
+          <div className="hidden min-h-0 w-[456px] shrink-0 flex-col overflow-hidden border-l border-[#e2e8f0] bg-[#f8fafc] md:flex">
+            {transcriptSideOpen ? (
+              <aside
+                className="flex min-h-0 flex-1 flex-col border-[#e2e8f0] bg-white"
+                aria-label="Transcript"
+              >
+                <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e2e8f0] px-4 py-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <FileText className="h-4 w-4 shrink-0 text-[#2e5c8a]" aria-hidden />
+                    <p className="text-[14px] font-bold text-[#0a2540]">Transcript</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
+                    aria-label="Close transcript panel"
+                    onClick={() => setTranscriptPanelOpen(false)}
+                  >
+                    <X className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4">
+                  <TranscriptViewer
+                    bare
+                    transcripts={transcriptLines}
+                    speakerMapping={transcriptSpeakerMapping}
+                    members={members}
+                  />
+                </div>
+              </aside>
+            ) : guidanceRailEligible ? (
+              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                <DraftGuidanceSidebar publishBlockedForActions={Boolean(canEdit && publishBlockedByActions)} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
+
+      {analyzingFixedChrome ? (
+        <div
+          role="toolbar"
+          aria-label="Meeting actions during analysis"
+          className="fixed bottom-0 left-[240px] right-0 z-[42] flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] bg-white/95 px-6 py-4 shadow-[0_-4px_24px_rgba(10,37,64,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/90"
+        >
+          <button
+            type="button"
+            onClick={openDeleteMeetingModal}
+            className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 text-[14px] font-bold text-red-700 transition-colors hover:bg-red-100/80"
+          >
+            Delete
+          </button>
+        </div>
+      ) : null}
 
       {draftStickyChrome ? (
         <div
           role="toolbar"
           aria-label="Draft actions"
           className={`fixed bottom-0 left-[240px] z-[42] flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] bg-white/95 px-6 py-4 shadow-[0_-4px_24px_rgba(10,37,64,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/90 ${
-            transcriptSideOpen ? "right-0 md:right-[400px]" : "right-0"
+            transcriptSideOpen ? "right-0 md:right-[456px]" : "right-0"
           }`}
         >
           {!editMode ? (
@@ -1539,7 +1553,7 @@ export default function MeetingDetailPage() {
           {canDeleteMeeting ? (
             <button
               type="button"
-              onClick={() => openDeleteMeetingModal(editMode && canEdit)}
+              onClick={openDeleteMeetingModal}
               className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 text-[14px] font-bold text-red-700 transition-colors hover:bg-red-100/80"
             >
               Delete
@@ -1562,7 +1576,7 @@ export default function MeetingDetailPage() {
         </div>
       ) : null}
 
-      {isReady && transcriptPanelOpen && transcriptLines.length > 0 ? (
+      {transcriptSideOpen ? (
         <>
           <button
             type="button"
@@ -1571,15 +1585,13 @@ export default function MeetingDetailPage() {
             onClick={() => setTranscriptPanelOpen(false)}
           />
           <aside
-            className="fixed inset-y-0 right-0 z-[38] flex h-full w-[min(440px,100vw)] flex-col border-[#e2e8f0] bg-white shadow-[0px_-4px_24px_rgba(10,37,64,0.08)] md:relative md:inset-auto md:z-0 md:h-full md:min-h-0 md:w-[400px] md:min-w-[400px] md:max-w-[400px] md:flex-shrink-0 md:border-l md:shadow-none"
-            aria-labelledby="draft-transcript-side-title"
+            className="fixed inset-y-0 right-0 z-[38] flex h-full w-[min(440px,100vw)] flex-col border-[#e2e8f0] bg-white shadow-[0px_-4px_24px_rgba(10,37,64,0.08)] md:hidden"
+            aria-label="Transcript"
           >
             <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e2e8f0] px-4 py-3">
               <div className="flex min-w-0 items-center gap-2">
                 <FileText className="h-4 w-4 shrink-0 text-[#2e5c8a]" aria-hidden />
-                <h2 id="draft-transcript-side-title" className="text-[14px] font-bold text-[#0a2540]">
-                  Transcript
-                </h2>
+                <p className="text-[14px] font-bold text-[#0a2540]">Transcript</p>
               </div>
               <button
                 type="button"
@@ -1587,7 +1599,7 @@ export default function MeetingDetailPage() {
                 aria-label="Close transcript panel"
                 onClick={() => setTranscriptPanelOpen(false)}
               >
-                <X className="h-4 w-4" />
+                <X className="h-4 w-4" aria-hidden />
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4">
@@ -1601,19 +1613,6 @@ export default function MeetingDetailPage() {
           </aside>
         </>
       ) : null}
-      </div>
-    </div>
-  );
-}
-
-function Section({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-[#e2e8f0] bg-white p-6 shadow-sm space-y-4">
-      <div className="flex items-center gap-2">
-        {icon}
-        <h2 className="font-semibold text-[#0a2540]">{title}</h2>
-      </div>
-      {children}
     </div>
   );
 }

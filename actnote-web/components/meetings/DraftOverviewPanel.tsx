@@ -3,6 +3,7 @@
 import type { ReactElement } from "react";
 import { CalendarDays, Music2, ArrowRight } from "lucide-react";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
+import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
 
 function formatMmSs(seconds: number | null | undefined): string {
   const s = seconds == null || !Number.isFinite(seconds) ? 0 : Math.max(0, Math.floor(seconds));
@@ -56,12 +57,7 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
   return (
     <div className="space-y-10">
       <section className="space-y-5">
-        <div className="flex items-center gap-2">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-[14px] bg-[#fff4f0] text-[14px] font-bold text-[#ff6b35]">
-            1
-          </span>
-          <h2 className="text-[17px] font-bold text-[#0a2540]">Meeting Information</h2>
-        </div>
+        <DraftSectionHeading step={1} title="Meeting Information" />
 
         <div className="space-y-4">
           <Field label="Meeting Title" required>
@@ -87,7 +83,9 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
           </Field>
 
           <div className="space-y-2">
-            <span className="text-[13px] font-bold text-[#0a2540]">Participants</span>
+            <span className="text-[13px] font-bold text-[#0a2540]">
+              Participants<span className="text-[#ff6b35]"> *</span>
+            </span>
             <div className="flex flex-wrap gap-2">
               {props.participantNames.length > 0 ? (
                 props.participantNames.map((p, i) => (
@@ -111,21 +109,18 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
       </section>
 
       <section className="space-y-5">
-        <div className="flex items-center gap-2">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-[14px] bg-[#fff4f0] text-[14px] font-bold text-[#ff6b35]">
-            2
-          </span>
-          <h2 className="text-[17px] font-bold text-[#0a2540]">Uploaded Recording</h2>
-        </div>
+        <DraftSectionHeading
+          step={2}
+          title="Uploaded Recording"
+          titleSize="large"
+          titleRequiredMark
+        />
 
         {hasRecording ? (
-          <div className="rounded-xl border-2 border-[#22c55e] bg-white p-[18px] shadow-sm">
+          <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] p-[18px] shadow-none">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-              <div
-                aria-hidden
-                className="flex size-14 shrink-0 items-center justify-center rounded-lg bg-[#ff6b35] text-white"
-              >
-                <Music2 className="size-8" strokeWidth={2} />
+              <div aria-hidden className="flex shrink-0 items-center justify-center">
+                <Music2 className="size-8 text-[#64748b] sm:size-9" strokeWidth={2} />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="break-words text-[15px] font-bold leading-snug text-[#0a2540]">
@@ -140,9 +135,9 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
                 type="button"
                 disabled={!props.transcriptReady}
                 onClick={props.onOpenTranscript}
-                className="inline-flex h-11 w-full shrink-0 items-center justify-center rounded-[10px] bg-[#fff4f0] px-4 text-[13px] font-bold text-[#ff6b35] hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto"
+                className="inline-flex h-[30px] w-full shrink-0 items-center justify-center rounded-[8px] bg-[#ff6b35] px-6 text-[14px] font-bold text-white shadow-[0px_2px_4px_rgba(255,107,53,0.2)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45 sm:w-auto sm:min-w-[153px]"
               >
-                View transcript
+                View Transcript
               </button>
             </div>
           </div>

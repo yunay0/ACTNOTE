@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState, type ReactElement } from "react";
-import { User, CalendarClock, Loader2 } from "lucide-react";
+import { useState, type ReactElement } from "react";
+import { User, CalendarClock } from "lucide-react";
+import { DraftAssignMemberModal } from "@/components/meetings/DraftAssignMemberModal";
+import { DraftDueDateTimeModal } from "@/components/meetings/DraftDueDateTimeModal";
 import {
   draftActionNeedsAssigneeGap,
   draftActionNeedsDueGap,
@@ -33,6 +35,8 @@ interface WorkspaceMemberLite {
 interface MeetingDraftActionItemsSectionProps {
   items: ActionRow[];
   members: WorkspaceMemberLite[];
+  /** 회의 참석자 — Assign 모달 Recommended 칩 */
+  participantNames?: string[];
   editMode: boolean;
   canPatchInteractive: boolean;
   onPatchRow: (
@@ -64,39 +68,23 @@ function initialDatetimePickerValue(row: ActionRow): string {
   return "";
 }
 
-function membersFilter(members: WorkspaceMemberLite[], q: string): WorkspaceMemberLite[] {
-  const s = q.trim().toLowerCase();
-  if (!s) return members;
-  return members.filter(
-    (m) =>
-      m.displayName.toLowerCase().includes(s) ||
-      Boolean(m.email && m.email.toLowerCase().includes(s)),
-  );
-}
-
 /**
  * Draft 상세 단계에서 액션 아이템 표 + 담당/마감 누락 오렌지 클릭 수정.
  */
 export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSectionProps): ReactElement {
   const [dueModalRowId, setDueModalRowId] = useState<string | null>(null);
   const [assignModalRowId, setAssignModalRowId] = useState<string | null>(null);
-  const [deadlineDraft, setDeadlineDraft] = useState("");
-  const [assignQ, setAssignQ] = useState("");
+  const [duePickerInitial, setDuePickerInitial] = useState("");
   const [pickLoading, setPickLoading] = useState(false);
 
-  const dueRow = useMemo(
-    () => props.items.find((x) => x.id === dueModalRowId) ?? null,
-    [props.items, dueModalRowId],
-  );
-
   function openDeadlineModal(row: ActionRow): void {
-    setDeadlineDraft(initialDatetimePickerValue(row));
+    setDuePickerInitial(initialDatetimePickerValue(row));
     setDueModalRowId(row.id);
   }
 
-  async function saveDeadlineModal(): Promise<void> {
+  async function saveDeadlineFromModal(datetimeLocal: string): Promise<void> {
     if (!dueModalRowId) return;
-    const parsed = fromDatetimeLocalToDueFields(deadlineDraft);
+    const parsed = fromDatetimeLocalToDueFields(datetimeLocal);
     if (!parsed) {
       alert("Choose a valid date and time.");
       return;
@@ -114,7 +102,7 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
     setDueModalRowId(null);
   }
 
-  async function assignMember(m: WorkspaceMemberLite): Promise<void> {
+  async function assignMemberFromModal(m: WorkspaceMemberLite): Promise<void> {
     if (!assignModalRowId) return;
     setPickLoading(true);
     const label = `${m.displayName}${m.email ? ` (${m.email})` : ""}`;
@@ -128,10 +116,7 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
       return;
     }
     setAssignModalRowId(null);
-    setAssignQ("");
   }
-
-  const filteredMembers = membersFilter(props.members, assignQ);
 
   return (
     <>
@@ -171,15 +156,21 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
                         onClick={() => {
                           if (!needsA || !props.canPatchInteractive) return;
                           setAssignModalRowId(row.id);
-                          setAssignQ("");
                         }}
                         className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${needsA ? ORANGE_FOCUS : "border border-transparent bg-[#fafbfc]"} ${props.canPatchInteractive && needsA ? "cursor-pointer hover:bg-orange-50" : ""}`}
                       >
                         <span className="flex items-center gap-2">
-                          <User className="size-4 shrink-0 text-[#64748b]" aria-hidden />
-                          <span className="truncate">
-                            {needsA ? "Missing assignee" : (row.assignee ?? "Assigned")}
-                          </span>
+                          {needsA ? (
+                            <span className="inline-flex h-5 min-w-[2.75rem] shrink-0 items-center justify-center gap-1 rounded-full bg-[#ef4444] px-3 text-[15px] font-bold text-white">
+                              <span className="size-2.5 rounded-full bg-white/40" aria-hidden />
+                              ?
+                            </span>
+                          ) : (
+                            <>
+                              <User className="size-4 shrink-0 text-[#64748b]" aria-hidden />
+                              <span className="truncate">{row.assignee ?? "Assigned"}</span>
+                            </>
+                          )}
                         </span>
                       </button>
                     </td>
@@ -222,90 +213,22 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
         </table>
       </div>
 
-      {dueModalRowId && dueRow ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" role="dialog" aria-labelledby="due-title">
-            <p id="due-title" className="text-[16px] font-bold text-[#0a2540]">
-              Set due date &amp; time
-            </p>
-            <p className="mt-1 text-[13px] text-[#64748b]">Choose when this action must be finished.</p>
-            <input
-              type="datetime-local"
-              value={deadlineDraft}
-              onChange={(e) => setDeadlineDraft(e.target.value)}
-              className="mt-4 w-full rounded-xl border-2 border-[#e2e8f0] px-4 py-3 text-[15px] outline-none focus:border-[#ff6b35]"
-            />
-            <div className="mt-6 flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDueModalRowId(null)}
-                className="h-11 rounded-xl border border-[#e2e8f0] px-5 text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc]"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={pickLoading}
-                onClick={() => void saveDeadlineModal()}
-                className="inline-flex h-11 min-w-[7rem] items-center justify-center gap-2 rounded-xl bg-[#ff6b35] px-6 text-[14px] font-bold text-white hover:opacity-90 disabled:opacity-60"
-              >
-                {pickLoading ? <Loader2 className="size-4 animate-spin" /> : null}
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <DraftDueDateTimeModal
+        open={dueModalRowId != null}
+        initialDatetimeLocal={duePickerInitial}
+        saving={pickLoading}
+        onClose={() => setDueModalRowId(null)}
+        onConfirm={(v) => void saveDeadlineFromModal(v)}
+      />
 
-      {assignModalRowId ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 p-4 backdrop-blur-sm">
-          <div
-            className="flex max-h-[min(520px,90vh)] w-full max-w-md flex-col rounded-2xl bg-white p-6 shadow-xl"
-            role="dialog"
-            aria-labelledby="asg-title"
-          >
-            <p id="asg-title" className="text-[16px] font-bold text-[#0a2540]">
-              Assign to workspace member
-            </p>
-            <input
-              type="search"
-              value={assignQ}
-              onChange={(e) => setAssignQ(e.target.value)}
-              placeholder="Search by name or email…"
-              className="mt-4 w-full rounded-xl border-2 border-[#e2e8f0] px-4 py-2.5 text-[14px] outline-none focus:border-[#ff6b35]"
-              autoComplete="off"
-            />
-            <div className="mt-4 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1">
-              {filteredMembers.length === 0 ? (
-                <p className="py-8 text-center text-[13px] text-[#94a3b8]">No members match.</p>
-              ) : (
-                filteredMembers.map((m) => (
-                  <button
-                    key={m.user_id}
-                    type="button"
-                    disabled={pickLoading}
-                    onClick={() => void assignMember(m)}
-                    className="flex w-full flex-col items-start rounded-xl border border-[#f1f5f9] bg-[#fafbfc] px-4 py-3 text-left transition-colors hover:border-[#ff6b35] hover:bg-[#fff8f5] disabled:opacity-60"
-                  >
-                    <span className="font-semibold text-[#0a2540]">{m.displayName}</span>
-                    <span className="mt-0.5 text-[12px] text-[#64748b]">{m.email}</span>
-                  </button>
-                ))
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setAssignModalRowId(null);
-                setAssignQ("");
-              }}
-              className="mt-6 h-11 rounded-xl border border-[#e2e8f0] text-[14px] font-bold text-[#64748b] hover:bg-[#f8fafc]"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <DraftAssignMemberModal
+        open={assignModalRowId != null}
+        members={props.members}
+        participantNames={props.participantNames}
+        saving={pickLoading}
+        onClose={() => setAssignModalRowId(null)}
+        onConfirm={(m) => void assignMemberFromModal(m)}
+      />
     </>
   );
 }

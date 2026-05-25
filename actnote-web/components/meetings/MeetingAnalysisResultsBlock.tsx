@@ -1,9 +1,10 @@
 "use client";
 
 import type { ReactElement } from "react";
-import { CheckCircle2, Plus, Sparkles, X } from "lucide-react";
+import { CheckCircle2, Plus, X } from "lucide-react";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 import type { MeetingAnalysisDraftKey } from "@/lib/meetings/meeting-analysis-layout";
+import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
 
 function RequiredMark(): ReactElement {
   return (
@@ -165,16 +166,16 @@ export function MeetingAnalysisResultsBlock(props: MeetingAnalysisResultsBlockPr
 
   return (
     <div className="rounded-xl border border-[#e2e8f0] bg-white p-6 shadow-sm">
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-[#ff6b35]" aria-hidden />
-          <h2 className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#ff6b35]">
-            3 AI Analysis Results
-          </h2>
-        </div>
-        <span className="rounded-full bg-[#fff4f0] px-3 py-1 text-[12px] font-bold text-[#ff6b35]">
-          {badgeLabel}
-        </span>
+      <div className="mb-6">
+        <DraftSectionHeading
+          step={3}
+          title="AI ANALYSIS RESULTS"
+          trailing={
+            <span className="inline-flex h-7 shrink-0 items-center justify-center rounded-[14px] bg-[#fff4f0] px-4 text-[14px] font-bold leading-none text-[#ff6b35]">
+              {badgeLabel}
+            </span>
+          }
+        />
       </div>
 
       <div className="space-y-6">
