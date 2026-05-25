@@ -24,7 +24,7 @@ type BootState =
       displayName: string;
       email: string | null;
       avatarUrl: string | null;
-      /** Owner has default-name workspace — complete onboarding first. */
+      /** No workspace memberships — complete onboarding first. */
       needsOnboarding: boolean;
       workspaces: WorkspaceWelcomeTile[];
       preferredWorkspaceId: string | null;
@@ -123,12 +123,7 @@ function WorkspaceSelectInner() {
     const profileEmail = (profileRow?.email as string | null | undefined)?.trim() || null;
     const email = profileEmail || user.email || null;
 
-    const pending =
-      (ownedRows as { id: string; name?: string | null }[] | null)?.filter((w) =>
-        ((w.name as string) ?? "").endsWith("'s workspace"),
-      ) ?? [];
-
-    const ownedList = (ownedRows as { name?: string | null }[]) ?? [];
+    const ownedList = (ownedRows as { id: string; name?: string | null }[] | null) ?? [];
     const hasFinalizedOwnedWorkspace = ownedList.some((w) => {
       const n = (w.name ?? "").trim();
       return n.length > 0 && !n.endsWith("'s workspace");
@@ -172,9 +167,9 @@ function WorkspaceSelectInner() {
       }),
     );
 
-    // 워크스페이스 멤버십이 없는 경우: pending invite가 있으면 초대 수락 페이지로 바로 이동.
-    // (auth/callback이 이미 리다이렉트했어야 하지만 fallback으로 여기서도 처리)
+    // 멤버십이 없는 신규 사용자: invite → domain workspace → onboarding 순으로 처리
     if (list.length === 0) {
+      // 1. pending invite가 있으면 초대 수락 페이지로 이동 (auth/callback fallback)
       const { data: pendingInvite } = await supabase
         .from("workspace_invites")
         .select("token")
@@ -190,11 +185,29 @@ function WorkspaceSelectInner() {
         router.replace(`/invite/${encodeURIComponent(inviteToken)}`);
         return;
       }
+
+      // 2. 같은 도메인 워크스페이스가 있으면 참여 요청 페이지로 이동
+      try {
+        const res = await fetch("/api/workspace/find-by-domain");
+        if (res.ok) {
+          const data = (await res.json()) as {
+            workspace?: { slug: string; name: string } | null;
+          };
+          if (data.workspace?.slug) {
+            router.replace(
+              `/workspace/request-access?slug=${encodeURIComponent(data.workspace.slug)}`,
+            );
+            return;
+          }
+        }
+      } catch {
+        // 도메인 조회 실패는 무시하고 온보딩으로 진행
+      }
     }
 
     // needsOnboarding: 멤버십이 하나도 없을 때만 true.
-    // pending(기본명 워크스페이스 소유) 여부로는 판단하지 않음 — pending && list > 0이면
-    // onboarding → workspace/select 무한 루프가 발생하기 때문.
+    // 038 마이그레이션 이후 개인 워크스페이스 자동 생성이 없으므로
+    // list.length === 0 이 곧 온보딩 필요 상태.
     const needsOnboarding = list.length === 0;
 
     let workspaces: WorkspaceWelcomeTile[] = [];
@@ -250,6 +263,7 @@ function WorkspaceSelectInner() {
 
   async function handleUseAnotherAccount(): Promise<void> {
     const supabase = createClient();
+    clearStoredWorkspaceId();
     await supabase.auth.signOut();
     router.replace("/login");
   }

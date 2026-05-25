@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Users, CheckCircle2, ArrowRight, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { setStoredWorkspaceId } from "@/lib/workspace/storage";
+import { clearStoredWorkspaceId, setStoredWorkspaceId } from "@/lib/workspace/storage";
 import { WorkspaceAccessGate } from "@/components/workspace/WorkspaceAccessGate";
 import { WorkspaceAccessRequestSent } from "@/components/workspace/WorkspaceAccessRequestSent";
 import { isLikelyEmailInviteToken } from "@/lib/auth/invite-token";
@@ -302,6 +302,7 @@ function InvitePageInner() {
         onReturnHome={() => router.push("/workspace/select")}
         onSignInDifferentAccount={async () => {
           const supabase = createClient();
+          clearStoredWorkspaceId();
           await supabase.auth.signOut();
           router.push(`/login?next=${encodeURIComponent(nextPath)}`);
         }}
@@ -387,6 +388,7 @@ function InvitePageInner() {
               <button
                 onClick={async () => {
                   const supabase = createClient();
+                  clearStoredWorkspaceId();
                   await supabase.auth.signOut();
                   router.push(`/login?next=${encodeURIComponent(wrongEmailNext())}`);
                 }}

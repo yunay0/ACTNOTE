@@ -69,6 +69,24 @@ function OnboardingInner() {
         return;
       }
 
+      // 같은 도메인 워크스페이스가 있으면 참여 요청 페이지로 이동 (도메인 중복 워크스페이스 방지)
+      try {
+        const res = await fetch("/api/workspace/find-by-domain");
+        if (res.ok) {
+          const domainData = (await res.json()) as {
+            workspace?: { slug: string; name: string } | null;
+          };
+          if (domainData.workspace?.slug) {
+            router.replace(
+              `/workspace/request-access?slug=${encodeURIComponent(domainData.workspace.slug)}`,
+            );
+            return;
+          }
+        }
+      } catch {
+        // 도메인 조회 실패는 무시하고 워크스페이스 생성 폼 진행
+      }
+
       const { data: rows, error: selErr } = await (supabase as any)
         .from("workspaces")
         .select("name")

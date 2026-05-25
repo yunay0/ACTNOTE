@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
 import {
+  clearStoredWorkspaceId,
   getStoredWorkspaceId,
   setStoredWorkspaceId,
 } from "@/lib/workspace/storage";
@@ -109,6 +110,19 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     load();
   }, [load]);
+
+  // 로그아웃 이벤트 감지 — 어디서 signOut()을 호출하든 localStorage + state 즉시 클리어
+  useEffect(() => {
+    const supabase = createClient();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        clearStoredWorkspaceId();
+        setMemberships([]);
+        setWorkspaceId(null);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const needsWorkspacePick = hydrated && memberships.length > 1 && !workspaceId;
 
