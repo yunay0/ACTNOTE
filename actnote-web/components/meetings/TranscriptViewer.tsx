@@ -86,8 +86,7 @@ export function TranscriptViewer(props: {
         <h2 className="text-[15px] font-bold text-[#0a2540]">Transcript</h2>
       </div>
       <p className="text-[13px] text-[#64748b] leading-relaxed">
-        Full STT output with speaker labels. You can map speakers to workspace members after processing
-        completes.
+        Full transcript with speaker diarization labels. Names resolve when mappings exist in draft data.
       </p>
       {body}
     </section>
