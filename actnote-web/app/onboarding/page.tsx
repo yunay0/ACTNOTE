@@ -72,19 +72,24 @@ function OnboardingInner() {
       // 같은 도메인 워크스페이스가 있으면 참여 요청 페이지로 이동 (도메인 중복 워크스페이스 방지)
       try {
         const res = await fetch("/api/workspace/find-by-domain");
-        if (res.ok) {
-          const domainData = (await res.json()) as {
-            workspace?: { slug: string; name: string } | null;
-          };
-          if (domainData.workspace?.slug) {
-            router.replace(
-              `/workspace/request-access?slug=${encodeURIComponent(domainData.workspace.slug)}`,
-            );
-            return;
-          }
+        if (!res.ok) {
+          setError("도메인 확인 중 오류가 발생했습니다. 새로고침 후 다시 시도해주세요.");
+          setCheckingAuth(false);
+          return;
+        }
+        const domainData = (await res.json()) as {
+          workspace?: { slug: string; name: string } | null;
+        };
+        if (domainData.workspace?.slug) {
+          router.replace(
+            `/workspace/request-access?slug=${encodeURIComponent(domainData.workspace.slug)}`,
+          );
+          return;
         }
       } catch {
-        // 도메인 조회 실패는 무시하고 워크스페이스 생성 폼 진행
+        setError("도메인 확인 중 오류가 발생했습니다. 새로고침 후 다시 시도해주세요.");
+        setCheckingAuth(false);
+        return;
       }
 
       const { data: rows, error: selErr } = await (supabase as any)

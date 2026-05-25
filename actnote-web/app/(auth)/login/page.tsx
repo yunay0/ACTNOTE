@@ -1,12 +1,13 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { AuthSplitShell } from "@/components/auth/AuthSplitShell";
 import { AuthSocialChrome } from "@/components/auth/AuthSocialChrome";
 import { PersonalEmailBlockModal } from "@/components/auth/PersonalEmailBlockModal";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
 import { extractInviteEmailFromReturnPath } from "@/lib/auth/invite-token";
+import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
 
 /**
  * Figma S-02-01 (137:11440) — Google-only sign-in; email/password removed.
@@ -14,6 +15,10 @@ import { extractInviteEmailFromReturnPath } from "@/lib/auth/invite-token";
 function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
+
+  useEffect(() => {
+    clearStoredWorkspaceId();
+  }, []);
   const returnTo = getSafeInternalReturnPath(searchParams.get("next"));
   const verified = searchParams.get("verified") === "1";
   const urlError = searchParams.get("error");
