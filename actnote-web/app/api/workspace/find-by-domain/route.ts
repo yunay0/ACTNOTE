@@ -42,11 +42,13 @@ export async function GET() {
   const ownerIds = (domainUsers as { id: string }[]).map((u) => u.id);
 
   // 해당 유저들이 오너인 워크스페이스 중 "onboarding 완료된" 것만 반환
+  // 여러 개일 경우 가장 먼저 만든 워크스페이스(주 워크스페이스)로 고정
   const { data: workspaces } = await admin
     .from("workspaces")
     .select("id, name, slug")
     .in("owner_id", ownerIds)
     .not("name", "ilike", `%'s workspace`)
+    .order("created_at", { ascending: true })
     .limit(1);
 
   const ws = (workspaces as { id: string; name: string; slug: string }[] | null)?.[0];

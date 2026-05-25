@@ -409,6 +409,28 @@ from src.notion_sync import exchange_notion_code, complete_notion_oauth
 - **LLM temperature=0** (코드 반영 — 2026-05-20): `llm_extractor._call_messages()`에서 `temperature=0` 설정됨. TC 이슈 #5 배포 후 재검증 필요.
 - **embeddings dirty flag** (완료 — 2026-05-20): `023_action_dirty_flag.sql` 추가. `action_items` 변경 시 `embeddings_dirty=TRUE` 자동 마킹.
 
+### 다중 워크스페이스 고도화 (보류 — 2026-05-25)
+
+현재 정책: **1회사 1워크스페이스.** `create_workspace_for_self` RPC에 `already_has_workspace` 가드 있음 (migration `042`).
+
+고도화 시 구현 순서:
+
+**1단계 — 오너 다중 워크스페이스 생성**
+- `042_restore_single_workspace_per_owner.sql` 가드 제거 (새 migration으로)
+- `select/page.tsx` `canCreateOwnedWorkspace`: `false` → `list.some(m => m.role === "owner")`
+- `onboarding/page.tsx` `?mode=add` 파라미터 처리 — 오너 확인 후 폼 표시, 생성 후 `/workspace/select` 복귀
+
+**2단계 — 신규 유저 다중 워크스페이스 선택 UI**
+- `find-by-domain/route.ts`: `.limit(1)` → 전체 목록 반환 (`workspace[]`)
+- `workspace/select/page.tsx` 0-membership 분기: 단일 redirect → 목록 전달
+- `workspace/request-access/page.tsx`: 단일 슬러그 → 체크박스 멀티 선택 UI
+- `workspace/join-request/route.ts`: 선택된 N개 워크스페이스에 각각 개별 요청 전송
+- 오너에게 알림은 워크스페이스별 개별 발송 (묶음 없음)
+
+**주의사항:**
+- `find-by-domain` 현재 `ORDER BY created_at ASC` 적용됨 — 다중 반환 시에도 정렬 유지 필요
+- `workspace_join_requests` 테이블은 이미 다중 요청 가능 구조 (unique index: workspace_id + requester_id WHERE pending)
+
 ### 인프라 백로그
 
 - ~~GPU 서버 도입~~ → **Modal GPU `actnote-diarization` 배포 완료 (2026-05-18)**
