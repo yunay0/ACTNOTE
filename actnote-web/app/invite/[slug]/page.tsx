@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { setStoredWorkspaceId } from "@/lib/workspace/storage";
 import { WorkspaceAccessGate } from "@/components/workspace/WorkspaceAccessGate";
 import { WorkspaceAccessRequestSent } from "@/components/workspace/WorkspaceAccessRequestSent";
+import { setStoredWorkspaceId } from "@/lib/workspace/storage";
 import { isLikelyEmailInviteToken } from "@/lib/auth/invite-token";
 
 interface WorkspaceInfo {

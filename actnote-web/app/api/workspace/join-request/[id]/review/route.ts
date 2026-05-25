@@ -84,11 +84,48 @@ export async function POST(
   const appUrl =
     resolvePublicAppUrl(req) ?? process.env.NEXT_PUBLIC_APP_URL ?? null;
 
+  // Reviewer display name from auth metadata
+  const meta = user.user_metadata as Record<string, unknown> | undefined;
+  const reviewerName =
+    (typeof meta?.full_name === "string" && meta.full_name) ||
+    (typeof meta?.name === "string" && meta.name) ||
+    user.email?.split("@")[0] ||
+    "Admin";
+
+  // Workspace slug for "Request Again" link in decline email
+  let workspaceSlug: string | null = null;
+  try {
+    const { data: reqRow } = await supabase
+      .from("workspace_join_requests")
+      .select("workspace_id")
+      .eq("id", requestId)
+      .maybeSingle();
+    if (reqRow?.workspace_id) {
+      const { data: wsRow } = await supabase
+        .from("workspaces")
+        .select("slug")
+        .eq("id", reqRow.workspace_id as string)
+        .maybeSingle();
+      workspaceSlug = (wsRow?.slug as string | null) ?? null;
+    }
+  } catch {
+    // non-critical — just omit the request-again link
+  }
+
   if (appUrl && row.requester_email) {
+    const requestAgainUrl =
+      workspaceSlug && appUrl
+        ? `${appUrl}/workspace/request-access?slug=${encodeURIComponent(workspaceSlug)}`
+        : null;
+
     const mail = buildJoinRequestResultEmail({
       action: row.action as "approved" | "rejected",
       workspaceName: row.workspace_name,
       workspaceUrl: `${appUrl}/meetings`,
+      reviewerName,
+      requestAgainUrl,
+      requesterName: row.requester_name,
+      requesterEmail: row.requester_email,
     });
 
     if (isSmtpConfigured()) {
