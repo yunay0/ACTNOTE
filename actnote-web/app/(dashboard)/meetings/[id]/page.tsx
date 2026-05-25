@@ -1605,6 +1605,7 @@ export default function MeetingDetailPage() {
           </aside>
         </>
       ) : null}
+      </div>
     </div>
   );
 }
