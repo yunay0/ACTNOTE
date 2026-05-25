@@ -80,7 +80,10 @@ function RecommendedChip({
   return (
     <button
       type="button"
-      onClick={onPick}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        onPick();
+      }}
       className="inline-flex h-5 max-w-full items-center gap-1.5 rounded-full bg-[#f4f4f4] py-0.5 pl-1.5 pr-3 text-[15px] font-medium text-[#94a3b8] transition-colors hover:bg-[#e8ecf1]"
     >
       <span className="size-2.5 shrink-0 rounded-full bg-[#cbd5e1]" aria-hidden />
@@ -149,7 +152,7 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
       }}
     >
       <div
-        className="flex max-h-[min(92vh,560px)] w-full max-w-[480px] flex-col items-center gap-3 overflow-y-auto rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
+        className="flex max-h-[min(92vh,640px)] w-full max-w-[480px] flex-col items-center gap-3 overflow-y-auto overflow-x-hidden rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="assign-member-title"
@@ -259,7 +262,11 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
           </div>
 
           {showDropdown ? (
-            <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-10 max-h-[220px] overflow-y-auto rounded-xl border border-[#e2e8f0] bg-white py-1 shadow-lg">
+            <div
+              className="mt-2 max-h-[220px] overflow-y-auto rounded-xl border border-[#e2e8f0] bg-white py-1 shadow-lg"
+              role="listbox"
+              aria-label="Search results"
+            >
               {filtered.length === 0 ? (
                 <p className="px-4 py-6 text-center text-[14px] text-[#94a3b8]">No members match.</p>
               ) : (
@@ -267,8 +274,15 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
                   <button
                     key={m.user_id}
                     type="button"
-                    onClick={() => pickMember(m)}
-                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[#f8fafc]"
+                    role="option"
+                    aria-selected={selected?.user_id === m.user_id}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      pickMember(m);
+                    }}
+                    className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[#f8fafc] ${
+                      selected?.user_id === m.user_id ? "bg-[#fff4f0]" : ""
+                    }`}
                   >
                     <MemberAvatar member={m} size={40} />
                     <div className="min-w-0 flex-1">

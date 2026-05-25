@@ -32,14 +32,16 @@ export function dueDateYmdToDatetimeLocalStart(ymd: string): string | null {
   return `${y}-${m}-${day}T00:00`;
 }
 
-/** 로컬 datetime 픽 → 저장용 `{ due_at, due_date }` */
-export function fromDatetimeLocalToDueFields(val: string): { due_at: string; due_date: string } | null {
+/**
+ * 로컬 datetime 픽 → 저장용 `due_date` (YYYY-MM-DD).
+ * DB `action_items.due_at` 은 migration 036 미적용 환경이 많아 DATE 컬럼만 사용.
+ */
+export function fromDatetimeLocalToDueFields(val: string): { due_date: string } | null {
   const v = String(val).trim();
   if (!v) return null;
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return null;
   return {
-    due_at: d.toISOString(),
     due_date: yyyyMmDdFromLocalDate(d),
   };
 }

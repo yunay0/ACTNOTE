@@ -64,7 +64,6 @@ interface ActionItem {
   assignee: string | null;
   assignee_user_id: string | null;
   due_date: string | null;
-  due_at: string | null;
   confidence: number | null;
   status: "open" | "done" | "cancelled";
 }
@@ -78,7 +77,6 @@ function emptyDraftActionItem(): ActionItem {
     assignee: null,
     assignee_user_id: null,
     due_date: null,
-    due_at: null,
     confidence: null,
     status: "open",
   };
@@ -399,7 +397,7 @@ export default function MeetingDetailPage() {
 
     const { data: items } = await (supabase as any)
       .from("action_items")
-      .select("id, content, assignee, assignee_user_id, due_date, due_at, confidence, status")
+      .select("id, content, assignee, assignee_user_id, due_date, confidence, status")
       .eq("meeting_id", id)
       .is("valid_until", null)
       .order("created_at", { ascending: true });
@@ -408,7 +406,6 @@ export default function MeetingDetailPage() {
       ...row,
       assignee_user_id: row.assignee_user_id ?? null,
       due_date: toYmdInput(row.due_date != null ? String(row.due_date) : null),
-      due_at: row.due_at != null ? String(row.due_at) : null,
     }));
     setActionItems(normalized);
     setLoading(false);
@@ -644,8 +641,6 @@ export default function MeetingDetailPage() {
         assignee: item.assignee,
         assignee_user_id: item.assignee_user_id ?? null,
         due_date: dueNorm && isValidYmd(dueNorm) ? dueNorm : null,
-        due_at:
-          typeof item.due_at === "string" && item.due_at.trim() ? item.due_at.trim() : null,
         status: item.status,
       };
       if (item.id.startsWith(NEW_ACTION_ITEM_PREFIX)) {
@@ -681,7 +676,7 @@ export default function MeetingDetailPage() {
    */
   async function patchDraftAction(
     rowId: string,
-    patch: { assignee?: string | null; assignee_user_id?: string | null; due_date?: string | null; due_at?: string | null },
+    patch: { assignee?: string | null; assignee_user_id?: string | null; due_date?: string | null },
   ): Promise<{ ok: boolean; error?: string }> {
     if (!meeting || meeting.approval_status === "published") return { ok: false, error: "Not editable." };
     if (meetingRole !== "owner") return { ok: false, error: "Permission denied." };
@@ -694,20 +689,17 @@ export default function MeetingDetailPage() {
       const raw = patch.due_date == null ? "" : String(patch.due_date).trim();
       sanitized.due_date = raw ? raw.slice(0, 10) : null;
     }
-    if (patch.due_at !== undefined) sanitized.due_at = patch.due_at;
-
     const { data, error } = await (supabase as any)
       .from("action_items")
       .update(sanitized)
       .eq("id", rowId)
-      .select("due_date, due_at, assignee, assignee_user_id")
+      .select("due_date, assignee, assignee_user_id")
       .maybeSingle();
 
     if (error) return { ok: false, error: error.message };
 
     const row = data as {
       due_date: string | null;
-      due_at: string | null;
       assignee: string | null;
       assignee_user_id: string | null;
     } | null;
@@ -724,7 +716,6 @@ export default function MeetingDetailPage() {
     if (row) {
       normalize({
         due_date: row.due_date ? toYmdInput(String(row.due_date)) : null,
-        due_at: row.due_at ? String(row.due_at) : null,
         assignee: row.assignee,
         assignee_user_id: row.assignee_user_id,
       });
@@ -1189,6 +1180,8 @@ export default function MeetingDetailPage() {
             <div className="flex items-center gap-1.5 text-sm text-[#64748b]">
               <CalendarDays className="h-4 w-4" />{dateStr}
             </div>
+          </div>
+
             {!isReady && (
               <>
                 <section className="space-y-5">
@@ -1435,7 +1428,6 @@ export default function MeetingDetailPage() {
                           assignee?: string | null;
                           assignee_user_id?: string | null;
                           due_date?: string | null;
-                          due_at?: string | null;
                         },
                       )
                     }

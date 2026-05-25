@@ -11,7 +11,6 @@ import {
 import {
   dueDateYmdToDatetimeLocalStart,
   fromDatetimeLocalToDueFields,
-  utcIsoToDatetimeLocalValue,
 } from "@/lib/meetings/deadline-local";
 
 const ORANGE_FOCUS = "border-2 border-[#ff6b35] bg-[#fff4f0] ring-2 ring-[#ff6b35]/25";
@@ -22,7 +21,6 @@ interface ActionRow {
   assignee: string | null;
   assignee_user_id: string | null;
   due_date: string | null;
-  due_at: string | null;
   status: "open" | "done" | "cancelled";
 }
 
@@ -46,11 +44,7 @@ interface MeetingDraftActionItemsSectionProps {
   onContentDraftChange?: (rowId: string, next: string) => void;
 }
 
-function formatDueCell(at: string | null, date: string | null): string {
-  if (at?.trim()) {
-    const d = new Date(at);
-    return d.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
-  }
+function formatDueCell(date: string | null): string {
   if (date?.trim()) {
     const slice = date.trim().slice(0, 10);
     const d = new Date(`${slice}T12:00:00`);
@@ -60,10 +54,6 @@ function formatDueCell(at: string | null, date: string | null): string {
 }
 
 function initialDatetimePickerValue(row: ActionRow): string {
-  if (row.due_at?.trim()) {
-    const local = utcIsoToDatetimeLocalValue(row.due_at);
-    return local ?? "";
-  }
   if (row.due_date?.trim()) return dueDateYmdToDatetimeLocalStart(row.due_date) ?? "";
   return "";
 }
@@ -91,7 +81,6 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
     }
     setPickLoading(true);
     const r = await props.onPatchRow(dueModalRowId, {
-      due_at: parsed.due_at,
       due_date: parsed.due_date,
     });
     setPickLoading(false);
@@ -186,7 +175,7 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
                       >
                         <span className="flex items-center gap-2">
                           <CalendarClock className="size-4 shrink-0 text-[#64748b]" aria-hidden />
-                          {formatDueCell(row.due_at ?? null, row.due_date ?? null)}
+                          {formatDueCell(row.due_date ?? null)}
                         </span>
                       </button>
                     </td>
