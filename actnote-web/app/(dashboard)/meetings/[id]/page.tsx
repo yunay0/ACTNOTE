@@ -14,15 +14,8 @@ import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
 import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { StatusBadge } from "@/components/meetings/StatusBadge";
-import {
-  SpeakerMappingSection,
-  type SpeakerCandidate,
-  type SpeakerMappingSectionHandle,
-  type TranscriptLine,
-} from "@/components/meetings/SpeakerMappingSection";
-import { TranscriptViewer } from "@/components/meetings/TranscriptViewer";
+import { TranscriptViewer, type TranscriptLine } from "@/components/meetings/TranscriptViewer";
 import { ProcessingProgress } from "@/components/meetings/ProcessingProgress";
-import { MeetingPipelineSteps } from "@/components/meetings/MeetingPipelineSteps";
 import { MeetingAiAnalysisPreview } from "@/components/meetings/MeetingAiAnalysisPreview";
 import { retryMeetingPipeline } from "@/lib/meetings/retry-pipeline";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
@@ -207,8 +200,6 @@ export default function MeetingDetailPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  /** 발행 전 DB에 현재 Speakers & transcript 드롭다운 상태를 반영 (검증·RPC 와 동기화) */
-  const speakerMappingRef = useRef<SpeakerMappingSectionHandle>(null);
 
   // 편집 모드 (DRAFT-001 / DRAFT-005)
   const [editMode, setEditMode] = useState(false);
@@ -224,15 +215,11 @@ export default function MeetingDetailPage() {
   const [editActionItems, setEditActionItems] = useState<ActionItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [saving, setSaving] = useState(false);
-  const [speakerCandidates, setSpeakerCandidates] = useState<Record<string, SpeakerCandidate[]>>({});
+  /** From ai_draft_notes.speaker_mapping — transcript names only (no draft speaker editor). */
   const [speakerMapping, setSpeakerMapping] = useState<Record<string, string>>({});
   const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
   /** Sidebar transcript drawer (draft UI only). */
   const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(false);
-  /** Live speaker mapping from SpeakerMappingSection — transcript sidebar prefers this when set. */
-  const [speakerMapOverlay, setSpeakerMapOverlay] = useState<Record<string, string> | undefined>(
-    undefined,
-  );
 
   // 삭제 (STATUS-002) — draft 편집 중 Delete 시 오버레이·폭 분기 (Figma 157:8979 vs 157:9196)
   const [deleteModal, setDeleteModal] = useState(false);
@@ -256,7 +243,6 @@ export default function MeetingDetailPage() {
   /** 분석 완료 Draft: 요약 카드 단계 ↔ AI 상세 분석 단계 */
   const [draftSurfaceStep, setDraftSurfaceStep] = useState<"overview" | "detail">("overview");
   /** 분석 중 UX: 파이프라인 타임라인 ↔ AI 미리보기 단계 */
-  const [analyzingUiStep, setAnalyzingUiStep] = useState<"timeline" | "preview">("timeline");
 
   const loadMembers = useCallback(async (wsId: string) => {
     const supabase = createClient();
@@ -363,34 +349,7 @@ export default function MeetingDetailPage() {
     } else if (draftRaw && typeof draftRaw === "object" && !Array.isArray(draftRaw)) {
       draftObj = draftRaw as Record<string, unknown>;
     }
-    const scRaw = draftObj?.speaker_candidates;
     const smRaw = draftObj?.speaker_mapping;
-    const nextCandidates: Record<string, SpeakerCandidate[]> = {};
-    if (scRaw && typeof scRaw === "object" && !Array.isArray(scRaw)) {
-      for (const [label, arr] of Object.entries(scRaw as Record<string, unknown>)) {
-        const list: SpeakerCandidate[] = [];
-        if (Array.isArray(arr)) {
-          for (const c of arr) {
-            if (!c || typeof c !== "object") continue;
-            const o = c as Record<string, unknown>;
-            const uid = typeof o.user_id === "string" ? o.user_id : "";
-            if (!uid) continue;
-            const conf = typeof o.confidence === "number" ? o.confidence : Number(o.confidence);
-            if (!Number.isFinite(conf) || conf < 0.4) continue;
-            list.push({
-              user_id: uid,
-              name: typeof o.name === "string" ? o.name : "",
-              email: typeof o.email === "string" ? o.email : "",
-              confidence: conf,
-              reason: typeof o.reason === "string" ? o.reason : "",
-            });
-          }
-        }
-        list.sort((a, b) => b.confidence - a.confidence);
-        nextCandidates[label] = list;
-      }
-    }
-    setSpeakerCandidates(nextCandidates);
     const nextMap: Record<string, string> = {};
     if (smRaw && typeof smRaw === "object" && !Array.isArray(smRaw)) {
       for (const [k, v] of Object.entries(smRaw as Record<string, unknown>)) {
@@ -452,21 +411,12 @@ export default function MeetingDetailPage() {
   }, [memberships, workspaceId, setCurrentWorkspace, id]);
 
   useEffect(() => {
-    setSpeakerMapOverlay(undefined);
     setTranscriptPanelOpen(false);
-    setAnalyzingUiStep("timeline");
   }, [id]);
 
   useEffect(() => {
     if (transcriptLines.length === 0) setTranscriptPanelOpen(false);
   }, [transcriptLines.length]);
-
-  useEffect(() => {
-    if (!meeting) return;
-    if (!(isProcessing(meeting.status) && meeting.status !== "error")) {
-      setAnalyzingUiStep("timeline");
-    }
-  }, [meeting?.status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -781,17 +731,6 @@ export default function MeetingDetailPage() {
       }
     }
 
-    if (speakerMappingRef.current) {
-      setSaving(true);
-      try {
-        const okSpeakers = await speakerMappingRef.current.persist();
-        if (!okSpeakers) return;
-      } finally {
-        setSaving(false);
-      }
-    }
-
-    const supabase = createClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: validation, error: valErr } = await (supabase as any).rpc(
       "validate_meeting_for_publication",
@@ -811,9 +750,6 @@ export default function MeetingDetailPage() {
         if (key === "summary") return "AI summary must be added before publishing.";
         if (key === "action_items") return "At least 1 active action item is required.";
         if (key === "decisions") return "Add at least one decision before publishing.";
-        if (key === "speaker_mapping") {
-          return "Map every speaker label to a workspace member (Speakers & transcript).";
-        }
         if (key === "action_item_fields") {
           return "Each action item needs text, an assignee, and a due date (YYYY-MM-DD).";
         }
@@ -1033,8 +969,6 @@ export default function MeetingDetailPage() {
   const canManagePublication = meetingRole === "owner";
   const canEdit = isReady && !isPublished && canManagePublication;
   const canPublish = canEdit;
-  /** 화자 정보 편집: 오너만 (docs/permissions.md §2) */
-  const canMapSpeakers = isReady && !isPublished && meetingRole === "owner";
   /** 오너: 모든 상태 삭제 / 생성자: published 전 상태만 삭제 */
   const canDeleteMeeting =
     meetingRole === "owner" ||
@@ -1042,9 +976,11 @@ export default function MeetingDetailPage() {
   const dateStr = new Date(meeting.meeting_date ?? meeting.created_at).toLocaleDateString("en-US", {
     year: "numeric", month: "long", day: "numeric",
   });
-  const transcriptSpeakerMapping = speakerMapOverlay ?? speakerMapping;
+  const transcriptSpeakerMapping = speakerMapping;
 
   const draftStickyChrome = Boolean(canEdit && draftSurfaceStep === "detail");
+  const transcriptSideOpen =
+    isReady && transcriptPanelOpen && transcriptLines.length > 0;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -1255,13 +1191,15 @@ export default function MeetingDetailPage() {
       )}
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <div className={`min-h-0 flex-1 overflow-y-auto p-10 ${draftStickyChrome ? "pb-44" : ""}`}>
+        <div className={`min-h-0 flex-1 overflow-y-auto p-10 ${draftStickyChrome ? "pb-28 md:pb-24" : ""}`}>
           <div
-            className={`mx-auto flex w-full gap-10 lg:items-start ${
-              canEdit ? "max-w-[1100px] flex-col lg:flex-row" : "max-w-3xl flex-col"
+            className={`mx-auto w-full ${
+              canEdit
+                ? "grid max-w-[1104px] grid-cols-1 gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_456px]"
+                : "flex max-w-3xl flex-col gap-10"
             }`}
           >
-            <div className={`min-w-0 space-y-6 ${canEdit ? "flex-1 lg:max-w-3xl" : "w-full"}`}>
+            <div className={`min-w-0 space-y-6 ${canEdit ? "" : "w-full"}`}>
           {/* 뒤로가기 */}
           <button onClick={() => router.push("/meetings")} className="inline-flex items-center gap-1.5 text-sm text-[#64748b] hover:text-[#0a2540] transition-colors">
             <ArrowLeft className="h-4 w-4" /> Back to Meetings
@@ -1412,65 +1350,31 @@ export default function MeetingDetailPage() {
                     retryLoading={retryAnalysisLoading}
                   />
                 ) : isProcessing(meeting.status) ? (
-                  analyzingUiStep === "timeline" ? (
-                    <>
-                      <MeetingPipelineSteps status={meeting.status} />
-                      <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] pt-5">
-                        {canDeleteMeeting ? (
-                          <button
-                            type="button"
-                            onClick={() => openDeleteMeetingModal(false)}
-                            className="flex h-12 min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] bg-white px-6 text-[14px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc]"
-                          >
-                            Delete
-                          </button>
-                        ) : null}
+                  <>
+                    <MeetingAiAnalysisPreview
+                      analyzing={isProcessing(meeting.status)}
+                      title={meeting.title ?? ""}
+                      meetingType={meeting.meeting_type}
+                      summary={meeting.summary}
+                      decisions={meeting.decisions}
+                      referencedDocuments={meeting.referenced_documents}
+                      draftNotes={draftNotesDoc}
+                      actions={actionItems
+                        .filter((x) => x.status !== "cancelled")
+                        .map((x) => ({ content: x.content, assignee: x.assignee }))}
+                    />
+                    <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] pt-5">
+                      {canDeleteMeeting ? (
                         <button
                           type="button"
-                          onClick={() => setAnalyzingUiStep("preview")}
-                          className="flex h-12 items-center rounded-[10px] px-7 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90"
-                          style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
+                          onClick={() => openDeleteMeetingModal(false)}
+                          className="flex min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 py-2.5 text-[14px] font-bold text-red-700 hover:bg-red-100/80"
                         >
-                          Next
+                          Delete
                         </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <MeetingAiAnalysisPreview
-                        analyzing={isProcessing(meeting.status)}
-                        title={meeting.title ?? ""}
-                        meetingType={meeting.meeting_type}
-                        summary={meeting.summary}
-                        decisions={meeting.decisions}
-                        referencedDocuments={meeting.referenced_documents}
-                        draftNotes={draftNotesDoc}
-                        actions={actionItems
-                          .filter((x) => x.status !== "cancelled")
-                          .map((x) => ({ content: x.content, assignee: x.assignee }))}
-                      />
-                      <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-[#e2e8f0] pt-5">
-                        <button
-                          type="button"
-                          onClick={() => setAnalyzingUiStep("timeline")}
-                          className="rounded-[10px] border-2 border-[#e2e8f0] bg-white px-5 py-2.5 text-[14px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc]"
-                        >
-                          Back
-                        </button>
-                        <div className="flex min-w-[min(100%,12rem)] flex-1 justify-end">
-                          {canDeleteMeeting ? (
-                            <button
-                              type="button"
-                              onClick={() => openDeleteMeetingModal(false)}
-                              className="flex min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 py-2.5 text-[14px] font-bold text-red-700 hover:bg-red-100/80"
-                            >
-                              Delete
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    </>
-                  )
+                      ) : null}
+                    </div>
+                  </>
                 ) : null}
               </>
             )}
@@ -1556,25 +1460,6 @@ export default function MeetingDetailPage() {
                 }
               />
 
-              {/* 화자 매핑: 오너만 접근 (docs/permissions.md §2 "화자 정보 편집") */}
-              {canMapSpeakers &&
-                (Object.keys(speakerCandidates).length > 0 ||
-                  transcriptLines.length > 0 ||
-                  Object.keys(speakerMapping).length > 0) && (
-                <SpeakerMappingSection
-                  ref={speakerMappingRef}
-                  meetingId={meeting.id}
-                  speakerCandidates={speakerCandidates}
-                  initialMapping={speakerMapping}
-                  transcripts={transcriptLines}
-                  members={members}
-                  canEdit={canMapSpeakers}
-                  onSaved={fetchMeeting}
-                  hideEmbeddedTranscript={transcriptLines.length > 0}
-                  onMappingLiveChange={setSpeakerMapOverlay}
-                />
-              )}
-
               {/* 액션 아이템 (DRAFT-001 + DRAFT-005) */}
               <Section icon={<ListTodo className="h-4 w-4 text-[#2e5c8a]" />} title="4 Action Items">
                 <MeetingDraftActionItemsSection
@@ -1623,44 +1508,6 @@ export default function MeetingDetailPage() {
                 ) : null}
               </Section>
 
-              {draftStickyChrome ? (
-                <div className="sticky bottom-3 z-30 mt-8 flex flex-col gap-4 rounded-xl border border-[#e2e8f0] bg-white/95 p-5 shadow-[0_-8px_32px_rgba(10,37,64,0.12)] backdrop-blur supports-[backdrop-filter]:bg-white/85 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {!editMode ? (
-                      <button
-                        type="button"
-                        onClick={enterEditMode}
-                        className="flex h-11 min-w-[5.5rem] items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white px-5 text-[14px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc]"
-                      >
-                        <Pencil className="h-4 w-4" aria-hidden /> Edit
-                      </button>
-                    ) : null}
-                    {canDeleteMeeting ? (
-                      <button
-                        type="button"
-                        onClick={() => openDeleteMeetingModal(editMode && canEdit)}
-                        className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 text-[14px] font-bold text-red-700 transition-colors hover:bg-red-100/80"
-                      >
-                        Delete
-                      </button>
-                    ) : null}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handlePublishClick()}
-                    disabled={publishing || saving || publishBlockedByActions || editMode}
-                    className="inline-flex h-11 min-w-[8rem] items-center justify-center gap-2 rounded-[10px] px-8 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:opacity-50"
-                    style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
-                  >
-                    {publishing ? (
-                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" aria-hidden />
-                    ) : (
-                      <Send className="h-4 w-4" aria-hidden />
-                    )}
-                    Publish
-                  </button>
-                </div>
-              ) : null}
             </>
           ) : null}
             </div>
@@ -1671,6 +1518,49 @@ export default function MeetingDetailPage() {
           </div>
         </div>
       </div>
+
+      {draftStickyChrome ? (
+        <div
+          role="toolbar"
+          aria-label="Draft actions"
+          className={`fixed bottom-0 left-[240px] z-[42] flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] bg-white/95 px-6 py-4 shadow-[0_-4px_24px_rgba(10,37,64,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/90 ${
+            transcriptSideOpen ? "right-0 md:right-[400px]" : "right-0"
+          }`}
+        >
+          {!editMode ? (
+            <button
+              type="button"
+              onClick={enterEditMode}
+              className="flex h-11 min-w-[5.5rem] items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white px-5 text-[14px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc]"
+            >
+              <Pencil className="h-4 w-4" aria-hidden /> Edit
+            </button>
+          ) : null}
+          {canDeleteMeeting ? (
+            <button
+              type="button"
+              onClick={() => openDeleteMeetingModal(editMode && canEdit)}
+              className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 text-[14px] font-bold text-red-700 transition-colors hover:bg-red-100/80"
+            >
+              Delete
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void handlePublishClick()}
+            disabled={publishing || saving || publishBlockedByActions || editMode}
+            className="inline-flex h-11 min-w-[8rem] items-center justify-center gap-2 rounded-[10px] px-8 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
+          >
+            {publishing ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" aria-hidden />
+            ) : (
+              <Send className="h-4 w-4" aria-hidden />
+            )}
+            Publish
+          </button>
+        </div>
+      ) : null}
 
       {isReady && transcriptPanelOpen && transcriptLines.length > 0 ? (
         <>

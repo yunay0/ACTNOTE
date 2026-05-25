@@ -69,7 +69,7 @@ export function MeetingAiAnalysisPreview(props: MeetingAiAnalysisPreviewProps): 
           >
             ⏳
           </span>
-          Analysis is still in progress — this overview updates automatically as each step finishes.
+          Analysis is still in progress — this overview updates automatically when the draft is ready.
         </div>
       ) : null}
 
