@@ -287,6 +287,35 @@ def _insert_action(
     return result.data[0]["id"]
 
 
+def _normalize_action_content(content: object) -> str:
+    return str(content or "").strip()
+
+
+def _meeting_has_active_action_content(
+    meeting_id: str,
+    content: str,
+    sb_client,
+) -> bool:
+    """이번 회의에 동일 본문의 active action_items 가 있는지."""
+    needle = _normalize_action_content(content)
+    if not needle:
+        return False
+    try:
+        resp = (
+            sb_client.table(ACTION_ITEMS_TABLE)
+            .select("id, content")
+            .eq("meeting_id", meeting_id)
+            .is_("valid_until", "null")
+            .execute()
+        )
+        for row in resp.data or []:
+            if _normalize_action_content(row.get("content")) == needle:
+                return True
+    except Exception as e:
+        _console.print(f"[yellow]회의별 액션 존재 확인 실패: {e}[/]")
+    return False
+
+
 def _expire_action(old_id: str, sb_client) -> None:
     """기존 row의 valid_until을 현재 시각으로 설정 (논리 삭제)."""
     sb_client.table(ACTION_ITEMS_TABLE).update(
@@ -433,7 +462,15 @@ def resolve_actions(
                 new_id = _apply_update(action, old_id, workspace_id, meeting_id, embedding, sb_client)
             elif decision == "DELETE" and old_id:
                 new_id = _apply_delete(action, old_id, workspace_id, meeting_id, embedding, sb_client)
-            # NOOP: 아무것도 안 함
+            elif decision == "NOOP":
+                # 워크스페이스 중복(NOOP)이어도 이번 회의 Draft UI에는 row 필요
+                if not _meeting_has_active_action_content(
+                    meeting_id, action.get("content", ""), sb_client
+                ):
+                    new_id = _apply_add(
+                        action, workspace_id, meeting_id, embedding, sb_client
+                    )
+                    decision = "ADD"
         except Exception as e:
             _console.print(
                 f"[red]DB 반영 실패[/] (action={action.get('content', '')!r}, "
@@ -444,6 +481,54 @@ def resolve_actions(
 
     _log_summary(results)
     return results
+
+
+def ensure_meeting_scoped_actions(
+    new_actions: list[dict],
+    workspace_id: str,
+    meeting_id: str,
+    storage_backend: StorageBackend,
+    tracker: cost_tracker.CostTracker | None = None,
+) -> int:
+    """이번 회의에 active action row 가 하나도 없으면 추출 결과를 meeting-scoped ADD.
+
+    A.U.D.N 실패·전부 NOOP(타 회의 중복) 등으로 Draft UI가 비는 경우 복구용.
+    """
+    if not new_actions:
+        return 0
+    tr = tracker if tracker is not None else cost_tracker.default_tracker
+    sb_client = _get_supabase_client(storage_backend)
+    try:
+        resp = (
+            sb_client.table(ACTION_ITEMS_TABLE)
+            .select("id")
+            .eq("meeting_id", meeting_id)
+            .is_("valid_until", "null")
+            .limit(1)
+            .execute()
+        )
+        if resp.data:
+            return 0
+    except Exception as e:
+        _console.print(f"[yellow]회의 액션 존재 확인 실패 (ensure 스킵): {e}[/]")
+        return 0
+
+    contents = [str(a.get("content", "")) for a in new_actions]
+    embeddings = embed_texts(contents, tr)
+    inserted = 0
+    for action, embedding in zip(new_actions, embeddings):
+        try:
+            _apply_add(action, workspace_id, meeting_id, embedding, sb_client)
+            inserted += 1
+        except Exception as e:
+            _console.print(
+                f"[yellow]ensure_meeting_scoped_actions INSERT 실패: {e}[/]"
+            )
+    if inserted:
+        _console.print(
+            f"[green][OK][/] 회의별 액션 {inserted}건 복구 INSERT (meeting_id={meeting_id})"
+        )
+    return inserted
 
 
 def _log_summary(results: list[dict]) -> None:

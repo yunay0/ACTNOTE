@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { ArrowLeft, Loader2, Search, X } from "lucide-react";
+import { DraftModalPortal } from "@/components/meetings/DraftModalPortal";
 import { workspaceMemberDisplayName } from "@/lib/user/member-display";
 
 export interface DraftAssignMemberOption {
@@ -24,7 +25,7 @@ function initialsForMember(name: string, email: string): string {
 
 function membersFilter(members: DraftAssignMemberOption[], q: string): DraftAssignMemberOption[] {
   const s = q.trim().toLowerCase();
-  if (!s) return [];
+  if (!s) return members;
   return members.filter(
     (m) =>
       m.displayName.toLowerCase().includes(s) ||
@@ -32,7 +33,6 @@ function membersFilter(members: DraftAssignMemberOption[], q: string): DraftAssi
   );
 }
 
-/** 회의 참석자 이름·이메일과 매칭되는 멤버 우선, 최대 3명 */
 function resolveRecommended(
   members: DraftAssignMemberOption[],
   participantNames: string[],
@@ -72,19 +72,20 @@ function MemberAvatar({ member, size = 40 }: { member: DraftAssignMemberOption; 
 
 function RecommendedChip({
   member,
+  selected,
   onPick,
 }: {
   member: DraftAssignMemberOption;
+  selected: boolean;
   onPick: () => void;
 }): ReactElement {
   return (
     <button
       type="button"
-      onMouseDown={(e) => {
-        e.preventDefault();
-        onPick();
-      }}
-      className="inline-flex h-5 max-w-full items-center gap-1.5 rounded-full bg-[#f4f4f4] py-0.5 pl-1.5 pr-3 text-[15px] font-medium text-[#94a3b8] transition-colors hover:bg-[#e8ecf1]"
+      onClick={onPick}
+      className={`inline-flex h-7 max-w-full items-center gap-1.5 rounded-full py-0.5 pl-1.5 pr-3 text-[15px] font-medium transition-colors ${
+        selected ? "bg-[#fff4f0] text-[#0a2540] ring-2 ring-[#ff6b35]/40" : "bg-[#f4f4f4] text-[#94a3b8] hover:bg-[#e8ecf1]"
+      }`}
     >
       <span className="size-2.5 shrink-0 rounded-full bg-[#cbd5e1]" aria-hidden />
       <span className="truncate">{member.displayName}</span>
@@ -95,16 +96,13 @@ function RecommendedChip({
 export interface DraftAssignMemberModalProps {
   open: boolean;
   members: DraftAssignMemberOption[];
-  /** 회의 참석자 — Recommended 칩 우선순위 */
   participantNames?: string[];
   saving: boolean;
   onClose: () => void;
   onConfirm: (member: DraftAssignMemberOption) => void;
 }
 
-/**
- * Draft 액션 담당자 지정 — Figma 157:13493 / 검색·드롭다운 157:9227.
- */
+/** Figma 157:13493 / 157:9227 */
 export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): ReactElement | null {
   const [searchQ, setSearchQ] = useState("");
   const [selected, setSelected] = useState<DraftAssignMemberOption | null>(null);
@@ -115,9 +113,7 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
     [props.members, props.participantNames],
   );
 
-  const filtered = useMemo(() => membersFilter(props.members, searchQ), [props.members, searchQ]);
-
-  const showDropdown = searchQ.trim().length > 0;
+  const listMembers = useMemo(() => membersFilter(props.members, searchQ), [props.members, searchQ]);
 
   const reset = useCallback(() => {
     setSearchQ("");
@@ -135,7 +131,7 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
 
   function handleAssign(): void {
     if (!selected) {
-      alert("Select a member from search or Recommended, then tap Assign.");
+      alert("Select a member from the list or Recommended, then tap Assign.");
       return;
     }
     props.onConfirm(selected);
@@ -144,178 +140,187 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
   if (!props.open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-[75] flex items-center justify-center bg-[#0a2540]/60 p-4 backdrop-blur-[2px]"
-      role="presentation"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) props.onClose();
-      }}
-    >
+    <DraftModalPortal open={props.open}>
       <div
-        className="flex max-h-[min(92vh,640px)] w-full max-w-[480px] flex-col items-center gap-3 overflow-y-auto overflow-x-hidden rounded-2xl bg-white p-8 shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="assign-member-title"
-        onMouseDown={(e) => e.stopPropagation()}
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-[#0a2540]/60 p-4 backdrop-blur-[2px]"
+        role="presentation"
+        onClick={(e) => {
+          if (e.target === e.currentTarget && !props.saving) props.onClose();
+        }}
       >
         <div
-          className="flex size-16 shrink-0 items-center justify-center rounded-[32px] bg-[#ef4444] text-[29px] text-white"
-          aria-hidden
+          className="flex max-h-[min(90vh,680px)] w-full max-w-[480px] flex-col overflow-hidden rounded-2xl bg-white shadow-[0px_20px_30px_rgba(10,37,64,0.3)]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="assign-member-title"
+          onClick={(e) => e.stopPropagation()}
         >
-          <Search className="size-8" strokeWidth={2.25} />
-        </div>
-
-        <div className="w-full text-center">
-          <h2 id="assign-member-title" className="text-2xl font-bold text-[#0a2540]">
-            Assign Member
-          </h2>
-          <p className="mt-2 text-[14px] leading-6 text-[#64748b]">
-            Please select a member for this task.
-          </p>
-        </div>
-
-        <div className="flex w-full max-w-[412px] flex-wrap items-center gap-2 rounded-[25px] border border-[#fee2e2] bg-[#f4f4f4] px-5 py-4">
-          <span className="list-item list-inside text-[13px] font-bold text-[#0a2540]">Assignee</span>
-          {selected ? (
-            <span className="inline-flex h-5 items-center gap-1.5 rounded-full bg-[#f4f4f4] py-0.5 pl-1.5 pr-3 text-[15px] font-medium text-[#0a2540]">
-              <span className="size-2.5 shrink-0 rounded-full bg-[#cbd5e1]" aria-hidden />
-              {selected.displayName}
-            </span>
-          ) : (
-            <span className="inline-flex h-5 min-w-[2.75rem] items-center justify-center gap-1 rounded-full bg-[#ef4444] px-3 text-[15px] font-bold text-white">
-              <span className="size-2.5 rounded-full bg-white/40" aria-hidden />
-              ?
-            </span>
-          )}
-        </div>
-
-        {recommended.length > 0 ? (
-          <div className="w-full max-w-[412px]">
-            <p className="flex items-center gap-1.5 text-[13px] font-bold text-[#0a2540]">
-              <span className="text-[11px]" aria-hidden>
-                ▼
-              </span>
-              Recommended
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {recommended.map((m) => (
-                <RecommendedChip key={m.user_id} member={m} onPick={() => pickMember(m)} />
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="relative w-full max-w-[412px]">
-          <div
-            className={`flex h-14 items-center gap-1 rounded-[28px] border bg-white px-1 ${
-              showDropdown ? "border-[#0a2540]" : "border-[#757575]"
-            }`}
-          >
-            {showDropdown ? (
-              <button
-                type="button"
-                className="flex size-12 shrink-0 items-center justify-center rounded-full text-[#0a2540] hover:bg-[#f8fafc]"
-                aria-label="Clear search"
-                onClick={() => {
-                  setSearchQ("");
-                  setSelected(null);
-                  inputRef.current?.focus();
-                }}
+          <div className="min-h-0 flex-1 overflow-y-auto p-8 pb-4">
+            <div className="flex flex-col items-center gap-3">
+              <div
+                className="flex size-16 shrink-0 items-center justify-center rounded-[32px] bg-[#ef4444] text-white"
+                aria-hidden
               >
-                <ArrowLeft className="size-5" />
-              </button>
-            ) : (
-              <div className="size-12 shrink-0" aria-hidden />
-            )}
-            <input
-              ref={inputRef}
-              type="search"
-              value={searchQ}
-              onChange={(e) => {
-                setSearchQ(e.target.value);
-                if (selected && e.target.value.trim() !== selected.displayName) {
-                  setSelected(null);
-                }
-              }}
-              placeholder="Search Member"
-              autoComplete="off"
-              className="min-w-0 flex-1 bg-transparent text-[16px] text-[#0a2540] outline-none placeholder:text-[#d9d9d9]"
-            />
-            {searchQ.trim() ? (
-              <button
-                type="button"
-                className="flex size-12 shrink-0 items-center justify-center rounded-full text-[#0a2540] hover:bg-[#f8fafc]"
-                aria-label="Clear search text"
-                onClick={() => {
-                  setSearchQ("");
-                  setSelected(null);
-                  inputRef.current?.focus();
-                }}
-              >
-                <X className="size-5" />
-              </button>
-            ) : (
-              <div className="flex size-12 shrink-0 items-center justify-center text-[#757575]" aria-hidden>
-                <Search className="size-6" />
+                <Search className="size-8" strokeWidth={2.25} />
               </div>
-            )}
+
+              <div className="w-full text-center">
+                <h2 id="assign-member-title" className="text-2xl font-bold text-[#0a2540]">
+                  Assign Member
+                </h2>
+                <p className="mt-2 text-[14px] leading-6 text-[#64748b]">
+                  Please select a member for this task.
+                </p>
+              </div>
+
+              <div className="flex w-full max-w-[412px] flex-wrap items-center gap-2 rounded-[25px] border border-[#fee2e2] bg-[#f4f4f4] px-5 py-4">
+                <span className="text-[13px] font-bold text-[#0a2540]">Assignee</span>
+                {selected ? (
+                  <span className="inline-flex h-6 items-center gap-1.5 rounded-full bg-[#fff4f0] py-0.5 pl-1.5 pr-3 text-[15px] font-medium text-[#0a2540] ring-1 ring-[#ff6b35]/30">
+                    <span className="size-2.5 shrink-0 rounded-full bg-[#ff6b35]/50" aria-hidden />
+                    {selected.displayName}
+                  </span>
+                ) : (
+                  <GapPillInline />
+                )}
+              </div>
+
+              {recommended.length > 0 ? (
+                <div className="w-full max-w-[412px]">
+                  <p className="flex items-center gap-1.5 text-[13px] font-bold text-[#0a2540]">
+                    <span className="text-[11px]" aria-hidden>
+                      ▼
+                    </span>
+                    Recommended
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {recommended.map((m) => (
+                      <RecommendedChip
+                        key={m.user_id}
+                        member={m}
+                        selected={selected?.user_id === m.user_id}
+                        onPick={() => pickMember(m)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="w-full max-w-[412px]">
+                <div className="flex h-14 items-center gap-1 rounded-[28px] border border-[#757575] bg-white px-1 focus-within:border-[#0a2540]">
+                  {searchQ.trim() ? (
+                    <button
+                      type="button"
+                      className="flex size-12 shrink-0 items-center justify-center rounded-full text-[#0a2540] hover:bg-[#f8fafc]"
+                      aria-label="Clear search"
+                      onClick={() => {
+                        setSearchQ("");
+                        setSelected(null);
+                        inputRef.current?.focus();
+                      }}
+                    >
+                      <ArrowLeft className="size-5" />
+                    </button>
+                  ) : (
+                    <div className="size-12 shrink-0" aria-hidden />
+                  )}
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={searchQ}
+                    onChange={(e) => {
+                      setSearchQ(e.target.value);
+                      if (selected && e.target.value.trim() !== selected.displayName) {
+                        setSelected(null);
+                      }
+                    }}
+                    placeholder="Search Member"
+                    autoComplete="off"
+                    className="min-w-0 flex-1 bg-transparent text-[16px] text-[#0a2540] outline-none placeholder:text-[#d9d9d9]"
+                  />
+                  {searchQ.trim() ? (
+                    <button
+                      type="button"
+                      className="flex size-12 shrink-0 items-center justify-center rounded-full text-[#0a2540] hover:bg-[#f8fafc]"
+                      aria-label="Clear search text"
+                      onClick={() => {
+                        setSearchQ("");
+                        setSelected(null);
+                        inputRef.current?.focus();
+                      }}
+                    >
+                      <X className="size-5" />
+                    </button>
+                  ) : (
+                    <div className="flex size-12 shrink-0 items-center justify-center text-[#757575]" aria-hidden>
+                      <Search className="size-6" />
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  className="mt-2 max-h-[200px] overflow-y-auto rounded-xl border border-[#e2e8f0] bg-white py-1 shadow-lg"
+                  role="listbox"
+                  aria-label="Workspace members"
+                >
+                  {props.members.length === 0 ? (
+                    <p className="px-4 py-6 text-center text-[14px] text-[#94a3b8]">No workspace members loaded.</p>
+                  ) : listMembers.length === 0 ? (
+                    <p className="px-4 py-6 text-center text-[14px] text-[#94a3b8]">No members match.</p>
+                  ) : (
+                    listMembers.map((m) => (
+                      <button
+                        key={m.user_id}
+                        type="button"
+                        role="option"
+                        aria-selected={selected?.user_id === m.user_id}
+                        onClick={() => pickMember(m)}
+                        className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[#f8fafc] ${
+                          selected?.user_id === m.user_id ? "bg-[#fff4f0]" : ""
+                        }`}
+                      >
+                        <MemberAvatar member={m} size={40} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[16px] leading-6 text-[#1d1b20]">{m.displayName}</p>
+                          <p className="truncate text-[14px] leading-5 text-[#49454f]">{m.email}</p>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
 
-          {showDropdown ? (
-            <div
-              className="mt-2 max-h-[220px] overflow-y-auto rounded-xl border border-[#e2e8f0] bg-white py-1 shadow-lg"
-              role="listbox"
-              aria-label="Search results"
+          <div className="flex shrink-0 gap-3 border-t border-[#e2e8f0] bg-white px-8 py-4">
+            <button
+              type="button"
+              onClick={props.onClose}
+              className="flex h-12 flex-1 items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] bg-white text-[15px] font-bold text-[#64748b] hover:bg-[#f8fafc]"
             >
-              {filtered.length === 0 ? (
-                <p className="px-4 py-6 text-center text-[14px] text-[#94a3b8]">No members match.</p>
-              ) : (
-                filtered.map((m) => (
-                  <button
-                    key={m.user_id}
-                    type="button"
-                    role="option"
-                    aria-selected={selected?.user_id === m.user_id}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      pickMember(m);
-                    }}
-                    className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[#f8fafc] ${
-                      selected?.user_id === m.user_id ? "bg-[#fff4f0]" : ""
-                    }`}
-                  >
-                    <MemberAvatar member={m} size={40} />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[16px] leading-6 text-[#1d1b20]">{m.displayName}</p>
-                      <p className="truncate text-[14px] leading-5 text-[#49454f]">{m.email}</p>
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="flex w-full max-w-[412px] gap-3 pt-2">
-          <button
-            type="button"
-            disabled={props.saving}
-            onClick={props.onClose}
-            className="flex h-12 flex-1 items-center justify-center rounded-[10px] border-2 border-[#e2e8f0] bg-white text-[15px] font-bold text-[#64748b] hover:bg-[#f8fafc] disabled:opacity-60"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={props.saving || !selected}
-            onClick={handleAssign}
-            className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-[10px] bg-[#ef4444] text-[15px] font-bold text-white hover:opacity-90 disabled:opacity-50"
-          >
-            {props.saving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-            Assign
-          </button>
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={props.saving || !selected}
+              onClick={handleAssign}
+              className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-[10px] bg-[#ef4444] text-[15px] font-bold text-white hover:opacity-90 disabled:opacity-50"
+            >
+              {props.saving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+              Assign
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </DraftModalPortal>
+  );
+}
+
+function GapPillInline(): ReactElement {
+  return (
+    <span className="inline-flex h-6 min-w-[2.75rem] items-center justify-center gap-1 rounded-full bg-[#ef4444] px-3 text-[15px] font-bold text-white">
+      <span className="size-2.5 rounded-full bg-white/40" aria-hidden />
+      ?
+    </span>
   );
 }

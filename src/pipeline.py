@@ -536,6 +536,25 @@ def run_pipeline(
         audn_error = f"{type(e).__name__}: {e}"
         _console.print(f"        [yellow][WARN] A.U.D.N 실패 (결과 유지): {audn_error}[/]")
 
+    if isinstance(store, SupabaseStorage) and extracted.get("action_items"):
+        try:
+            ensured = action_resolver.ensure_meeting_scoped_actions(
+                new_actions=extracted["action_items"],
+                workspace_id=workspace_id,
+                meeting_id=meeting_id,
+                storage_backend=store,
+                tracker=tr,
+            )
+            if ensured:
+                _console.print(
+                    f"        [green][OK][/] Draft 액션 {ensured}건 meeting-scoped 복구"
+                )
+        except Exception as _ensure_err:
+            _console.print(
+                f"        [yellow][WARN] meeting-scoped 액션 복구 실패: "
+                f"{type(_ensure_err).__name__}: {_ensure_err}[/]"
+            )
+
     # -------------------------------------------------------------------------
     # [6/6] 임베딩 저장 — 실패해도 4단계 결과 반환
     # -------------------------------------------------------------------------
@@ -812,6 +831,25 @@ def run_pipeline_from_transcript(
     except Exception as e:
         step_times["audn"] = time.perf_counter() - t0
         _console.print(f"        [yellow][WARN] A.U.D.N 실패: {e}[/]")
+
+    if isinstance(store, SupabaseStorage) and extracted.get("action_items"):
+        try:
+            ensured = action_resolver.ensure_meeting_scoped_actions(
+                new_actions=extracted["action_items"],
+                workspace_id=workspace_id,
+                meeting_id=meeting_id,
+                storage_backend=store,
+                tracker=tr,
+            )
+            if ensured:
+                _console.print(
+                    f"        [green][OK][/] Draft 액션 {ensured}건 meeting-scoped 복구"
+                )
+        except Exception as _ensure_err:
+            _console.print(
+                f"        [yellow][WARN] meeting-scoped 액션 복구 실패: "
+                f"{type(_ensure_err).__name__}: {_ensure_err}[/]"
+            )
 
     # [임베딩]
     embedding_count = 0
