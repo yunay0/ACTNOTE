@@ -20,7 +20,6 @@ export type DraftActionGapItem = {
   content: string;
   assignee_user_id: string | null;
   due_date: string | null;
-  due_at: string | null;
   status: "open" | "done" | "cancelled";
 };
 
@@ -34,10 +33,8 @@ export function draftActionNeedsAssigneeGap(item: DraftActionGapItem): boolean {
 export function draftActionNeedsDueGap(item: DraftActionGapItem): boolean {
   const content = item.content.trim();
   if (!content || item.status === "cancelled" || item.status === "done") return false;
-  const hasDueAt = typeof item.due_at === "string" && Boolean(item.due_at.trim());
   const due = typeof item.due_date === "string" ? item.due_date.trim() : "";
-  const hasDueDate = isValidDueDateYmd(due);
-  return !(hasDueAt || hasDueDate);
+  return !isValidDueDateYmd(due);
 }
 
 /** 오너가 Publish 하기 전, 액션 쪽 블로킹(미배정/미마감) 존재 여부 */
