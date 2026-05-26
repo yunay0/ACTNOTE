@@ -14,6 +14,12 @@ interface MeetingCardProps {
   highlighted?: boolean;
   onDelete?: (id: string) => boolean | Promise<boolean>;
   onClick?: () => void;
+  /**
+   * B안-1: 햄버거/삭제 메뉴 노출 권한. owner/admin 또는 미팅 생성자만 true.
+   * false면 정상 상태(draft/published)에서 햄버거 자체를 숨김. 분석 중/에러일 때는
+   * View error 같은 기능이 필요해 그대로 노출.
+   */
+  canDelete?: boolean;
 }
 
 const STATUS_STYLE: Record<string, { bg: string; dot: string; text: string; label: string }> = {
@@ -55,7 +61,13 @@ function showPersistentMenu(meeting: Meeting): boolean {
   return isProcessing(meeting.status) || meeting.status === "error";
 }
 
-export function MeetingCard({ meeting, highlighted = false, onDelete, onClick }: MeetingCardProps) {
+export function MeetingCard({
+  meeting,
+  highlighted = false,
+  onDelete,
+  onClick,
+  canDelete = true,
+}: MeetingCardProps) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -128,6 +140,9 @@ export function MeetingCard({ meeting, highlighted = false, onDelete, onClick }:
           onClick?.();
         }}
       >
+        {/* B안-1: 정상 상태(draft/published)에서는 canDelete=true일 때만 햄버거 노출.
+            분석 중/에러일 때는 View error 같은 기능이 필요해 항상 노출. */}
+        {(pipelineMenu || canDelete) && (
         <div
           ref={menuRef}
           className="absolute right-3 top-3 z-10"
@@ -164,7 +179,7 @@ export function MeetingCard({ meeting, highlighted = false, onDelete, onClick }:
                   View error
                 </button>
               ) : null}
-              {onDelete && (
+              {onDelete && canDelete && (
                 <button
                   type="button"
                   onClick={(e) => {
@@ -181,6 +196,7 @@ export function MeetingCard({ meeting, highlighted = false, onDelete, onClick }:
             </div>
           )}
         </div>
+        )}
 
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <span

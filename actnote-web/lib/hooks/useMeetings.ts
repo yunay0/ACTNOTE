@@ -38,6 +38,7 @@ function rowToMeeting(m: Record<string, unknown>): Meeting {
     error_message: (m.error_message as string | null) ?? null,
     creator_name,
     creator_email,
+    created_by: (m.created_by as string | null) ?? null,
   };
 }
 
@@ -54,7 +55,7 @@ export function useMeetings() {
     const { data } = await (supabase as any)
       .from("meetings")
       .select(
-        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, error_message, action_items(count), creator:users!created_by(name, email)"
+        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, error_message, created_by, action_items(count), creator:users!created_by(name, email)"
       )
       .eq("workspace_id", wsId)
       .is("deleted_at", null)

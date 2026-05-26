@@ -1100,7 +1100,11 @@ export default function MeetingDetailPage() {
     isProcessing(meeting.status) && meeting.status !== "error";
 
   /** 데스크톱 우측 레일: 가이드(기본) ↔ 트랜스크립트(토글 시) 동일 폭 교체 — Figma. */
-  const guidanceRailEligible = Boolean(canEdit || showWideAnalyzingLayout);
+  // TC-3 (16-7): What happens next 사이드바는 WS owner/admin(= meetingRole === "owner")만 노출.
+  // creator/participant/member 모두 숨김.
+  const guidanceRailEligible = Boolean(
+    (canEdit || showWideAnalyzingLayout) && meetingRole === "owner"
+  );
   const showMdDraftRightRail = guidanceRailEligible || transcriptSideOpen;
 
   const analyzingStageHeading =
@@ -1272,7 +1276,9 @@ export default function MeetingDetailPage() {
             </div>
           </div>
 
-            {!isReady && (
+            {/* TC-4: 분석 중일 때(원래 동작) + Draft/Published 상태이지만 owner가 아닌 경우(메타정보 표시).
+                owner는 isReady에서 DraftOverviewPanel을 별도 표시하므로 여기선 제외. */}
+            {(!isReady || !canEdit) && (
               <>
                 <section className="space-y-5">
                   <DraftSectionHeading step={1} title="Meeting Information" />
