@@ -820,6 +820,40 @@ export default function MeetingDetailPage() {
     return { ok: true };
   }
 
+  /**
+   * 액션 아이템 삭제 — new: prefix(로컬에서만 추가된 row)는 로컬 제거.
+   * 기존 DB row는 soft delete (status='cancelled') 처리 → activeRows 필터에서 자동 숨김.
+   */
+  async function deleteDraftAction(rowId: string): Promise<void> {
+    if (!meeting || meeting.approval_status === "published") return;
+    if (meetingRole !== "owner") return;
+
+    if (rowId.startsWith(NEW_ACTION_ITEM_PREFIX)) {
+      setEditActionItems((prev) => prev.filter((a) => a.id !== rowId));
+      return;
+    }
+
+    if (isDraftNoteActionId(rowId)) {
+      // 아직 DB에 없는 draft-note row — 로컬에서만 제거.
+      setEditActionItems((prev) => prev.filter((a) => a.id !== rowId));
+      setActionItems((prev) => prev.filter((a) => a.id !== rowId));
+      return;
+    }
+
+    const supabase = createClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
+      .from("action_items")
+      .update({ status: "cancelled" })
+      .eq("id", rowId);
+    if (error) {
+      alert(`Failed to delete action item: ${error.message}`);
+      return;
+    }
+    setEditActionItems((prev) => prev.filter((a) => a.id !== rowId));
+    setActionItems((prev) => prev.filter((a) => a.id !== rowId));
+  }
+
   // PUB-001: validate_meeting_for_publication RPC 사용
   async function handlePublishClick() {
     if (!meeting || publishing) return;
@@ -1549,6 +1583,11 @@ export default function MeetingDetailPage() {
                               prev.map((a) => (a.id === rowId ? { ...a, content: next } : a)),
                             );
                           }
+                        : undefined
+                    }
+                    onDeleteRow={
+                      editMode && canEdit
+                        ? (rowId) => void deleteDraftAction(rowId)
                         : undefined
                     }
                   />
