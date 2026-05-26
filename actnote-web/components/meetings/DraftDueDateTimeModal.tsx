@@ -85,8 +85,6 @@ export function DraftDueDateTimeModal(props: DraftDueDateTimeModalProps): ReactE
   const [fieldDate, setFieldDate] = useState<Date | null>(null);
   /** 달력에서 선택 중 (Apply 전) */
   const [pendingDate, setPendingDate] = useState<Date | null>(null);
-  const [timeH, setTimeH] = useState(12);
-  const [timeM, setTimeM] = useState(0);
 
   const resetFromInitial = useCallback(() => {
     const p = parseDatetimeLocalParts(props.initialDatetimeLocal);
@@ -96,15 +94,11 @@ export function DraftDueDateTimeModal(props: DraftDueDateTimeModalProps): ReactE
       setPendingDate(p.day);
       setViewYear(p.day.getFullYear());
       setViewMonth(p.day.getMonth());
-      setTimeH(p.hh);
-      setTimeM(p.mm);
     } else {
       setFieldDate(null);
       setPendingDate(null);
       setViewYear(now.getFullYear());
       setViewMonth(now.getMonth());
-      setTimeH(12);
-      setTimeM(0);
     }
     setPickerOpen(true);
   }, [props.initialDatetimeLocal]);
@@ -136,7 +130,8 @@ export function DraftDueDateTimeModal(props: DraftDueDateTimeModalProps): ReactE
       alert("Choose a due date in the calendar, tap Apply, then Set.");
       return;
     }
-    props.onConfirm(toDatetimeLocalString(day, timeH, timeM));
+    // 시간은 받지 않음 — 정오(12:00) 고정으로 타임존 경계 문제 회피.
+    props.onConfirm(toDatetimeLocalString(day, 12, 0));
   }
 
   if (!props.open) return null;
@@ -158,9 +153,9 @@ export function DraftDueDateTimeModal(props: DraftDueDateTimeModalProps): ReactE
           onClick={(e) => e.stopPropagation()}
         >
         <h2 id="due-dt-title" className="text-xl font-bold text-[#0a2540]">
-          Due Date &amp; Time
+          Due Date
         </h2>
-        <p className="mt-1 text-[14px] leading-relaxed text-[#64748b]">Please Select Due Date &amp; Time</p>
+        <p className="mt-1 text-[14px] leading-relaxed text-[#64748b]">Please Select Due Date</p>
 
         <div className="mt-6 space-y-5">
           <div className="space-y-2">
@@ -268,24 +263,6 @@ export function DraftDueDateTimeModal(props: DraftDueDateTimeModalProps): ReactE
             </div>
           </div>
 
-          <div className="space-y-2">
-            <label htmlFor="due-time-input" className="text-[14px] font-medium tracking-tight text-[#545f71]">
-              Time
-            </label>
-            <input
-              id="due-time-input"
-              type="time"
-              value={`${pad2(timeH)}:${pad2(timeM)}`}
-              onChange={(e) => {
-                const [hStr, mStr] = e.target.value.split(":");
-                const h = Number(hStr);
-                const m = Number(mStr);
-                if (!Number.isNaN(h)) setTimeH(h);
-                if (!Number.isNaN(m)) setTimeM(m);
-              }}
-              className="h-12 w-full rounded-md border border-[#e2e8f0] px-3 text-[16px] text-[#545f71] outline-none focus:border-[#545f71]"
-            />
-          </div>
         </div>
 
         <div className="mt-8 flex gap-3">

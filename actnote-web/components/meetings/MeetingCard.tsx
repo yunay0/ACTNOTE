@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Menu, MoreVertical, Trash2, Eye } from "lucide-react";
+import { MoreVertical, Trash2, Eye } from "lucide-react";
 import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
@@ -110,7 +110,7 @@ export function MeetingCard({
     }
   }
 
-  const MenuIcon = pipelineMenu ? Menu : MoreVertical;
+  const MenuIcon = MoreVertical;
 
   return (
     <>
