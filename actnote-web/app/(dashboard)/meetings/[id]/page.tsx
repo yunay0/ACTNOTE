@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, BarChart3, CalendarDays,
-  Send, Pencil, Trash2, Plus, X,
+  Send, Pencil, Plus, X,
   AlertCircle, ExternalLink,
   FileText,
   Music2,
@@ -1294,15 +1294,7 @@ export default function MeetingDetailPage() {
                 {meeting.approval_status === "published" && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-1.5 text-sm font-bold text-green-700">✅ Published</span>
                 )}
-                {canDeleteMeeting && (!canEdit || draftSurfaceStep === "overview") ? (
-                <button
-                  type="button"
-                  onClick={openDeleteMeetingModal}
-                  className="flex items-center justify-center h-8 w-8 rounded-lg text-[#94a3b8] hover:bg-red-50 hover:text-red-500 transition-colors"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-                ) : null}
+                {/* 상단 휴지통 아이콘은 제거. 삭제는 하단 Delete 버튼으로 일원화. */}
               </div>
             </div>
             <div className="flex items-center gap-1.5 text-sm text-[#64748b]">
@@ -1697,7 +1689,7 @@ export default function MeetingDetailPage() {
             <button
               type="button"
               onClick={openDeleteMeetingModal}
-              className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 text-[14px] font-bold text-red-700 transition-colors hover:bg-red-100/80"
+              className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] bg-red-600 px-6 text-[14px] font-bold text-white transition-colors hover:bg-red-700"
             >
               Delete
             </button>
