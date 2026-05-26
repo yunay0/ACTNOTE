@@ -1,5 +1,7 @@
 "use client";
 
+import { Check } from "lucide-react";
+
 /** Left branding column — Figma S-02-01 (137:11442). */
 
 const FEATURES = [
@@ -32,18 +34,7 @@ export function AuthMarketingPanel() {
       <div className="mx-auto flex w-full max-w-[520px] flex-col gap-[2.45rem]">
         <div className="flex items-center gap-4">
           <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-[#FF6B35] sm:size-16">
-            <span
-              className="font-bold text-[#1E3A5F] sm:text-[3rem]"
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: "2.75rem",
-                lineHeight: "1.2",
-                textAlign: "center",
-              }}
-              aria-hidden
-            >
-              ✓
-            </span>
+            <Check className="size-9 text-[#1E3A5F] sm:size-10" strokeWidth={3.5} aria-hidden />
           </div>
           <span className="text-[clamp(28px,4vw,36px)] font-bold tracking-[-1px] text-white">ACTNOTE</span>
         </div>
