@@ -12,15 +12,17 @@ function supportMailbox(): string {
     typeof process !== "undefined" && process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim()
       ? process.env.NEXT_PUBLIC_SUPPORT_EMAIL.trim()
       : "";
-  return fromEnv || "support@actnote.com";
+  return fromEnv || "support@actnote.xyz";
 }
 
 export type SupportAnalysisMailParams = {
   meetingTitle: string;
   /** Human-readable workspace display name */
   workspaceName: string;
-  /** Preformatted ISO/local date-time line */
+  /** Preformatted ISO/local date-time line for the meeting itself */
   dateTimeLine: string;
+  /** Meeting row id (for triage in support inbox) */
+  meetingId?: string;
 };
 
 /**
@@ -30,10 +32,28 @@ export function analysisFailureSupportSubject(): string {
   return "[ACTNOTE] Analysis Failed – Support Request";
 }
 
+function formatSentAtPacific(d: Date = new Date()): string {
+  // Format: 2026-05-26 02:30 PM PT — Pacific Time auto-switches PST/PDT.
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const tz = get("timeZoneName") || "PT";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")} ${get("dayPeriod")} ${tz}`;
+}
+
 export function analysisFailureSupportBodyPlain(p: SupportAnalysisMailParams): string {
   const errorLine =
     "We couldn't start the analysis due to a server issue.";
-  return `\nMeeting Title: ${p.meetingTitle}\nDate & Time: ${p.dateTimeLine}\nWorkspace: ${p.workspaceName}\nError: ${errorLine}\n\nPlease describe what happened:\n(e.g. \"Upload failed\", \"Analysis stuck\")\n`;
+  const meetingIdLine = p.meetingId ? `\nMeeting ID: ${p.meetingId}` : "";
+  return `\nSent at: ${formatSentAtPacific()}\nMeeting Title: ${p.meetingTitle}\nDate & Time: ${p.dateTimeLine}\nWorkspace: ${p.workspaceName}${meetingIdLine}\nError: ${errorLine}\n\nPlease describe what happened:\n(e.g. \"Upload failed\", \"Analysis stuck\")\n`;
 }
 
 export function analysisFailureMailtoHref(p: SupportAnalysisMailParams): string {

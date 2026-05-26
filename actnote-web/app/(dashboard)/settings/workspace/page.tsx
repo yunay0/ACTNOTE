@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
 import { INVITE_EXPIRES_IN_DAYS } from "@/lib/workspace/invite-expiry";
+import { validateWorkspaceName } from "@/lib/workspace-name";
 import {
   workspaceMemberDisplayName,
   workspaceMemberInitials,
@@ -93,6 +94,7 @@ export default function WorkspaceSettingsPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteSent, setInviteSent] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
   const [optOut, setOptOut] = useState(true);
   const [linkCopied, setLinkCopied] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -272,12 +274,19 @@ export default function WorkspaceSettingsPage() {
 
   async function handleSaveName() {
     if (!workspaceId) return;
+    const err = validateWorkspaceName(workspaceName);
+    if (err) {
+      setNameError(err);
+      return;
+    }
+    setNameError(null);
+    const nameToSave = workspaceName.trim();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (createClient() as any)
       .from("workspaces")
-      .update({ name: workspaceName })
+      .update({ name: nameToSave })
       .eq("id", workspaceId);
-    setSavedName(workspaceName);
+    setSavedName(nameToSave);
     setNameSaved(true);
     setTimeout(() => setNameSaved(false), 2000);
   }
@@ -778,10 +787,17 @@ export default function WorkspaceSettingsPage() {
                 type="text"
                 value={workspaceName}
                 maxLength={WORKSPACE_NAME_MAX}
-                onChange={(e) => setWorkspaceName(e.target.value.slice(0, WORKSPACE_NAME_MAX))}
+                onChange={(e) => {
+                  setWorkspaceName(e.target.value.slice(0, WORKSPACE_NAME_MAX));
+                  if (nameError) setNameError(null);
+                }}
                 disabled={!isElevated}
-                className="h-11 w-full rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[13px] text-[#0a2540] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10 disabled:cursor-default disabled:bg-[#f8fafc]"
+                aria-invalid={nameError != null}
+                className="h-11 w-full rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[13px] text-[#0a2540] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10 disabled:cursor-default disabled:bg-[#f8fafc] aria-[invalid=true]:border-red-400"
               />
+              {nameError ? (
+                <p className="text-[12px] text-red-600">{nameError}</p>
+              ) : null}
               <p className="text-right text-[11px] text-[#64748b]">
                 {workspaceName.length}/{WORKSPACE_NAME_MAX}
               </p>
@@ -970,7 +986,8 @@ export default function WorkspaceSettingsPage() {
           </section>
 
           {/* Join requests — owner/admin (review_join_request RPC) */}
-          {isElevated && (
+          {/* B1: 0.5v 이월 — 초대 요청자 섹션 숨김 (2026-05-26 QA) */}
+          {false && isElevated && (
             <section
               id="join-requests-section"
               className="rounded-[12px] border border-[#e2e8f0] bg-white p-[33px]"
@@ -1030,7 +1047,8 @@ export default function WorkspaceSettingsPage() {
           )}
 
           {/* Invite Link (elevated) */}
-          {isElevated && (
+          {/* B2: 0.5v 이월 — Invite link 섹션 숨김 (2026-05-26 QA) */}
+          {false && isElevated && (
             <section className="rounded-[12px] border border-[#e2e8f0] bg-white p-[33px]">
               <div className="mb-5">
                 <h2 className="text-[17px] font-bold text-[#0a2540]">Invite Link</h2>

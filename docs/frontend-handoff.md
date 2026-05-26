@@ -53,7 +53,7 @@
 | `DB_PUSH_FAILED`   | DB 저장 실패 (case 3) | 네트워크 확인·재시도 |
 | `PIPELINE_INTERNAL`| 분류 보강 전 폴백 | 잠시 후 재시도 |
 
-`{SUPPORT_EMAIL}` 은 `NEXT_PUBLIC_SUPPORT_EMAIL`(또는 제품 정책에 맞는 단일 소스)로 주입한다. **기획 확정 주소:** `actnote.support@gmail.com` (로컬/배포 `.env`에 동일 값 설정 권장).
+`{SUPPORT_EMAIL}` 은 `NEXT_PUBLIC_SUPPORT_EMAIL`(또는 제품 정책에 맞는 단일 소스)로 주입한다. **기획 확정 주소 (2026-05-26 다혜님 변경):** `support@actnote.xyz` (로컬/배포 `.env`에 동일 값 설정 권장).
 
 파싱 예시:
 ```ts
@@ -233,7 +233,7 @@ await supabase.rpc("set_member_role", {                          // owner only
 | `NEXT_PUBLIC_SUPABASE_URL` | ✅ | Supabase 프로젝트 URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅ | anon 키 (RLS 통과용) |
 | `NEXT_PUBLIC_APP_URL` | ✅ | OAuth 콜백 / 메일 푸터 (`https://actnote.app`) |
-| `NEXT_PUBLIC_SUPPORT_EMAIL` | ✅ | 에러(case 6) 팝업·알림·문의 링크 — 기획 확정: `actnote.support@gmail.com` |
+| `NEXT_PUBLIC_SUPPORT_EMAIL` | ✅ | 에러(case 6) 팝업·알림·문의 링크 — 기획 확정 (2026-05-26): `support@actnote.xyz` |
 | `MODAL_PIPELINE_TRIGGER_URL` | ⛔ | `/api/trigger-pipeline` → Modal 엔드포인트 (`modal deploy` 출력) |
 | `MODAL_PUBLISH_TRIGGER_URL` | ⛔ | `/api/trigger-publish` → Modal 엔드포인트 |
 | `MODAL_TRIGGER_SECRET` | ⛔ | X-Actnote-Secret 헤더값. Modal Secret 의 동일 키와 같은 값 |

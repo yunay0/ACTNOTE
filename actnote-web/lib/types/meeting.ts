@@ -28,6 +28,8 @@ export interface Meeting {
   meeting_type?: string | null;
   action_items_count?: number;
   error_message?: string | null;
+  creator_name?: string | null;
+  creator_email?: string | null;
 }
 
 export interface Decision {

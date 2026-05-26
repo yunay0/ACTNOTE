@@ -190,8 +190,22 @@ export function Sidebar() {
       {/* Logo */}
       <div className="flex h-[72px] shrink-0 items-center border-b border-[#e2e8f0] px-5">
         <Link href="/meetings" className="flex items-center gap-2.5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-[#ff6b35]">
-            <span className="text-xl font-bold leading-none text-[#1e3a5f]">✓</span>
+          <div
+            className="flex h-7 w-7 items-center justify-center rounded-[6px] bg-[#FF6B35]"
+            style={{ padding: "5px 0 6px" }}
+          >
+            <span
+              className="font-bold text-[#1E3A5F]"
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "20px",
+                lineHeight: "24px",
+                textAlign: "center",
+              }}
+              aria-hidden
+            >
+              ✓
+            </span>
           </div>
           <span className="text-[16px] font-bold text-[#0a2540]">ACTNOTE</span>
         </Link>

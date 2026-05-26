@@ -15,38 +15,50 @@ function emailShell(badgeText: string, bodyHtml: string): string {
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#F8FAFC;font-family:Roboto,Arial,sans-serif;">
-<div style="padding:52px 0 40px;background:#F8FAFC;display:flex;justify-content:center;">
-<div style="width:560px;max-width:100%;background:#FFFFFF;border-radius:12px;box-shadow:0px 4px 12px rgba(10,37,64,0.08);overflow:hidden;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F8FAFC;">
+<tr><td align="center" style="padding:52px 16px 40px;">
+<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;background:#FFFFFF;border-radius:12px;box-shadow:0px 4px 12px rgba(10,37,64,0.08);">
 
-  <!-- Header -->
-  <div style="background:linear-gradient(107.74deg,#0A2540 0%,#1E3A5F 100%);height:102px;position:relative;">
-    <div style="display:flex;align-items:center;gap:12px;position:absolute;left:52px;top:34px;">
-      <div style="background:#FF6B35;border-radius:6px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;">
-        <span style="color:#1E3A5F;font-weight:700;font-size:20px;line-height:1;">✓</span>
-      </div>
-      <span style="color:#FFFFFF;font-weight:700;font-size:28px;line-height:33px;">ACTNOTE</span>
-    </div>
-    <div style="position:absolute;right:52px;top:35px;background:rgba(255,255,255,0.15);border-radius:20px;padding:8px 16px;">
-      <span style="color:#FFFFFF;font-weight:700;font-size:13.8px;">${escapeHtml(badgeText)}</span>
-    </div>
-  </div>
+  <!-- Header (gradient bar) -->
+  <tr><td style="background:#0A2540;background:linear-gradient(107.74deg,#0A2540 0%,#1E3A5F 100%);padding:34px 52px;border-radius:12px 12px 0 0;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td valign="middle" align="left">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td valign="middle" align="center" width="32" height="32" style="background:#FF6B35;border-radius:6px;color:#1E3A5F;font-weight:700;font-size:20px;line-height:32px;">&#10003;</td>
+              <td valign="middle" style="padding-left:12px;color:#FFFFFF;font-weight:700;font-size:28px;line-height:33px;">ACTNOTE</td>
+            </tr>
+          </table>
+        </td>
+        <td valign="middle" align="right">
+          <span style="display:inline-block;background:rgba(255,255,255,0.15);border-radius:20px;padding:8px 16px;color:#FFFFFF;font-weight:700;font-size:13.8px;">${escapeHtml(badgeText)}</span>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
 
   <!-- Body -->
-  <div style="margin:24px 40px;border:2px solid #E2E8F0;border-radius:12px;padding:28px 34px 32px;">
-    ${bodyHtml}
-  </div>
+  <tr><td style="padding:24px 40px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:2px solid #E2E8F0;border-radius:12px;">
+      <tr><td style="padding:28px 34px 32px;">
+        ${bodyHtml}
+      </td></tr>
+    </table>
+  </td></tr>
 
   <!-- Footer -->
-  <div style="border-top:1px solid #E2E8F0;padding:25px 40px 24px;">
+  <tr><td style="border-top:1px solid #E2E8F0;padding:25px 40px 24px;text-align:center;">
     <p style="margin:0 0 8px;text-align:center;font-size:13px;color:#94A3B8;">© 2026 ACTNOTE. All rights reserved.</p>
-    <div style="display:flex;justify-content:center;gap:20px;">
-      <a href="#" style="font-size:13px;color:#64748B;text-decoration:none;">Terms of Service</a>
+    <p style="margin:0;text-align:center;">
+      <a href="#" style="font-size:13px;color:#64748B;text-decoration:none;margin-right:20px;">Terms of Service</a>
       <a href="#" style="font-size:13px;color:#64748B;text-decoration:none;">Privacy Policy</a>
-    </div>
-  </div>
+    </p>
+  </td></tr>
 
-</div>
-</div>
+</table>
+</td></tr>
+</table>
 </body>
 </html>`;
 }
@@ -54,24 +66,30 @@ function emailShell(badgeText: string, bodyHtml: string): string {
 function workspaceCard(workspaceName: string): string {
   const initial = workspaceInitial(workspaceName);
   const safeName = escapeHtml(workspaceName);
-  return `<div style="border:1px solid #E2E8F0;border-radius:8px;height:82px;display:flex;align-items:center;justify-content:center;gap:16px;margin:16px 0;">
-    <div style="background:linear-gradient(135deg,#FF6B35 0%,#FF8555 100%);border-radius:12px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-      <span style="color:#FFFFFF;font-weight:700;font-size:20px;">${initial}</span>
-    </div>
-    <p style="margin:0;font-size:20px;font-weight:700;color:#0A2540;">${safeName}</p>
-  </div>`;
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E2E8F0;border-radius:8px;margin:16px 0;">
+    <tr><td align="center" style="padding:21px 16px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+        <tr>
+          <td valign="middle" align="center" width="40" height="40" style="background:#FF6B35;background:linear-gradient(135deg,#FF6B35 0%,#FF8555 100%);border-radius:12px;color:#FFFFFF;font-weight:700;font-size:20px;line-height:40px;font-family:Roboto,Arial,sans-serif;">${initial}</td>
+          <td valign="middle" style="padding-left:16px;font-size:20px;font-weight:700;color:#0A2540;line-height:40px;">${safeName}</td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>`;
 }
 
 function requesterCard(email: string, name: string | null): string {
   const initials = name ? name.trim().split(/\s+/).map((p) => p[0]).join("").slice(0, 2).toUpperCase() || requesterInitials(email) : requesterInitials(email);
   const displayName = name?.trim() || email.split("@")[0] || "Unknown";
-  return `<div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:20px 16px;display:flex;flex-direction:column;align-items:center;gap:8px;margin:16px 0;">
-    <div style="background:linear-gradient(135deg,#4285F4 0%,#34A853 100%);border-radius:100px;width:60px;height:60px;display:flex;align-items:center;justify-content:center;">
-      <span style="color:#FFFFFF;font-weight:700;font-size:14px;">${escapeHtml(initials)}</span>
-    </div>
-    <p style="margin:0;font-size:20px;font-weight:700;color:#64748B;">${escapeHtml(displayName)}</p>
-    <p style="margin:0;font-size:15px;color:#0A2540;">${escapeHtml(email)}</p>
-  </div>`;
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;margin:16px 0;">
+    <tr><td align="center" style="padding:20px 16px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto 8px;">
+        <tr><td align="center" valign="middle" width="60" height="60" style="background:#4285F4;background:linear-gradient(135deg,#4285F4 0%,#34A853 100%);border-radius:100px;color:#FFFFFF;font-weight:700;font-size:14px;line-height:60px;font-family:Roboto,Arial,sans-serif;text-align:center;">${escapeHtml(initials)}</td></tr>
+      </table>
+      <p style="margin:8px 0 0;font-size:20px;font-weight:700;color:#64748B;line-height:1.2;">${escapeHtml(displayName)}</p>
+      <p style="margin:4px 0 0;font-size:15px;color:#0A2540;line-height:1.2;">${escapeHtml(email)}</p>
+    </td></tr>
+  </table>`;
 }
 
 function ctaButton(href: string, label: string): string {
@@ -100,10 +118,10 @@ export function buildJoinRequestEmailToOwner(opts: {
     ${requesterCard(requesterEmail, requesterName)}
     ${message ? `<div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:12px 16px;margin:12px 0;"><p style="margin:0;font-size:13px;font-weight:600;color:#0A2540;">Message</p><p style="margin:4px 0 0;font-size:13px;line-height:21px;color:#64748B;">${escapeHtml(message)}</p></div>` : ""}
     <div style="background:#FFFFFF;border-radius:12px;padding:20px 24px;margin:16px 0;">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-        <span style="font-size:20px;">⏰</span>
-        <span style="font-size:14px;font-weight:700;color:#0F172A;">Invitation Expiry</span>
-      </div>
+      <p style="margin:0 0 10px;font-size:14px;font-weight:700;color:#0F172A;line-height:20px;">
+        <span style="font-size:20px;vertical-align:middle;">&#9200;</span>
+        <span style="vertical-align:middle;margin-left:6px;">Invitation Expiry</span>
+      </p>
       <p style="margin:0;font-size:13px;line-height:21px;color:#475569;">
         This request will expire in 7 days. If you don't recognize this person, you can safely ignore this request.
         You can send invitations from workspace settings if needed.

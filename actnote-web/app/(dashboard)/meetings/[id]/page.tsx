@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, CalendarDays,
-  Send, Pencil, Trash2, Plus, X, Save,
+  Send, Pencil, Trash2, Plus, X,
   AlertCircle, ExternalLink,
   FileText,
   Music2,
@@ -41,7 +41,7 @@ import {
 } from "@/lib/meetings/action-items-from-draft";
 import type { MeetingStatus } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
-import { workspaceMemberDisplayName } from "@/lib/user/member-display";
+import { workspaceMemberDisplayName, workspaceMemberInitials } from "@/lib/user/member-display";
 
 interface MeetingRow {
   id: string;
@@ -62,6 +62,7 @@ interface MeetingRow {
   participants: string[];
   responsible_user_id: string | null;
   duration_seconds?: number | null;
+  audio_file_size_bytes?: number | null;
 }
 
 interface ActionItem {
@@ -114,6 +115,7 @@ interface Member {
   user_id: string;
   name: string | null;
   email: string;
+  avatar_url: string | null;
   /** Profile name if set, else email local-part (for UI). */
   displayName: string;
 }
@@ -275,7 +277,7 @@ export default function MeetingDetailPage() {
     const supabase = createClient();
     const { data, error } = await (supabase as any)
       .from("workspace_members")
-      .select("user_id, users(name, email)")
+      .select("user_id, users(name, email, avatar_url)")
       .eq("workspace_id", wsId);
 
     if (error) {
@@ -294,10 +296,13 @@ export default function MeetingDetailPage() {
         const uo = u && typeof u === "object" ? (u as Record<string, unknown>) : null;
         const name = typeof uo?.name === "string" ? uo.name : null;
         const email = typeof uo?.email === "string" ? uo.email : "";
+        const ar = uo?.avatar_url;
+        const avatar_url = typeof ar === "string" && ar.trim() ? ar.trim() : null;
         return {
           user_id: row.user_id,
           name,
           email,
+          avatar_url,
           displayName: workspaceMemberDisplayName(name, email),
         };
       })
@@ -310,7 +315,7 @@ export default function MeetingDetailPage() {
       (supabase as any)
         .from("meetings")
         .select(
-          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id, created_by, error_message, description, meeting_type, participants, responsible_user_id, ai_draft_notes, duration_seconds"
+          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id, created_by, error_message, description, meeting_type, participants, responsible_user_id, ai_draft_notes, duration_seconds, audio_file_size_bytes"
         )
         .eq("id", id)
         .is("deleted_at", null)
@@ -802,18 +807,6 @@ export default function MeetingDetailPage() {
     return { ok: true };
   }
 
-  async function saveEdits() {
-    if (!meeting || meeting.approval_status === "published") return;
-    if (meetingRole !== "owner") return;
-    setSaving(true);
-    try {
-      const ok = await persistDraftEdits();
-      if (ok) setEditMode(false);
-    } finally {
-      setSaving(false);
-    }
-  }
-
   // PUB-001: validate_meeting_for_publication RPC 사용
   async function handlePublishClick() {
     if (!meeting || publishing) return;
@@ -957,12 +950,17 @@ export default function MeetingDetailPage() {
     setDeleteModal(false);
   }
 
-  const responsibleDisplayLabel = useMemo(() => {
+  const responsibleMember = useMemo(() => {
     if (!meeting?.responsible_user_id) return null;
-    const mem = members.find((x) => x.user_id === meeting.responsible_user_id);
-    if (!mem) return null;
-    return mem.email ? `${mem.displayName} (${mem.email})` : mem.displayName;
+    return members.find((x) => x.user_id === meeting.responsible_user_id) ?? null;
   }, [meeting?.responsible_user_id, members]);
+
+  const responsibleDisplayLabel = useMemo(() => {
+    if (!responsibleMember) return null;
+    return responsibleMember.email
+      ? `${responsibleMember.displayName} (${responsibleMember.email})`
+      : responsibleMember.displayName;
+  }, [responsibleMember]);
 
   const analysisSegments = useMemo(
     () => meetingAnalysisSegmentsForRow(meeting?.meeting_type ?? null),
@@ -1074,8 +1072,9 @@ export default function MeetingDetailPage() {
   const canDeleteMeeting =
     meetingRole === "owner" ||
     (meetingRole === "creator" && !isPublished);
-  const dateStr = new Date(meeting.meeting_date ?? meeting.created_at).toLocaleDateString("en-US", {
+  const dateStr = new Date(meeting.meeting_date ?? meeting.created_at).toLocaleString("en-US", {
     year: "numeric", month: "long", day: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: true,
   });
   const transcriptSpeakerMapping = speakerMapping;
 
@@ -1333,11 +1332,16 @@ export default function MeetingDetailPage() {
                     </div>
                     <div className="sm:col-span-2">
                       <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
-                        Responsible person
+                        Created by
                       </dt>
-                      <dd className="mt-0.5 text-sm font-medium text-[#0a2540]">
+                      <dd className="mt-1 flex items-center gap-2 text-sm font-medium text-[#64748b]">
                         {meeting.responsible_user_id ? (
-                          responsibleDisplayLabel ?? (
+                          responsibleMember ? (
+                            <>
+                              <CreatedByAvatar member={responsibleMember} />
+                              <span>{responsibleDisplayLabel}</span>
+                            </>
+                          ) : (
                             <span className="font-normal italic text-[#94a3b8]">Loading…</span>
                           )
                         ) : (
@@ -1404,19 +1408,18 @@ export default function MeetingDetailPage() {
               </>
             )}
 
-          {/* 편집 모드 저장/취소 바 */}
+          {/* D2: 편집 모드 안내 바 — Save Changes 버튼 제거. 변경 사항은 Publish 시 자동 저장 (2026-05-26 QA). */}
           {editMode && canEdit && (
             <div className="flex items-center justify-between rounded-xl border border-[#ff6b35]/30 bg-[#fff4f0] px-5 py-3">
-              <p className="text-sm font-semibold text-[#ff6b35]">✏️ Edit mode — changes not saved yet</p>
-              <div className="flex gap-2">
-                <button onClick={cancelEdit} className="rounded-lg border border-[#e2e8f0] bg-white px-4 py-1.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc]">
-                  Cancel
-                </button>
-                <button onClick={saveEdits} disabled={saving} className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60" style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}>
-                  {saving ? <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" /> : <Save className="h-3.5 w-3.5" />}
-                  Save Changes
-                </button>
-              </div>
+              <p className="text-sm font-semibold text-[#ff6b35]">
+                ✏️ Edit mode — your changes will be saved when you Publish
+              </p>
+              <button
+                onClick={cancelEdit}
+                className="rounded-lg border border-[#e2e8f0] bg-white px-4 py-1.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc]"
+              >
+                Cancel
+              </button>
             </div>
           )}
 
@@ -1430,6 +1433,7 @@ export default function MeetingDetailPage() {
               responsibleLabel={responsibleDisplayLabel}
               recordingUrl={meeting.audio_file_url}
               durationSeconds={meeting.duration_seconds}
+              fileSizeBytes={meeting.audio_file_size_bytes}
               transcriptReady={transcriptLines.length > 0}
               onOpenTranscript={() => setTranscriptPanelOpen(true)}
               onNext={() => {
@@ -1496,6 +1500,8 @@ export default function MeetingDetailPage() {
                       user_id: m.user_id,
                       displayName: m.displayName,
                       email: m.email ?? "",
+                      avatar_url: m.avatar_url,
+                      name: m.name,
                     }))}
                     editMode={Boolean(editMode && canEdit)}
                     canPatchInteractive={canEdit}
@@ -1683,8 +1689,30 @@ export default function MeetingDetailPage() {
           </aside>
         </>
       ) : null}
-      </div>
     </div>
+  );
+}
+
+/** G1: Created by/담당자 표시용 작은 아바타. avatar_url 없으면 initials 표시. */
+function CreatedByAvatar({ member }: { member: Member }) {
+  const initials = workspaceMemberInitials(member.name, member.email);
+  if (member.avatar_url) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={member.avatar_url}
+        alt=""
+        className="size-6 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className="flex size-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#4284f4] to-[#34a853] text-[10px] font-bold leading-none text-white"
+    >
+      {initials}
+    </span>
   );
 }
 

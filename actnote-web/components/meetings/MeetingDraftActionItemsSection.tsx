@@ -11,6 +11,7 @@ import {
   dueDateYmdToDatetimeLocalStart,
   fromDatetimeLocalToDueFields,
 } from "@/lib/meetings/deadline-local";
+import { workspaceMemberInitials } from "@/lib/user/member-display";
 
 /** Figma 157:11934 — 필수 Assignee / Due Date 외곽 (항상 주황, 클릭 가능) */
 const MANDATORY_ORANGE_SHELL =
@@ -31,6 +32,8 @@ interface WorkspaceMemberLite {
   user_id: string;
   displayName: string;
   email: string;
+  avatar_url?: string | null;
+  name?: string | null;
 }
 
 interface MeetingDraftActionItemsSectionProps {
@@ -89,18 +92,61 @@ function FilledValuePill({ children }: { children: ReactNode }): ReactElement {
   );
 }
 
+/**
+ * G1: assignee 전용 pill — 회색 점 자리에 사용자 프로필 사진(또는 initials) 표시.
+ */
+function AssigneePill({
+  label,
+  member,
+}: {
+  label: string;
+  member: WorkspaceMemberLite | null;
+}): ReactElement {
+  const initials = member
+    ? workspaceMemberInitials(member.name ?? member.displayName ?? null, member.email)
+    : "?";
+  const hasAvatar = Boolean(member?.avatar_url);
+  return (
+    <span className="inline-flex h-5 max-w-full items-center gap-1.5 rounded-full bg-[#f4f4f4] py-0.5 pl-0.5 pr-3 text-[15px] font-medium text-[#94a3b8]">
+      {hasAvatar ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={member!.avatar_url!}
+          alt=""
+          className="size-4 shrink-0 rounded-full object-cover"
+        />
+      ) : (
+        <span
+          aria-hidden
+          className="flex size-4 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#4284f4] to-[#34a853] text-[8px] font-bold leading-none text-white"
+        >
+          {initials}
+        </span>
+      )}
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
 function MandatoryAssigneeCell({
   row,
   interactive,
   onOpen,
+  assigneeMember,
 }: {
   row: ActionRow;
   interactive: boolean;
   onOpen: () => void;
+  assigneeMember: WorkspaceMemberLite | null;
 }): ReactElement {
   const needsA = draftActionNeedsAssigneeGap(row);
   const label = assigneePillLabel(row);
-  const inner = needsA || !label ? <GapPill /> : <FilledValuePill>{label}</FilledValuePill>;
+  const inner =
+    needsA || !label ? (
+      <GapPill />
+    ) : (
+      <AssigneePill label={label} member={assigneeMember} />
+    );
 
   if (interactive) {
     return (
@@ -238,6 +284,11 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
                       row={row}
                       interactive={interactive}
                       onOpen={() => setAssignModalRowId(row.id)}
+                      assigneeMember={
+                        row.assignee_user_id
+                          ? props.members.find((m) => m.user_id === row.assignee_user_id) ?? null
+                          : null
+                      }
                     />
                   </td>
                   <td className="px-4 py-3">
