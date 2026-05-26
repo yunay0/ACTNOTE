@@ -1592,13 +1592,13 @@ export default function MeetingDetailPage() {
                 </div>
               </div>
 
-              {/* Draft detail step: Back 버튼은 owner만, 오른쪽 정렬 */}
+              {/* Draft detail step: Back 버튼 — Next와 동일 디자인, 글자/화살표 방향만 다름 */}
               {canEdit && draftSurfaceStep === "detail" ? (
                 <div className="flex flex-wrap justify-end gap-3 border-t border-[#e2e8f0] pt-8">
                   <button
                     type="button"
                     onClick={() => setDraftSurfaceStep("overview")}
-                    className="inline-flex h-12 min-w-[10rem] items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white px-8 text-[15px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc] md:px-14"
+                    className="inline-flex h-12 min-w-[10rem] items-center justify-center gap-2 rounded-[10px] bg-[#1e3a5f] px-8 text-[15px] font-bold text-white transition-opacity hover:opacity-90 md:px-14"
                   >
                     <ArrowLeft className="size-4" aria-hidden /> Back
                   </button>
