@@ -1499,15 +1499,6 @@ export default function MeetingDetailPage() {
 
           {isReady && (!canEdit || draftSurfaceStep === "detail") ? (
             <>
-              {canEdit && draftSurfaceStep === "detail" ? (
-                <button
-                  type="button"
-                  onClick={() => setDraftSurfaceStep("overview")}
-                  className="inline-flex items-center gap-1.5 rounded-lg py-2 text-sm font-semibold text-[#64748b] transition-colors hover:text-[#0a2540]"
-                >
-                  <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden /> Back
-                </button>
-              ) : null}
               <div className="flex flex-col gap-[30px]">
                 <MeetingAnalysisResultsBlock
                   meetingTypeRaw={meeting.meeting_type}
@@ -1601,6 +1592,18 @@ export default function MeetingDetailPage() {
                 </div>
               </div>
 
+              {/* Draft detail step: Back 버튼은 owner만, 오른쪽 정렬 */}
+              {canEdit && draftSurfaceStep === "detail" ? (
+                <div className="flex flex-wrap justify-end gap-3 border-t border-[#e2e8f0] pt-8">
+                  <button
+                    type="button"
+                    onClick={() => setDraftSurfaceStep("overview")}
+                    className="inline-flex h-12 min-w-[10rem] items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white px-8 text-[15px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc] md:px-14"
+                  >
+                    <ArrowLeft className="size-4" aria-hidden /> Back
+                  </button>
+                </div>
+              ) : null}
             </>
           ) : null}
             </div>
