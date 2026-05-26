@@ -73,7 +73,7 @@ def render_analysis_failed_email(
             "Clicking the button will take you directly to the specific meeting page "
             "in ACTNOTE to review the error."
         )
-        cta_label = "View Error"
+        cta_label = "Go to ACTNOTE"
         cta_url = escape((view_error_url or "").strip())
         subject = f"Network issue — \"{safe_title_plain}\""
         text_lines = (
@@ -82,7 +82,7 @@ def render_analysis_failed_email(
             f"- Your analysis for \"{safe_title_plain}\" was interrupted due to an unstable "
             "internet connection.\n"
             "- Please check your connection and try again.\n\n"
-            f"View Error:\n{view_error_url or ''}\n\n"
+            f"Go to ACTNOTE:\n{view_error_url or ''}\n\n"
         )
 
     elif variant == "reattach_file":
@@ -98,7 +98,7 @@ def render_analysis_failed_email(
             "Clicking the button will take you directly to the specific meeting page "
             "in ACTNOTE to review the error."
         )
-        cta_label = "View Error"
+        cta_label = "Go to ACTNOTE"
         cta_url = escape((view_error_url or "").strip())
         subject = f"File not found — \"{safe_title_plain}\""
         text_lines = (
@@ -106,7 +106,7 @@ def render_analysis_failed_email(
             f"— \"{safe_title_plain}\"\n\n"
             "- We couldn't access the file. It may have been moved or deleted.\n"
             "- Please create a new meeting and re-upload your file.\n\n"
-            f"View Error:\n{view_error_url or ''}\n\n"
+            f"Go to ACTNOTE:\n{view_error_url or ''}\n\n"
         )
 
     elif variant == "contact_support":

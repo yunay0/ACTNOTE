@@ -286,7 +286,7 @@ def notify_analysis_complete(
     수신자:
     - 워크스페이스 오너/어드민 (workspace_members.role = 'owner' | 'admin')
     - 회의 생성자 (meetings.created_by)
-    - 회의 참가자 (meetings.participants[] 이메일 매칭)
+    참가자(participant)는 TC 11-3·11-4에 따라 알림 수신 대상에서 제외 (analysis_failed와 동일 정책).
 
     이메일: 수신자 전원 중 설정이 켜진 경우 발송.
 
@@ -300,7 +300,7 @@ def notify_analysis_complete(
     recipients.update(targets["owner_ids"])
     if targets["creator_id"]:
         recipients.add(targets["creator_id"])
-    recipients.update(targets["participant_ids"])
+    # 참가자는 알림 대상 아님 (TC 11-3 / 11-4)
 
     if not recipients:
         _log.warning("notify_analysis_complete: 수신자 없음 (meeting_id=%s)", meeting_id)

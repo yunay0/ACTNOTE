@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactElement, type ReactNode } from "react";
+import { Trash2 } from "lucide-react";
 import { DraftAssignMemberModal } from "@/components/meetings/DraftAssignMemberModal";
 import { DraftDueDateTimeModal } from "@/components/meetings/DraftDueDateTimeModal";
 import {
@@ -15,7 +16,7 @@ import { workspaceMemberInitials } from "@/lib/user/member-display";
 
 /** Figma 157:11934 — 필수 Assignee / Due Date 외곽 (항상 주황, 클릭 가능) */
 const MANDATORY_ORANGE_SHELL =
-  "flex min-h-[52px] w-full min-w-[7.5rem] items-center rounded-lg border-2 border-[#ff6b35] bg-[#fff4f0] px-3 py-2.5 text-left transition-colors";
+  "flex min-h-[36px] w-full min-w-[6.5rem] items-center rounded-lg border-2 border-[#ff6b35] bg-[#fff4f0] px-2.5 py-1.5 text-left transition-colors";
 
 const MANDATORY_ORANGE_BUTTON = `${MANDATORY_ORANGE_SHELL} cursor-pointer hover:bg-[#ffe8df] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6b35]/40`;
 
@@ -47,6 +48,8 @@ interface MeetingDraftActionItemsSectionProps {
     patch: Record<string, string | null | undefined>,
   ) => Promise<{ ok: boolean; error?: string }>;
   onContentDraftChange?: (rowId: string, next: string) => void;
+  /** editMode일 때 row 삭제 핸들러 (없으면 컬럼 미노출) */
+  onDeleteRow?: (rowId: string) => void;
 }
 
 function formatDuePill(date: string | null): string {
@@ -249,7 +252,9 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
     setAssignModalRowId(null);
   }
 
-  const interactive = props.canPatchInteractive;
+  // Edit 모드 + 권한 둘 다 만족할 때만 mandatory 셀(Assignee/DueDate) 클릭 가능.
+  // (Edit 누르지 않은 상태에서 빨간 버튼이 바로 수정되던 문제 수정)
+  const interactive = props.editMode && props.canPatchInteractive;
   const activeRows = props.items.filter((row) => row.status !== "cancelled");
 
   return (
@@ -258,21 +263,27 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
         <table className="w-full min-w-[680px] border-collapse text-left text-[13px]">
           <thead>
             <tr className="border-b border-[#e8ecf1] bg-[#f8fafc]">
-              <th className="w-[28%] px-4 py-3 font-bold text-[#0a2540]">
+              <th className="w-[26%] px-4 py-3 font-bold text-[#0a2540]">
                 Assignee <span className="text-[#ff6b35]">*</span>
               </th>
-              <th className="w-[20%] px-4 py-3 font-bold text-[#0a2540]">
+              <th className="w-[18%] px-4 py-3 font-bold text-[#0a2540]">
                 Due Date <span className="text-[#ff6b35]">*</span>
               </th>
               <th className="px-4 py-3 font-bold text-[#0a2540]">
                 Task Description <span className="text-[#ff6b35]">*</span>
               </th>
+              {props.editMode && props.onDeleteRow ? (
+                <th className="w-[56px] px-2 py-3" aria-label="Actions" />
+              ) : null}
             </tr>
           </thead>
           <tbody className="text-[#0a2540]">
             {activeRows.length === 0 ? (
               <tr>
-                <td colSpan={3} className="px-4 py-8 text-center text-[#94a3b8]">
+                <td
+                  colSpan={props.editMode && props.onDeleteRow ? 4 : 3}
+                  className="px-4 py-8 text-center text-[#94a3b8]"
+                >
                   No action items yet. Run analysis again or add a row below.
                 </td>
               </tr>
@@ -313,6 +324,18 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
                       </ul>
                     )}
                   </td>
+                  {props.editMode && props.onDeleteRow ? (
+                    <td className="px-2 py-3 align-middle">
+                      <button
+                        type="button"
+                        onClick={() => props.onDeleteRow?.(row.id)}
+                        aria-label="Delete action item"
+                        className="flex size-8 items-center justify-center rounded-lg text-[#94a3b8] transition-colors hover:bg-red-50 hover:text-red-600"
+                      >
+                        <Trash2 className="size-4" aria-hidden />
+                      </button>
+                    </td>
+                  ) : null}
                 </tr>
               ))
             )}

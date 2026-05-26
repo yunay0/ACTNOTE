@@ -30,6 +30,7 @@ export interface Meeting {
   error_message?: string | null;
   creator_name?: string | null;
   creator_email?: string | null;
+  created_by?: string | null;
 }
 
 export interface Decision {

@@ -7,6 +7,8 @@ import { ChevronLeft, ChevronRight, ArrowUpDown } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { MeetingCard } from "@/components/meetings/MeetingCard";
 import { useMeetings } from "@/lib/hooks/useMeetings";
+import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
+import { createClient } from "@/lib/supabase/client";
 import { isProcessing } from "@/lib/types/meeting";
 import type { Meeting } from "@/lib/types/meeting";
 import {
@@ -60,6 +62,33 @@ function tabCountBadgeClasses(tabId: Tab, isActive: boolean): string {
   }
 }
 
+/**
+ * TC-1: 권한 기반 회의 카드 가시성.
+ *  - WS owner/admin: 전부
+ *  - Member 생성자: 본인 회의 전부
+ *  - Member 참석자: Draft, Published만 (Analyzing/Error 숨김)
+ *  - Member 비참석자: Published만
+ */
+function isMeetingVisibleToUser(
+  meeting: Meeting,
+  isElevatedWsRole: boolean,
+  userId: string | null,
+  userEmail: string | null,
+): boolean {
+  if (isElevatedWsRole) return true;
+  if (userId != null && meeting.created_by === userId) return true;
+
+  const isPublished = meeting.approval_status === "published";
+  const isDraft = meeting.status === "ready" && !isPublished;
+  const participants = meeting.participants ?? [];
+  const isParticipant =
+    userEmail != null &&
+    participants.some((p) => p.toLowerCase() === userEmail.toLowerCase());
+
+  if (isParticipant) return isPublished || isDraft;
+  return isPublished;
+}
+
 function filterMeetings(meetings: Meeting[], tab: Tab): Meeting[] {
   switch (tab) {
     case "analyzing":
@@ -82,6 +111,20 @@ function MeetingsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { meetings, deleteMeeting, hydrated } = useMeetings();
+  const { memberships, workspaceId } = useWorkspaceContext();
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  useEffect(() => {
+    void (async () => {
+      const { data: { user } } = await createClient().auth.getUser();
+      setCurrentUserId(user?.id ?? null);
+      setCurrentUserEmail(user?.email ?? null);
+    })();
+  }, []);
+  const isElevatedWsRole = useMemo(() => {
+    const r = memberships.find((m) => m.workspace_id === workspaceId)?.role;
+    return r === "owner" || r === "admin";
+  }, [memberships, workspaceId]);
 
   const tabFromUrl = parseMeetingsHomeTab(searchParams.get(MEETINGS_HOME_TAB_PARAM));
   const highlightId = searchParams.get(MEETINGS_HOME_HIGHLIGHT_PARAM);
@@ -112,9 +155,18 @@ function MeetingsPageContent() {
     setPage(1);
   }
 
+  // TC-1: 권한에 따라 카드 자체를 숨김 (목록·카운트·하이라이트 모두 동일 기준 사용).
+  const visibleMeetings = useMemo(
+    () =>
+      meetings.filter((m) =>
+        isMeetingVisibleToUser(m, isElevatedWsRole, currentUserId, currentUserEmail),
+      ),
+    [meetings, isElevatedWsRole, currentUserId, currentUserEmail],
+  );
+
   const filtered = useMemo(
-    () => sortMeetings(filterMeetings(meetings, activeTab), sortOrder),
-    [meetings, activeTab, sortOrder]
+    () => sortMeetings(filterMeetings(visibleMeetings, activeTab), sortOrder),
+    [visibleMeetings, activeTab, sortOrder]
   );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -130,7 +182,7 @@ function MeetingsPageContent() {
     if (!highlightId || !hydrated) return undefined;
 
     const tab = tabFromUrl ?? "published";
-    const list = sortMeetings(filterMeetings(meetings, tab), sortOrder);
+    const list = sortMeetings(filterMeetings(visibleMeetings, tab), sortOrder);
     const idx = list.findIndex((m) => m.id === highlightId);
     if (idx < 0) return undefined;
 
@@ -154,15 +206,15 @@ function MeetingsPageContent() {
       window.clearTimeout(scrollTimer);
       window.clearTimeout(cleanUrlTimer);
     };
-  }, [highlightId, hydrated, meetings, tabFromUrl, sortOrder, router]);
+  }, [highlightId, hydrated, visibleMeetings, tabFromUrl, sortOrder, router]);
 
-  // 탭별 카운트
+  // 탭별 카운트 — TC-1 권한 필터링 후 visibleMeetings 기준.
   const counts: Record<Tab, number> = useMemo(() => ({
-    all:       meetings.length,
-    analyzing: meetings.filter((m) => isProcessing(m.status) || m.status === "error").length,
-    drafts:    meetings.filter((m) => m.status === "ready" && m.approval_status !== "published").length,
-    published: meetings.filter((m) => m.approval_status === "published").length,
-  }), [meetings]);
+    all:       visibleMeetings.length,
+    analyzing: visibleMeetings.filter((m) => isProcessing(m.status) || m.status === "error").length,
+    drafts:    visibleMeetings.filter((m) => m.status === "ready" && m.approval_status !== "published").length,
+    published: visibleMeetings.filter((m) => m.approval_status === "published").length,
+  }), [visibleMeetings]);
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -257,15 +309,25 @@ function MeetingsPageContent() {
         ) : (
           <>
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {paginated.map((meeting) => (
-                <MeetingCard
-                  key={meeting.id}
-                  meeting={meeting}
-                  highlighted={highlightId === meeting.id}
-                  onDelete={handleDeleteMeeting}
-                  onClick={() => router.push(`/meetings/${meeting.id}`)}
-                />
-              ))}
+              {paginated.map((meeting) => {
+                // TC-2: Published 상태에선 owner/admin만 삭제 가능. 생성자 Member는 발행 전까지만.
+                const isPublished = meeting.approval_status === "published";
+                const canDelete = isElevatedWsRole
+                  ? true
+                  : currentUserId != null &&
+                    meeting.created_by === currentUserId &&
+                    !isPublished;
+                return (
+                  <MeetingCard
+                    key={meeting.id}
+                    meeting={meeting}
+                    highlighted={highlightId === meeting.id}
+                    onDelete={handleDeleteMeeting}
+                    canDelete={canDelete}
+                    onClick={() => router.push(`/meetings/${meeting.id}`)}
+                  />
+                );
+              })}
             </div>
 
             {/* 페이지네이션 */}

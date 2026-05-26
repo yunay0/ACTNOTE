@@ -156,11 +156,11 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
         )}
       </section>
 
-      <div className="flex flex-wrap gap-4 border-t border-[#e2e8f0] pt-8">
+      <div className="flex flex-wrap justify-end gap-4 border-t border-[#e2e8f0] pt-8">
         <button
           type="button"
           onClick={props.onNext}
-          className="inline-flex h-12 flex-1 min-w-[10rem] items-center justify-center gap-2 rounded-[10px] bg-[#1e3a5f] px-8 text-[15px] font-bold text-white transition-opacity hover:opacity-90 md:flex-none md:px-14"
+          className="inline-flex h-12 min-w-[10rem] items-center justify-center gap-2 rounded-[10px] bg-[#1e3a5f] px-8 text-[15px] font-bold text-white transition-opacity hover:opacity-90 md:px-14"
         >
           Next <ArrowRight className="size-4" aria-hidden />
         </button>

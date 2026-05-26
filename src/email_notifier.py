@@ -386,7 +386,7 @@ def _analysis_complete_email_html(meeting_title: str, meeting_url: str) -> str:
                   <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto 14px;border-collapse:collapse;">
                     <tr>
                       <td align="center" valign="middle" style="border-radius:10px;background-color:#ff6b35;background-image:linear-gradient(131deg,#ff6b35 0%,#ff8555 100%);box-shadow:0 4px 6px rgba(255,107,53,0.35);padding:14px 32px;text-align:center;">
-                        <a href="{escape(meeting_url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;font-family:Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:normal;color:#ffffff;text-decoration:none;">Go to Actnote</a>
+                        <a href="{escape(meeting_url)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;font-family:Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:normal;color:#ffffff;text-decoration:none;">Go to ACTNOTE</a>
                       </td>
                     </tr>
                   </table>
@@ -428,7 +428,7 @@ def render_analysis_complete_email(
         f'AI Analysis Complete: "{safe_title_plain}"\n\n'
         "- Draft ready: AI analysis complete based on the provided meeting metadata.\n"
         "- Please review and edit the details before publishing.\n\n"
-        "Go to Actnote:\n"
+        "Go to ACTNOTE:\n"
         f"{meeting_url.strip()}\n\n"
         "Standard members are restricted to reading or deleting drafts.\n\n"
         "© 2026 ACTNOTE. All rights reserved.\n"

@@ -3,12 +3,13 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft, CalendarDays,
-  Send, Pencil, Trash2, Plus, X,
+  ArrowLeft, BarChart3, CalendarDays,
+  Send, Pencil, Plus, X,
   AlertCircle, ExternalLink,
   FileText,
   Music2,
 } from "lucide-react";
+import { formatRecordingSizeMbDecimal } from "@/lib/meeting/recordingFilename";
 import { createClient } from "@/lib/supabase/client";
 import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
 import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
@@ -746,6 +747,18 @@ export default function MeetingDetailPage() {
       setEditActionItems(merge);
     };
 
+    // 새로 추가된 action row (id: "new:<uuid>")는 아직 DB에 없음.
+    // 로컬 상태만 업데이트하고, 실제 INSERT는 Publish 시점의 persistDraftEdits에서 일괄 처리.
+    // (이 분기가 없으면 "invalid input syntax for type uuid: new:..." 에러 발생)
+    if (rowId.startsWith(NEW_ACTION_ITEM_PREFIX)) {
+      const partial: Partial<ActionItem> = {};
+      if (patch.assignee !== undefined) partial.assignee = patch.assignee;
+      if (patch.assignee_user_id !== undefined) partial.assignee_user_id = patch.assignee_user_id;
+      if (patch.due_date !== undefined) partial.due_date = sanitized.due_date as string | null;
+      applyLocal(partial);
+      return { ok: true };
+    }
+
     if (isDraftNoteActionId(rowId)) {
       const source =
         editActionItems.find((a) => a.id === rowId) ?? actionItems.find((a) => a.id === rowId);
@@ -805,6 +818,40 @@ export default function MeetingDetailPage() {
     }
 
     return { ok: true };
+  }
+
+  /**
+   * 액션 아이템 삭제 — new: prefix(로컬에서만 추가된 row)는 로컬 제거.
+   * 기존 DB row는 soft delete (status='cancelled') 처리 → activeRows 필터에서 자동 숨김.
+   */
+  async function deleteDraftAction(rowId: string): Promise<void> {
+    if (!meeting || meeting.approval_status === "published") return;
+    if (meetingRole !== "owner") return;
+
+    if (rowId.startsWith(NEW_ACTION_ITEM_PREFIX)) {
+      setEditActionItems((prev) => prev.filter((a) => a.id !== rowId));
+      return;
+    }
+
+    if (isDraftNoteActionId(rowId)) {
+      // 아직 DB에 없는 draft-note row — 로컬에서만 제거.
+      setEditActionItems((prev) => prev.filter((a) => a.id !== rowId));
+      setActionItems((prev) => prev.filter((a) => a.id !== rowId));
+      return;
+    }
+
+    const supabase = createClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any)
+      .from("action_items")
+      .update({ status: "cancelled" })
+      .eq("id", rowId);
+    if (error) {
+      alert(`Failed to delete action item: ${error.message}`);
+      return;
+    }
+    setEditActionItems((prev) => prev.filter((a) => a.id !== rowId));
+    setActionItems((prev) => prev.filter((a) => a.id !== rowId));
   }
 
   // PUB-001: validate_meeting_for_publication RPC 사용
@@ -1087,7 +1134,11 @@ export default function MeetingDetailPage() {
     isProcessing(meeting.status) && meeting.status !== "error";
 
   /** 데스크톱 우측 레일: 가이드(기본) ↔ 트랜스크립트(토글 시) 동일 폭 교체 — Figma. */
-  const guidanceRailEligible = Boolean(canEdit || showWideAnalyzingLayout);
+  // TC-3 (16-7): What happens next 사이드바는 WS owner/admin(= meetingRole === "owner")만 노출.
+  // creator/participant/member 모두 숨김.
+  const guidanceRailEligible = Boolean(
+    (canEdit || showWideAnalyzingLayout) && meetingRole === "owner"
+  );
   const showMdDraftRightRail = guidanceRailEligible || transcriptSideOpen;
 
   const analyzingStageHeading =
@@ -1243,15 +1294,7 @@ export default function MeetingDetailPage() {
                 {meeting.approval_status === "published" && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-1.5 text-sm font-bold text-green-700">✅ Published</span>
                 )}
-                {canDeleteMeeting && (!canEdit || draftSurfaceStep === "overview") ? (
-                <button
-                  type="button"
-                  onClick={openDeleteMeetingModal}
-                  className="flex items-center justify-center h-8 w-8 rounded-lg text-[#94a3b8] hover:bg-red-50 hover:text-red-500 transition-colors"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-                ) : null}
+                {/* 상단 휴지통 아이콘은 제거. 삭제는 하단 Delete 버튼으로 일원화. */}
               </div>
             </div>
             <div className="flex items-center gap-1.5 text-sm text-[#64748b]">
@@ -1259,7 +1302,9 @@ export default function MeetingDetailPage() {
             </div>
           </div>
 
-            {!isReady && (
+            {/* TC-4: 분석 중일 때(원래 동작) + Draft/Published 상태이지만 owner가 아닌 경우(메타정보 표시).
+                owner는 isReady에서 DraftOverviewPanel을 별도 표시하므로 여기선 제외. */}
+            {(!isReady || !canEdit) && (
               <>
                 <section className="space-y-5">
                   <DraftSectionHeading step={1} title="Meeting Information" />
@@ -1352,7 +1397,8 @@ export default function MeetingDetailPage() {
                   </dl>
                 </div>
                 </section>
-                {showWideAnalyzingLayout ? (
+                {/* Uploaded Recording 카드: 분석 중일 때 + Draft/Published 상태이지만 owner가 아닌 경우. */}
+                {(showWideAnalyzingLayout || (isReady && !canEdit)) ? (
                   <section className="space-y-5">
                     <DraftSectionHeading
                       step={2}
@@ -1370,9 +1416,17 @@ export default function MeetingDetailPage() {
                             <p className="break-words text-[15px] font-bold leading-snug text-[#0a2540]">
                               {analyzingAudioLabel}
                             </p>
-                            <p className="mt-1 flex flex-wrap items-center gap-1 text-[13px] text-[#64748b]">
-                              <CalendarDays className="size-3.5 opacity-70" aria-hidden />
-                              Duration {formatMmSsShort(meeting.duration_seconds ?? null)}
+                            <p className="mt-1 flex flex-wrap items-center gap-3 text-[13px] text-[#64748b]">
+                              <span className="flex items-center gap-1">
+                                <CalendarDays className="size-3.5 opacity-70" aria-hidden />
+                                Duration {formatMmSsShort(meeting.duration_seconds ?? null)}
+                              </span>
+                              {meeting.audio_file_size_bytes != null && meeting.audio_file_size_bytes > 0 ? (
+                                <span className="flex items-center gap-1">
+                                  <BarChart3 className="size-3.5 opacity-70" aria-hidden />
+                                  {formatRecordingSizeMbDecimal(meeting.audio_file_size_bytes)}
+                                </span>
+                              ) : null}
                             </p>
                           </div>
                         </div>
@@ -1445,15 +1499,6 @@ export default function MeetingDetailPage() {
 
           {isReady && (!canEdit || draftSurfaceStep === "detail") ? (
             <>
-              {canEdit && draftSurfaceStep === "detail" ? (
-                <button
-                  type="button"
-                  onClick={() => setDraftSurfaceStep("overview")}
-                  className="inline-flex items-center gap-1.5 rounded-lg py-2 text-sm font-semibold text-[#64748b] transition-colors hover:text-[#0a2540]"
-                >
-                  <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden /> Back
-                </button>
-              ) : null}
               <div className="flex flex-col gap-[30px]">
                 <MeetingAnalysisResultsBlock
                   meetingTypeRaw={meeting.meeting_type}
@@ -1524,6 +1569,11 @@ export default function MeetingDetailPage() {
                           }
                         : undefined
                     }
+                    onDeleteRow={
+                      editMode && canEdit
+                        ? (rowId) => void deleteDraftAction(rowId)
+                        : undefined
+                    }
                   />
                   {editMode && canEdit ? (
                     <div className="pt-4" lang="en-US">
@@ -1542,6 +1592,18 @@ export default function MeetingDetailPage() {
                 </div>
               </div>
 
+              {/* Draft detail step: Back 버튼 — Next와 동일 디자인, 글자/화살표 방향만 다름 */}
+              {canEdit && draftSurfaceStep === "detail" ? (
+                <div className="flex flex-wrap justify-end gap-3 border-t border-[#e2e8f0] pt-8">
+                  <button
+                    type="button"
+                    onClick={() => setDraftSurfaceStep("overview")}
+                    className="inline-flex h-12 min-w-[10rem] items-center justify-center gap-2 rounded-[10px] bg-[#1e3a5f] px-8 text-[15px] font-bold text-white transition-opacity hover:opacity-90 md:px-14"
+                  >
+                    <ArrowLeft className="size-4" aria-hidden /> Back
+                  </button>
+                </div>
+              ) : null}
             </>
           ) : null}
             </div>
@@ -1630,7 +1692,7 @@ export default function MeetingDetailPage() {
             <button
               type="button"
               onClick={openDeleteMeetingModal}
-              className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] border-2 border-[#fecaca] bg-red-50 px-6 text-[14px] font-bold text-red-700 transition-colors hover:bg-red-100/80"
+              className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] bg-red-600 px-6 text-[14px] font-bold text-white transition-colors hover:bg-red-700"
             >
               Delete
             </button>
@@ -1638,7 +1700,7 @@ export default function MeetingDetailPage() {
           <button
             type="button"
             onClick={() => void handlePublishClick()}
-            disabled={publishing || saving || publishBlockedByActions || editMode}
+            disabled={publishing || saving || publishBlockedByActions}
             className="inline-flex h-11 min-w-[8rem] items-center justify-center gap-2 rounded-[10px] px-8 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:opacity-50"
             style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
           >
