@@ -3,12 +3,13 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft, CalendarDays,
+  ArrowLeft, BarChart3, CalendarDays,
   Send, Pencil, Trash2, Plus, X,
   AlertCircle, ExternalLink,
   FileText,
   Music2,
 } from "lucide-react";
+import { formatRecordingSizeMbDecimal } from "@/lib/meeting/recordingFilename";
 import { createClient } from "@/lib/supabase/client";
 import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
 import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
@@ -746,6 +747,18 @@ export default function MeetingDetailPage() {
       setEditActionItems(merge);
     };
 
+    // 새로 추가된 action row (id: "new:<uuid>")는 아직 DB에 없음.
+    // 로컬 상태만 업데이트하고, 실제 INSERT는 Publish 시점의 persistDraftEdits에서 일괄 처리.
+    // (이 분기가 없으면 "invalid input syntax for type uuid: new:..." 에러 발생)
+    if (rowId.startsWith(NEW_ACTION_ITEM_PREFIX)) {
+      const partial: Partial<ActionItem> = {};
+      if (patch.assignee !== undefined) partial.assignee = patch.assignee;
+      if (patch.assignee_user_id !== undefined) partial.assignee_user_id = patch.assignee_user_id;
+      if (patch.due_date !== undefined) partial.due_date = sanitized.due_date as string | null;
+      applyLocal(partial);
+      return { ok: true };
+    }
+
     if (isDraftNoteActionId(rowId)) {
       const source =
         editActionItems.find((a) => a.id === rowId) ?? actionItems.find((a) => a.id === rowId);
@@ -1370,9 +1383,17 @@ export default function MeetingDetailPage() {
                             <p className="break-words text-[15px] font-bold leading-snug text-[#0a2540]">
                               {analyzingAudioLabel}
                             </p>
-                            <p className="mt-1 flex flex-wrap items-center gap-1 text-[13px] text-[#64748b]">
-                              <CalendarDays className="size-3.5 opacity-70" aria-hidden />
-                              Duration {formatMmSsShort(meeting.duration_seconds ?? null)}
+                            <p className="mt-1 flex flex-wrap items-center gap-3 text-[13px] text-[#64748b]">
+                              <span className="flex items-center gap-1">
+                                <CalendarDays className="size-3.5 opacity-70" aria-hidden />
+                                Duration {formatMmSsShort(meeting.duration_seconds ?? null)}
+                              </span>
+                              {meeting.audio_file_size_bytes != null && meeting.audio_file_size_bytes > 0 ? (
+                                <span className="flex items-center gap-1">
+                                  <BarChart3 className="size-3.5 opacity-70" aria-hidden />
+                                  {formatRecordingSizeMbDecimal(meeting.audio_file_size_bytes)}
+                                </span>
+                              ) : null}
                             </p>
                           </div>
                         </div>
