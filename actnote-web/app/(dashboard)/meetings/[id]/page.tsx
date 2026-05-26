@@ -1405,7 +1405,8 @@ export default function MeetingDetailPage() {
                   </dl>
                 </div>
                 </section>
-                {showWideAnalyzingLayout ? (
+                {/* Uploaded Recording 카드: 분석 중일 때 + Draft/Published 상태이지만 owner가 아닌 경우. */}
+                {(showWideAnalyzingLayout || (isReady && !canEdit)) ? (
                   <section className="space-y-5">
                     <DraftSectionHeading
                       step={2}
