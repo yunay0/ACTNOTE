@@ -129,6 +129,7 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }) {
       meetingTitle: row.title,
       workspaceName: workspaceName.trim() || "—",
       dateTimeLine: formatMeetingDetailLine(row.meeting_date ?? undefined),
+      meetingId: row.id,
     });
     const opened = typeof window !== "undefined" ? window.open(compose, "_blank", "noopener,noreferrer") : null;
     if (!opened && typeof window !== "undefined") {

@@ -555,7 +555,7 @@ function InvitePageInner() {
         requestMessage={requestMessage}
         onRequestMessageChange={setRequestMessage}
         onPrimary={() => void handleJoinOrRequest()}
-        onReturnHome={() => router.push("/workspace/select")}
+        onReturnHome={() => router.push("/")}
         primaryLoading={joining}
         optionalMessageEnabled={gateMode === "request_access"}
       />
@@ -570,7 +570,7 @@ function InvitePageInner() {
         userDisplayName={userDisplayName}
         userEmail={userEmail}
         emailNotice={emailNotice}
-        onReturnHome={() => router.push("/workspace/select")}
+        onReturnHome={() => router.push("/")}
         onSignInDifferentAccount={async () => {
           const supabase = createClient();
           clearStoredWorkspaceId();

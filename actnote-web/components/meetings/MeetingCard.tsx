@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { Menu, MoreVertical, Trash2, Eye } from "lucide-react";
 import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
-import { userFacingPipelineError } from "@/lib/meetings/pipeline-error-copy";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 import { MeetingDeleteConfirmModal } from "@/components/meetings/MeetingDeleteConfirmModal";
 
@@ -64,8 +63,6 @@ export function MeetingCard({ meeting, highlighted = false, onDelete, onClick }:
   const menuRef = useRef<HTMLDivElement>(null);
   const statusKey = getStatusKey(meeting);
   const style = STATUS_STYLE[statusKey];
-  const errorHint =
-    meeting.status === "error" ? userFacingPipelineError(meeting.error_message) : null;
   const pipelineMenu = showPersistentMenu(meeting);
 
   useEffect(() => {
@@ -81,7 +78,11 @@ export function MeetingCard({ meeting, highlighted = false, onDelete, onClick }:
     participants.length === 0
       ? "No participants"
       : `${participants.length} participant${participants.length !== 1 ? "s" : ""}`;
-  const primaryParticipant = participants[0]?.trim() ?? "";
+  // C2: 참여자 옆 표시를 첫 참여자 → 작성자(Created by) 기준으로 변경 (2026-05-26 QA).
+  const creatorDisplay =
+    (meeting.creator_name?.trim() ||
+      meeting.creator_email?.split("@")[0] ||
+      "").trim();
   const actionCount = meeting.action_items_count ?? 0;
   const dateStr = formatMeetingDateTime(meeting.meeting_date ?? meeting.created_at);
   const isErr = meeting.status === "error";
@@ -207,9 +208,7 @@ export function MeetingCard({ meeting, highlighted = false, onDelete, onClick }:
 
         <p className="mb-2 pb-2 text-[12.2px] text-[#64748b]">{dateStr}</p>
 
-        {errorHint ? (
-          <p className="mb-3 line-clamp-2 text-[12px] leading-snug text-red-600">{errorHint}</p>
-        ) : null}
+        {/* E1: 홈 목록 카드에서는 에러 문구를 표시하지 않음 — 상세 화면에서만 노출 (2026-05-26 QA) */}
 
         <div className="flex flex-wrap items-center gap-[15px] border-t border-[#f1f5f9] pt-[17px]">
           <span className="flex items-center gap-1.5 text-[12px] text-[#64748b]">
@@ -228,22 +227,20 @@ export function MeetingCard({ meeting, highlighted = false, onDelete, onClick }:
           </span>
           ) : null}
 
-          {primaryParticipant ? (
+          {creatorDisplay ? (
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
               <div
                 className="flex size-4 shrink-0 items-center justify-center rounded-[18px] bg-gradient-to-br from-[#4284f4] to-[#34a853] text-[8px] font-bold leading-none text-white"
                 aria-hidden
               >
-                {initialsFromParticipant(primaryParticipant)}
+                {initialsFromParticipant(creatorDisplay)}
               </div>
-              <span className="truncate pl-0.5 text-[12px] text-[#64748b]" title={primaryParticipant}>
-                {primaryParticipant}
+              <span
+                className="truncate pl-0.5 text-[12px] text-[#64748b]"
+                title={`Created by ${creatorDisplay}`}
+              >
+                {creatorDisplay}
               </span>
-              {participants.length > 1 ? (
-                <span className="shrink-0 text-[11px] text-[#94a3b8]">
-                  +{participants.length - 1}
-                </span>
-              ) : null}
             </div>
           ) : null}
         </div>

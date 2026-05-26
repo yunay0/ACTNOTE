@@ -8,6 +8,10 @@ import {
   supportMailtoHref,
   supportEmailAddress,
 } from "@/lib/meetings/pipeline-error-copy";
+import {
+  analysisErrorUxKindFromCode,
+  parsePipelineErrorCode,
+} from "@/lib/meetings/analysis-error-ux";
 
 interface ProcessingProgressProps {
   status: MeetingStatus;
@@ -33,13 +37,17 @@ export function ProcessingProgress({
   }
 
   const hint = userFacingPipelineError(errorMessage);
+  // E2: 모델 호출/서버 측 에러(contact_support 트랙)는 재시도해도 똑같이 실패하므로
+  // Try again 버튼을 숨기고 Contact Support만 노출 (2026-05-26 QA).
+  const errorKind = analysisErrorUxKindFromCode(parsePipelineErrorCode(errorMessage));
+  const showRetry = errorKind !== "contact_support";
 
   return (
     <div className="rounded-xl border border-red-200 bg-red-50 p-5 space-y-3">
       <p className="font-medium text-red-700">Analysis failed</p>
       <p className="text-sm text-red-600">{hint}</p>
       <div className="flex flex-wrap gap-2 pt-1">
-        {onRetry && (
+        {showRetry && onRetry && (
           <button
             type="button"
             disabled={retryLoading}

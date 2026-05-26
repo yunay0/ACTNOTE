@@ -994,19 +994,21 @@ function NewMeetingPageInner() {
                   )}
                 </Field>
 
-                <Field label="Responsible person" required>
+                {/* C1: Created by — 미팅 생성자 자동 고정 + 수정 불가 (2026-05-26 다혜님 확정) */}
+                <Field label="Created by" required>
                   <select
                     value={responsibleUserId ?? ""}
                     onChange={(e) => setResponsibleUserId(e.target.value || null)}
                     required
-                    disabled={!membersLoaded || workspaceMembers.length === 0}
-                    className={`${inputCls} cursor-pointer appearance-none bg-[length:12px_8px] bg-[right_18px_center] bg-no-repeat pr-10`}
+                    disabled
+                    aria-readonly
+                    className={`${inputCls} appearance-none bg-[#f8fafc] bg-[length:12px_8px] bg-[right_18px_center] bg-no-repeat pr-10 text-[#64748b] cursor-not-allowed`}
                     style={{
-                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2364748b' d='M6 8 .07.59 1.43-.82 6 4.88 10.57-.81 11.93.59z'/%3E%3C/svg%3E")`,
+                      backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2394a3b8' d='M6 8 .07.59 1.43-.82 6 4.88 10.57-.81 11.93.59z'/%3E%3C/svg%3E")`,
                     }}
                   >
                     <option value="" disabled>
-                      Select responsible person
+                      Select creator
                     </option>
                     {workspaceMembers.map((m) => (
                       <option key={m.user_id} value={m.user_id}>
@@ -1015,7 +1017,7 @@ function NewMeetingPageInner() {
                     ))}
                   </select>
                   <p className="text-[12px] leading-[19.5px] text-[#64748b]">
-                    Must be a workspace member; accountable for review and publication.
+                    The meeting creator is set automatically.
                   </p>
                 </Field>
 
@@ -1408,7 +1410,7 @@ function AnalysisConfirmModal({
             <ConfirmRow label="Date & time" value={dateTimeDisplay} />
             <ConfirmRow label="Description" value={description} />
             <ConfirmRow label="Participants" value={participantsLine} />
-            <ConfirmRow label="Responsible person" value={responsibleLabel} />
+            <ConfirmRow label="Created by" value={responsibleLabel} />
             <ConfirmRow label="Recording" value={recordingFileName} />
           </ul>
         </div>
@@ -1509,7 +1511,7 @@ function LeaveMeetingDraftModal({
             <ConfirmRow label="Date & time" value={dateTimeDisplay} />
             <ConfirmRow label="Description" value={description} />
             <ConfirmRow label="Participants" value={participantsLine} />
-            <ConfirmRow label="Responsible person" value={responsibleLabel} />
+            <ConfirmRow label="Created by" value={responsibleLabel} />
             <ConfirmRow label="Recording" value={recordingFileName} />
           </ul>
         </div>

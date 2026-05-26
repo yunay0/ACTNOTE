@@ -1,8 +1,9 @@
 "use client";
 
 import type { ReactElement } from "react";
-import { CalendarDays, Music2, ArrowRight } from "lucide-react";
+import { BarChart3, CalendarDays, Music2, ArrowRight } from "lucide-react";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
+import { formatRecordingSizeMbDecimal } from "@/lib/meeting/recordingFilename";
 import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
 
 function formatMmSs(seconds: number | null | undefined): string {
@@ -32,6 +33,7 @@ interface DraftOverviewPanelProps {
   responsibleLabel: string | null;
   recordingUrl: string | null;
   durationSeconds: number | null | undefined;
+  fileSizeBytes: number | null | undefined;
   onNext: () => void;
   onOpenTranscript: () => void;
   transcriptReady: boolean;
@@ -102,7 +104,7 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
             </div>
           </div>
 
-          <Field label="Responsible person">
+          <Field label="Created by">
             <GrayBox>{props.responsibleLabel?.trim() || "—"}</GrayBox>
           </Field>
         </div>
@@ -126,9 +128,17 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
                 <p className="break-words text-[15px] font-bold leading-snug text-[#0a2540]">
                   {fileLabel}
                 </p>
-                <p className="mt-1 flex flex-wrap items-center gap-1 text-[13px] text-[#64748b]">
-                  <CalendarDays className="size-3.5 opacity-70" aria-hidden />
-                  Duration {formatMmSs(props.durationSeconds ?? null)}
+                <p className="mt-1 flex flex-wrap items-center gap-3 text-[13px] text-[#64748b]">
+                  <span className="flex items-center gap-1">
+                    <CalendarDays className="size-3.5 opacity-70" aria-hidden />
+                    Duration {formatMmSs(props.durationSeconds ?? null)}
+                  </span>
+                  {props.fileSizeBytes != null && props.fileSizeBytes > 0 ? (
+                    <span className="flex items-center gap-1">
+                      <BarChart3 className="size-3.5 opacity-70" aria-hidden />
+                      {formatRecordingSizeMbDecimal(props.fileSizeBytes)}
+                    </span>
+                  ) : null}
                 </p>
               </div>
               <button

@@ -4,7 +4,7 @@
 
 **참고 문서:** `docs/frontend-handoff.md`, `docs/events.md`, `docs/rpc.md`
 
-**고객센터 메일(case 6):** `actnote.support@gmail.com` — `NEXT_PUBLIC_SUPPORT_EMAIL`로 주입. 기본값은 `actnote-web/.env.example` 참고.
+**고객센터 메일(case 6):** `support@actnote.xyz` (2026-05-26 변경) — `NEXT_PUBLIC_SUPPORT_EMAIL`로 주입. 기본값은 `actnote-web/.env.example` 참고.
 
 ---
 
@@ -40,7 +40,7 @@
 - **조치:**
   - 상세 fetch에 `error_message` 포함.
   - `frontend-handoff.md` 표에 맞춰 `error_message`에서 `^\[code:([A-Z_]+)\]` 파싱.
-  - `FILE_RETRIEVAL_FAILED`일 때만 `process.env.NEXT_PUBLIC_SUPPORT_EMAIL`(기본 `actnote.support@gmail.com`)을 넣은 **Contact support** UI(핸드오프 문구).
+  - `FILE_RETRIEVAL_FAILED`일 때만 `process.env.NEXT_PUBLIC_SUPPORT_EMAIL`(기본 `support@actnote.xyz`)을 넣은 **Contact support** UI(핸드오프 문구).
   - 그 외 코드는 핸드오프의 권장 방향으로 짧은 영어 카피(프로젝트 UI 언어에 맞게 통일).
 
 ### 6. 액션 아이템 현재 유효분만 (`meetings/[id]/page.tsx`)

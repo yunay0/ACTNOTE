@@ -12,6 +12,15 @@ function rowToMeeting(m: Record<string, unknown>): Meeting {
   const countArr = m.action_items as { count: number }[] | null;
   const action_items_count = countArr?.[0]?.count ?? 0;
 
+  // Supabase nested join (`creator:users!created_by(name, email)`)는 단일 row 객체 또는 배열로 반환.
+  const rawCreator = m.creator;
+  const creatorObj = (Array.isArray(rawCreator) ? rawCreator[0] : rawCreator) as
+    | { name?: string | null; email?: string | null }
+    | null
+    | undefined;
+  const creator_name = typeof creatorObj?.name === "string" ? creatorObj.name : null;
+  const creator_email = typeof creatorObj?.email === "string" ? creatorObj.email : null;
+
   return {
     id: m.id as string,
     title: (m.title as string) || "Untitled Meeting",
@@ -27,6 +36,8 @@ function rowToMeeting(m: Record<string, unknown>): Meeting {
     meeting_type: (m.meeting_type as string | null) ?? null,
     action_items_count,
     error_message: (m.error_message as string | null) ?? null,
+    creator_name,
+    creator_email,
   };
 }
 
@@ -43,7 +54,7 @@ export function useMeetings() {
     const { data } = await (supabase as any)
       .from("meetings")
       .select(
-        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, error_message, action_items(count)"
+        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, error_message, action_items(count), creator:users!created_by(name, email)"
       )
       .eq("workspace_id", wsId)
       .is("deleted_at", null)

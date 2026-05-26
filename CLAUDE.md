@@ -288,7 +288,7 @@ npm run dev   # http://localhost:3000
 | `NEXT_PUBLIC_SUPABASE_URL`      | ✅   | Supabase URL                               |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | ✅   | anon 키                                     |
 | `NEXT_PUBLIC_APP_URL`           | ✅   | OAuth 콜백 / 메일 푸터                           |
-| `NEXT_PUBLIC_SUPPORT_EMAIL`     | ✅   | 에러 팝업 문의 이메일 (`actnote.support@gmail.com`) |
+| `NEXT_PUBLIC_SUPPORT_EMAIL`     | ✅   | 에러 팝업 문의 이메일 (`support@actnote.xyz` — 2026-05-26 다혜님 확정) |
 | `MODAL_PIPELINE_TRIGGER_URL`    | ⛔   | `modal deploy` 출력 trigger_pipeline URL     |
 | `MODAL_PUBLISH_TRIGGER_URL`     | ⛔   | `modal deploy` 출력 trigger_publish URL      |
 | `MODAL_TRIGGER_SECRET`          | ⛔   | Modal 엔드포인트 X-Actnote-Secret (Modal Secret 과 동일) |

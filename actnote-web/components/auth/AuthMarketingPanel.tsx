@@ -31,8 +31,17 @@ export function AuthMarketingPanel() {
       />
       <div className="mx-auto flex w-full max-w-[520px] flex-col gap-[2.45rem]">
         <div className="flex items-center gap-4">
-          <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-[#ff6b35] sm:size-16">
-            <span className="text-[2.75rem] font-bold leading-none text-[#1e3a5f] sm:text-[3rem]" aria-hidden>
+          <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-[#FF6B35] sm:size-16">
+            <span
+              className="font-bold text-[#1E3A5F] sm:text-[3rem]"
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: "2.75rem",
+                lineHeight: "1.2",
+                textAlign: "center",
+              }}
+              aria-hidden
+            >
               ✓
             </span>
           </div>
