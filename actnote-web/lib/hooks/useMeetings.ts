@@ -40,7 +40,10 @@ function rowToMeeting(m: Record<string, unknown>): Meeting {
     meeting_date: (m.meeting_date as string | null) ?? null,
     summary: (m.summary as string | null) ?? null,
     audio_url: (m.audio_file_url as string | null) ?? null,
-    filename: (m.audio_file_url as string | null)?.split("/").pop() ?? null,
+    filename:
+      (m.audio_file_name as string | null) ??
+      (m.audio_file_url as string | null)?.split("/").pop() ??
+      null,
     workspace_id: m.workspace_id as string,
     participants: (m.participants as string[] | null) ?? [],
     meeting_type: (m.meeting_type as string | null) ?? null,
@@ -65,7 +68,7 @@ export function useMeetings() {
     const { data } = await (supabase as any)
       .from("meetings")
       .select(
-        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, error_message, created_by, creator_display_name, creator_email, action_items(count), creator:users!created_by(name, email)"
+        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, audio_file_name, workspace_id, participants, meeting_type, error_message, created_by, creator_display_name, creator_email, action_items(count), creator:users!created_by(name, email)"
       )
       .eq("workspace_id", wsId)
       .is("deleted_at", null)

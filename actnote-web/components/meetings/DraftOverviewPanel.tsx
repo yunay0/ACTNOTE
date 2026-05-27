@@ -13,7 +13,11 @@ function formatMmSs(seconds: number | null | undefined): string {
   return `${String(m)}:${String(rem).padStart(2, "0")}`;
 }
 
-function basenameFromAudioUrl(url: string | null | undefined): string {
+function resolveRecordingLabel(
+  fileName: string | null | undefined,
+  url: string | null | undefined,
+): string {
+  if (fileName != null && fileName.trim() !== "") return fileName.trim();
   if (!url?.trim()) return "Uploaded recording";
   try {
     const u = url.split("?")[0] ?? url;
@@ -31,6 +35,7 @@ interface DraftOverviewPanelProps {
   description: string | null;
   participantNames: string[];
   responsibleLabel: string | null;
+  recordingFileName?: string | null;
   recordingUrl: string | null;
   durationSeconds: number | null | undefined;
   fileSizeBytes: number | null | undefined;
@@ -53,7 +58,7 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
           timeStyle: "short",
         })
       : "—";
-  const fileLabel = basenameFromAudioUrl(props.recordingUrl);
+  const fileLabel = resolveRecordingLabel(props.recordingFileName, props.recordingUrl);
   const hasRecording = Boolean(props.recordingUrl?.trim());
 
   return (
