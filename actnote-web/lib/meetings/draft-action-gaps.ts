@@ -27,18 +27,41 @@ export type DraftActionGapItem = {
 /** 본문이 있는 활성 행만 마감/담당 검사 */
 const PLACEHOLDER_ASSIGNEE_LABELS = new Set(["assigned", "unassigned", "tbd", "n/a", "na", "?"]);
 
-export function draftActionNeedsAssigneeGap(item: DraftActionGapItem): boolean {
+function isActiveActionRow(item: DraftActionGapItem): boolean {
   const content = item.content.trim();
-  if (!content || item.status === "cancelled" || item.status === "done") return false;
-  if (!item.assignee_user_id?.trim()) return true;
+  return Boolean(content) && item.status !== "cancelled" && item.status !== "done";
+}
+
+/** assignee 텍스트에 표시 가능한 이름이 있는지 */
+export function hasAssigneeDisplayLabel(item: DraftActionGapItem): boolean {
   const label = (item.assignee ?? "").trim().toLowerCase();
-  if (!label || PLACEHOLDER_ASSIGNEE_LABELS.has(label)) return true;
-  return false;
+  return Boolean(label) && !PLACEHOLDER_ASSIGNEE_LABELS.has(label);
+}
+
+/**
+ * UI 주황 칸 + 빨간 ? — 담당자 정보가 전혀 없을 때만.
+ * 계정 삭제로 assignee_user_id만 NULL이고 assignee 텍스트가 있으면 false (Former member 표시).
+ */
+export function draftActionNeedsAssigneeGap(item: DraftActionGapItem): boolean {
+  if (!isActiveActionRow(item)) return false;
+  if (item.assignee_user_id?.trim()) return false;
+  return !hasAssigneeDisplayLabel(item);
+}
+
+/** 활성 워크스페이스 멤버 연결 필요 (Publish RPC assignee_user_id 와 정합) */
+export function draftActionNeedsActiveAssigneeForPublish(item: DraftActionGapItem): boolean {
+  if (!isActiveActionRow(item)) return false;
+  return !item.assignee_user_id?.trim();
+}
+
+/** 표시명은 있으나 계정 링크가 끊긴 담당자 (탈퇴·삭제) */
+export function draftActionIsFormerMemberAssignee(item: DraftActionGapItem): boolean {
+  if (!isActiveActionRow(item)) return false;
+  return hasAssigneeDisplayLabel(item) && !item.assignee_user_id?.trim();
 }
 
 export function draftActionNeedsDueGap(item: DraftActionGapItem): boolean {
-  const content = item.content.trim();
-  if (!content || item.status === "cancelled" || item.status === "done") return false;
+  if (!isActiveActionRow(item)) return false;
   const due = typeof item.due_date === "string" ? item.due_date.trim() : "";
   return !isValidDueDateYmd(due);
 }
@@ -47,9 +70,6 @@ export function draftActionNeedsDueGap(item: DraftActionGapItem): boolean {
 export function draftHasActionPublishBlockers(items: DraftActionGapItem[]): boolean {
   return items.some(
     (x) =>
-      x.status !== "cancelled" &&
-      x.status !== "done" &&
-      x.content.trim().length > 0 &&
-      (draftActionNeedsAssigneeGap(x) || draftActionNeedsDueGap(x)),
+      draftActionNeedsActiveAssigneeForPublish(x) || draftActionNeedsDueGap(x),
   );
 }

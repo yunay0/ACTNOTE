@@ -8,6 +8,7 @@ import {
   AlertCircle, ExternalLink,
   FileText,
   Music2,
+  Loader2,
 } from "lucide-react";
 import { formatRecordingSizeMbDecimal } from "@/lib/meeting/recordingFilename";
 import { createClient } from "@/lib/supabase/client";
@@ -62,6 +63,10 @@ interface MeetingRow {
   description: string | null;
   participants: string[];
   responsible_user_id: string | null;
+  creator_display_name?: string | null;
+  creator_email?: string | null;
+  responsible_display_name?: string | null;
+  responsible_display_email?: string | null;
   duration_seconds?: number | null;
   audio_file_size_bytes?: number | null;
 }
@@ -368,6 +373,13 @@ export default function MeetingDetailPage() {
         row.responsible_user_id != null && row.responsible_user_id !== ""
           ? String(row.responsible_user_id)
           : null,
+      creator_display_name:
+        typeof row.creator_display_name === "string" ? row.creator_display_name : null,
+      creator_email: typeof row.creator_email === "string" ? row.creator_email : null,
+      responsible_display_name:
+        typeof row.responsible_display_name === "string" ? row.responsible_display_name : null,
+      responsible_display_email:
+        typeof row.responsible_display_email === "string" ? row.responsible_display_email : null,
     });
 
     const draftRaw = row.ai_draft_notes;
@@ -511,6 +523,13 @@ export default function MeetingDetailPage() {
       memberships
     );
   }, [meeting, currentUserId, currentUserEmail, memberships]);
+
+  /** Error 회의는 View error 플로우(메타 + 모달)로 통일 */
+  useEffect(() => {
+    if (!meeting || meeting.status !== "error") return;
+    if (meetingRole !== "owner" && meetingRole !== "creator") return;
+    router.replace(`/meetings/${meeting.id}/analysis-error`);
+  }, [meeting, meetingRole, router]);
 
   useEffect(() => {
     if (meeting?.approval_status === "published") setEditMode(false);
@@ -1003,11 +1022,23 @@ export default function MeetingDetailPage() {
   }, [meeting?.responsible_user_id, members]);
 
   const responsibleDisplayLabel = useMemo(() => {
-    if (!responsibleMember) return null;
-    return responsibleMember.email
-      ? `${responsibleMember.displayName} (${responsibleMember.email})`
-      : responsibleMember.displayName;
-  }, [responsibleMember]);
+    if (responsibleMember) {
+      return responsibleMember.email
+        ? `${responsibleMember.displayName} (${responsibleMember.email})`
+        : responsibleMember.displayName;
+    }
+    const snapName = meeting?.responsible_display_name?.trim();
+    const snapEmail = meeting?.responsible_display_email?.trim();
+    if (snapName && snapEmail) return `${snapName} (${snapEmail})`;
+    if (snapName) return snapName;
+    if (snapEmail) return snapEmail.split("@")[0] ?? snapEmail;
+    return null;
+  }, [responsibleMember, meeting?.responsible_display_name, meeting?.responsible_display_email]);
+
+  const responsibleIsFormerMember = Boolean(
+    !responsibleMember &&
+      (meeting?.responsible_display_name?.trim() || meeting?.responsible_display_email?.trim()),
+  );
 
   const analysisSegments = useMemo(
     () => meetingAnalysisSegmentsForRow(meeting?.meeting_type ?? null),
@@ -1088,6 +1119,18 @@ export default function MeetingDetailPage() {
         >
           <ArrowLeft className="h-4 w-4" /> Back to Meetings
         </button>
+      </div>
+    );
+  }
+
+  if (
+    meeting.status === "error" &&
+    (meetingRole === "owner" || meetingRole === "creator")
+  ) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-[#64748b]">
+        <Loader2 className="h-8 w-8 animate-spin" aria-hidden />
+        <p className="text-sm">Opening error details…</p>
       </div>
     );
   }
@@ -1384,16 +1427,25 @@ export default function MeetingDetailPage() {
                       <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
                         Created by
                       </dt>
-                      <dd className="mt-1 flex items-center gap-2 text-sm font-medium text-[#64748b]">
-                        {meeting.responsible_user_id ? (
-                          responsibleMember ? (
-                            <>
+                      <dd className="mt-1 flex flex-wrap items-center gap-2 text-sm font-medium text-[#64748b]">
+                        {responsibleDisplayLabel ? (
+                          <>
+                            {responsibleMember ? (
                               <CreatedByAvatar member={responsibleMember} />
-                              <span>{responsibleDisplayLabel}</span>
-                            </>
-                          ) : (
-                            <span className="font-normal italic text-[#94a3b8]">Loading…</span>
-                          )
+                            ) : (
+                              <FormerMemberSnapshotAvatar label={responsibleDisplayLabel} />
+                            )}
+                            <span className={responsibleIsFormerMember ? "text-[#94a3b8]" : undefined}>
+                              {responsibleDisplayLabel}
+                              {responsibleIsFormerMember ? (
+                                <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-[#94a3b8]">
+                                  Former member
+                                </span>
+                              ) : null}
+                            </span>
+                          </>
+                        ) : meeting.responsible_user_id ? (
+                          <span className="font-normal italic text-[#94a3b8]">Loading…</span>
                         ) : (
                           "—"
                         )}
@@ -1758,6 +1810,19 @@ export default function MeetingDetailPage() {
         </>
       ) : null}
     </div>
+  );
+}
+
+/** 담당자 계정 삭제 후 스냅샷 표시용 회색 아바타 */
+function FormerMemberSnapshotAvatar({ label }: { label: string }) {
+  const initial = label.trim().slice(0, 1).toUpperCase() || "?";
+  return (
+    <span
+      aria-hidden
+      className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[#e2e8f0] text-[10px] font-bold leading-none text-[#94a3b8]"
+    >
+      {initial}
+    </span>
   );
 }
 

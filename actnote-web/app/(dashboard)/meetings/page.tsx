@@ -77,6 +77,13 @@ function isMeetingVisibleToUser(
 ): boolean {
   if (isElevatedWsRole) return true;
   if (userId != null && meeting.created_by === userId) return true;
+  if (
+    userEmail != null &&
+    meeting.creator_email != null &&
+    meeting.creator_email.toLowerCase() === userEmail.toLowerCase()
+  ) {
+    return true;
+  }
 
   const isPublished = meeting.approval_status === "published";
   const isDraft = meeting.status === "ready" && !isPublished;
@@ -312,11 +319,15 @@ function MeetingsPageContent() {
               {paginated.map((meeting) => {
                 // TC-2: Published 상태에선 owner/admin만 삭제 가능. 생성자 Member는 발행 전까지만.
                 const isPublished = meeting.approval_status === "published";
+                const isCreatorById =
+                  currentUserId != null && meeting.created_by === currentUserId;
+                const isCreatorByEmail =
+                  currentUserEmail != null &&
+                  meeting.creator_email != null &&
+                  meeting.creator_email.toLowerCase() === currentUserEmail.toLowerCase();
                 const canDelete = isElevatedWsRole
                   ? true
-                  : currentUserId != null &&
-                    meeting.created_by === currentUserId &&
-                    !isPublished;
+                  : (isCreatorById || isCreatorByEmail) && !isPublished;
                 return (
                   <MeetingCard
                     key={meeting.id}

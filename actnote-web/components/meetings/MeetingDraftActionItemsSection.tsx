@@ -5,6 +5,7 @@ import { Trash2 } from "lucide-react";
 import { DraftAssignMemberModal } from "@/components/meetings/DraftAssignMemberModal";
 import { DraftDueDateTimeModal } from "@/components/meetings/DraftDueDateTimeModal";
 import {
+  draftActionIsFormerMemberAssignee,
   draftActionNeedsAssigneeGap,
   draftActionNeedsDueGap,
 } from "@/lib/meetings/draft-action-gaps";
@@ -98,6 +99,30 @@ function FilledValuePill({ children }: { children: ReactNode }): ReactElement {
 /**
  * G1: assignee 전용 pill — 회색 점 자리에 사용자 프로필 사진(또는 initials) 표시.
  */
+/** 계정 삭제·탈퇴 후: 이름 유지, 회색 비활성 프로필 */
+function FormerMemberAssigneePill({ label }: { label: string }): ReactElement {
+  const initials = label.trim().slice(0, 1).toUpperCase() || "?";
+  return (
+    <span
+      className="inline-flex max-w-full flex-col gap-0.5"
+      title="Former workspace member — reassign an active member before publish"
+    >
+      <span className="inline-flex h-5 max-w-full items-center gap-1.5 rounded-full bg-[#f1f5f9] py-0.5 pl-0.5 pr-3 text-[15px] font-medium text-[#94a3b8]">
+        <span
+          aria-hidden
+          className="flex size-4 shrink-0 items-center justify-center rounded-full bg-[#e2e8f0] text-[8px] font-bold leading-none text-[#94a3b8]"
+        >
+          {initials}
+        </span>
+        <span className="truncate">{label}</span>
+      </span>
+      <span className="pl-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#94a3b8]">
+        Former member
+      </span>
+    </span>
+  );
+}
+
 function AssigneePill({
   label,
   member,
@@ -143,10 +168,13 @@ function MandatoryAssigneeCell({
   assigneeMember: WorkspaceMemberLite | null;
 }): ReactElement {
   const needsA = draftActionNeedsAssigneeGap(row);
+  const isFormer = draftActionIsFormerMemberAssignee(row);
   const label = assigneePillLabel(row);
   const inner =
     needsA || !label ? (
       <GapPill />
+    ) : isFormer ? (
+      <FormerMemberAssigneePill label={label} />
     ) : (
       <AssigneePill label={label} member={assigneeMember} />
     );
@@ -157,7 +185,13 @@ function MandatoryAssigneeCell({
         type="button"
         className={MANDATORY_ORANGE_BUTTON}
         onClick={onOpen}
-        aria-label={needsA ? "Assign member — required" : `Assignee: ${label}. Click to change.`}
+        aria-label={
+          needsA
+            ? "Assign member — required"
+            : isFormer
+              ? `Former member ${label}. Click to assign an active member.`
+              : `Assignee: ${label}. Click to change.`
+        }
       >
         {inner}
       </button>

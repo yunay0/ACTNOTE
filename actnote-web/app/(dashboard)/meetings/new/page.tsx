@@ -18,6 +18,7 @@ import { RecordingUploadErrorModal } from "@/components/meetings/RecordingUpload
 import { UploadedRecordingPreviewCard } from "@/components/meetings/UploadedRecordingPreviewCard";
 import { MEETING_TYPE_OPTIONS } from "@/lib/meetings/meeting-types";
 import { submissionLooksLikeNetworkFailure } from "@/lib/meetings/submission-network-errors";
+import { buildMeetingAttributionSnapshots } from "@/lib/meetings/meeting-attribution";
 
 const MAX_SIZE_MB = 50;
 
@@ -478,6 +479,18 @@ function NewMeetingPageInner() {
         return;
       }
 
+      const { data: creatorProfile } = await (supabase as any)
+        .from("users")
+        .select("name, email")
+        .eq("id", user.id)
+        .maybeSingle();
+      const respMember = workspaceMembers.find((m) => m.user_id === responsibleUserId) ?? null;
+      const attributionSnapshots = buildMeetingAttributionSnapshots(
+        user.email ?? (typeof creatorProfile?.email === "string" ? creatorProfile.email : null),
+        typeof creatorProfile?.name === "string" ? creatorProfile.name : null,
+        respMember ? { name: respMember.name, email: respMember.email } : null,
+      );
+
       const ridTrim = reattachMeetingId.trim();
 
       const ext = file.name.split(".").pop() ?? "wav";
@@ -503,6 +516,7 @@ function NewMeetingPageInner() {
             responsible_user_id: responsibleUserId,
             participants: participants.map((p) => p.value),
             error_message: null,
+            ...attributionSnapshots,
           })
           .eq("id", ridTrim)
           .eq("workspace_id", workspaceId)
@@ -544,6 +558,7 @@ function NewMeetingPageInner() {
             description: description.trim() || null,
             responsible_user_id: responsibleUserId,
             participants: participants.map((p) => p.value),
+            ...attributionSnapshots,
           })
           .select("id")
           .single();
@@ -700,29 +715,13 @@ function NewMeetingPageInner() {
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-white">
-      <DashboardHeader
-        title={reattachMeetingId.trim() ? "Replace recording" : "New Meeting"}
-        onBack={() => safeNavigate("/meetings")}
-      />
-      {reattachMeetingId.trim() ? (
+      <DashboardHeader title="New Meeting" onBack={() => safeNavigate("/meetings")} />
+      {reattachMeetingId.trim() && reattachLoadErr ? (
         <div
-          className={`border-b px-10 py-3 text-[13px] ${
-            reattachLoadErr
-              ? "border-red-200 bg-red-50 text-red-900"
-              : "border-amber-200 bg-amber-50 text-amber-950"
-          }`}
-          role="status"
+          className="border-b border-red-200 bg-red-50 px-10 py-3 text-[13px] text-red-900"
+          role="alert"
         >
-          {!reattachReady ? (
-            <span>Loading existing meeting metadata…</span>
-          ) : reattachLoadErr ? (
-            <span>{reattachLoadErr}</span>
-          ) : (
-            <span>
-              Re-upload a recording below. Saving will restart AI analysis on the same meeting ({title.trim() ? `“${title.trim()}”` : "Untitled"})
-              .
-            </span>
-          )}
+          {reattachLoadErr}
         </div>
       ) : null}
 
