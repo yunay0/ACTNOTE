@@ -14,7 +14,16 @@ import re
 
 _log = logging.getLogger(__name__)
 
-VALID_TYPES = {"analysis_complete", "analysis_failed", "action_assigned"}
+VALID_TYPES = {
+    "analysis_complete",
+    "analysis_failed",
+    "action_assigned",
+    # SEC-009 / NOTI-002 / WS-006-002 / WS-007 (0.5v 추가)
+    "integration_reauth_required",
+    "join_request_received",
+    "join_request_approved",
+    "join_request_declined",
+}
 
 
 def _app_url() -> str:
@@ -763,6 +772,260 @@ def notify_analysis_failed(
         )
 
     return len(rows)
+
+
+# ---------------------------------------------------------------------------
+# SEC-009: Notion 토큰 만료/권한 회수 — Owner 재연동 안내
+# ---------------------------------------------------------------------------
+
+def notify_reauth_required(workspace_id: str, sb_client=None) -> int:
+    """SEC-009: integrations.last_error 마킹 후 Owner 에게 인앱+SMTP 메일 발송.
+
+    notion_sync._raise_reauth_if_auth_error 에서 호출. 멱등하지 않으니
+    같은 토큰 invalid 응답이 반복되면 알림이 누적될 수 있다 — 추후 dedupe.
+
+    Returns:
+        생성된 인앱 알림 건수 (1 또는 0).
+    """
+    if sb_client is None:
+        from src.storage import create_supabase_client_from_env
+        sb_client = create_supabase_client_from_env()
+
+    # Owner 조회
+    try:
+        ws_resp = (
+            sb_client.table("workspaces")
+            .select("id, name, owner_id")
+            .eq("id", workspace_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        _log.warning("notify_reauth_required: workspace 조회 실패 (%s): %s", workspace_id, e)
+        return 0
+    ws = ws_resp.data or {}
+    owner_id = ws.get("owner_id")
+    ws_name = ws.get("name") or "(workspace)"
+    if not owner_id:
+        return 0
+
+    settings_url = f"{_app_url()}/settings/integrations"
+
+    # 인앱 알림
+    create_notification(
+        user_id=owner_id,
+        workspace_id=workspace_id,
+        type="integration_reauth_required",
+        title="Notion 재연동이 필요합니다",
+        message=f"{ws_name} 워크스페이스의 Notion 토큰이 유효하지 않습니다.",
+        sb_client=sb_client,
+    )
+
+    # SMTP 메일 (Owner 이메일 조회)
+    try:
+        owner_resp = (
+            sb_client.table("users")
+            .select("email")
+            .eq("id", owner_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        _log.warning("notify_reauth_required: owner email 조회 실패: %s", e)
+        return 1
+    owner_email = (owner_resp.data or {}).get("email")
+    if not owner_email:
+        return 1
+
+    try:
+        from src.email_notifier import render_reauth_required_email, send_email
+        rendered = render_reauth_required_email(
+            workspace_name=ws_name,
+            integration_settings_url=settings_url,
+        )
+        send_email(owner_email, rendered["subject"], rendered["html"], rendered["text"])
+    except Exception as e:  # noqa: BLE001
+        _log.warning("notify_reauth_required: 메일 발송 실패: %s", e)
+    return 1
+
+
+# ---------------------------------------------------------------------------
+# WS-006-002 / WS-007 / NOTI-002: 접근 요청·승인·거절
+# ---------------------------------------------------------------------------
+
+def notify_join_request_received(
+    workspace_id: str,
+    requester_user_id: str,
+    sb_client=None,
+) -> int:
+    """WS-006-002: 접근 요청 발생 시 Owner 에게 인앱+SMTP 메일 발송."""
+    if sb_client is None:
+        from src.storage import create_supabase_client_from_env
+        sb_client = create_supabase_client_from_env()
+
+    try:
+        ws_resp = (
+            sb_client.table("workspaces")
+            .select("id, name, owner_id")
+            .eq("id", workspace_id)
+            .single()
+            .execute()
+        )
+        req_resp = (
+            sb_client.table("users")
+            .select("email, name")
+            .eq("id", requester_user_id)
+            .single()
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        _log.warning("notify_join_request_received: 조회 실패: %s", e)
+        return 0
+    ws = ws_resp.data or {}
+    requester = req_resp.data or {}
+    owner_id = ws.get("owner_id")
+    ws_name = ws.get("name") or "(workspace)"
+    if not owner_id:
+        return 0
+
+    requester_name = requester.get("name") or (requester.get("email") or "").split("@")[0] or "Unknown"
+    requester_email = requester.get("email") or ""
+
+    review_url = f"{_app_url()}/settings/workspace#join-requests"
+
+    create_notification(
+        user_id=owner_id,
+        workspace_id=workspace_id,
+        type="join_request_received",
+        title=f"{requester_name}님이 합류를 요청했습니다",
+        message=f"{ws_name} 워크스페이스 합류 요청을 확인하세요.",
+        sb_client=sb_client,
+    )
+
+    try:
+        owner_resp = (
+            sb_client.table("users")
+            .select("email")
+            .eq("id", owner_id)
+            .single()
+            .execute()
+        )
+        owner_email = (owner_resp.data or {}).get("email")
+        if owner_email:
+            from src.email_notifier import render_join_request_received_email, send_email
+            rendered = render_join_request_received_email(
+                workspace_name=ws_name,
+                requester_name=requester_name,
+                requester_email=requester_email,
+                review_url=review_url,
+            )
+            send_email(owner_email, rendered["subject"], rendered["html"], rendered["text"])
+    except Exception as e:  # noqa: BLE001
+        _log.warning("notify_join_request_received: 메일 발송 실패: %s", e)
+    return 1
+
+
+def notify_join_request_approved(
+    workspace_id: str,
+    requester_user_id: str,
+    sb_client=None,
+) -> int:
+    """WS-007 / NOTI-002: Owner Approve 시 요청자에게 인앱+SMTP 메일."""
+    if sb_client is None:
+        from src.storage import create_supabase_client_from_env
+        sb_client = create_supabase_client_from_env()
+
+    ws_resp = (
+        sb_client.table("workspaces")
+        .select("id, name, slug")
+        .eq("id", workspace_id)
+        .single()
+        .execute()
+    )
+    ws = ws_resp.data or {}
+    ws_name = ws.get("name") or "(workspace)"
+    ws_slug = ws.get("slug") or ""
+    workspace_url = f"{_app_url()}/workspace/{ws_slug}" if ws_slug else f"{_app_url()}/"
+
+    create_notification(
+        user_id=requester_user_id,
+        workspace_id=workspace_id,
+        type="join_request_approved",
+        title=f"{ws_name} 합류가 승인되었습니다",
+        message="이제 워크스페이스에 접근할 수 있습니다.",
+        sb_client=sb_client,
+    )
+
+    try:
+        req_resp = (
+            sb_client.table("users")
+            .select("email")
+            .eq("id", requester_user_id)
+            .single()
+            .execute()
+        )
+        req_email = (req_resp.data or {}).get("email")
+        if req_email:
+            from src.email_notifier import render_join_approved_email, send_email
+            rendered = render_join_approved_email(
+                workspace_name=ws_name,
+                workspace_url=workspace_url,
+            )
+            send_email(req_email, rendered["subject"], rendered["html"], rendered["text"])
+    except Exception as e:  # noqa: BLE001
+        _log.warning("notify_join_request_approved: 메일 발송 실패: %s", e)
+    return 1
+
+
+def notify_join_request_declined(
+    workspace_id: str,
+    requester_user_id: str,
+    sb_client=None,
+) -> int:
+    """WS-007 / NOTI-002: Owner Decline 시 요청자에게 인앱+SMTP 메일."""
+    if sb_client is None:
+        from src.storage import create_supabase_client_from_env
+        sb_client = create_supabase_client_from_env()
+
+    ws_resp = (
+        sb_client.table("workspaces")
+        .select("id, name")
+        .eq("id", workspace_id)
+        .single()
+        .execute()
+    )
+    ws = ws_resp.data or {}
+    ws_name = ws.get("name") or "(workspace)"
+    retry_url = f"{_app_url()}/workspace/select"
+
+    create_notification(
+        user_id=requester_user_id,
+        workspace_id=workspace_id,
+        type="join_request_declined",
+        title=f"{ws_name} 합류 요청이 거절되었습니다",
+        message="다른 워크스페이스를 찾거나 관리자에게 직접 문의하세요.",
+        sb_client=sb_client,
+    )
+
+    try:
+        req_resp = (
+            sb_client.table("users")
+            .select("email")
+            .eq("id", requester_user_id)
+            .single()
+            .execute()
+        )
+        req_email = (req_resp.data or {}).get("email")
+        if req_email:
+            from src.email_notifier import render_join_declined_email, send_email
+            rendered = render_join_declined_email(
+                workspace_name=ws_name,
+                retry_url=retry_url,
+            )
+            send_email(req_email, rendered["subject"], rendered["html"], rendered["text"])
+    except Exception as e:  # noqa: BLE001
+        _log.warning("notify_join_request_declined: 메일 발송 실패: %s", e)
+    return 1
 
 
 # ---------------------------------------------------------------------------

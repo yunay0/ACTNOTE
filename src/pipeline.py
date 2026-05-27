@@ -124,6 +124,21 @@ def _update_meeting(
     if ref_docs is not None:
         payload["referenced_documents"] = json.dumps(ref_docs, ensure_ascii=False)
 
+    # DRAFT-008-002 / migrations/044: 유형별 신규 섹션 정규화 컬럼 (JSONB)
+    # 항상 6개 컬럼 모두 set — 재분석 시 다른 유형으로 바뀌면 이전 섹션이 깨끗이 NULL 로 리셋되어야 함.
+    # LLM 이 비워두면 빈 문자열 → NULL 로 저장 (프론트 selector 가 빈 섹션으로 렌더).
+    for section_key in (
+        "blockers",
+        "key_topics",
+        "key_decisions",
+        "risks_and_issues",
+        "follow_up",
+        "key_points",
+    ):
+        raw_section = extracted.get(section_key)
+        text = str(raw_section).strip() if raw_section else ""
+        payload[section_key] = json.dumps(text, ensure_ascii=False) if text else None
+
     raw_decisions = extracted.get("decisions", [])
     if isinstance(raw_decisions, list):
         decision_objs = [

@@ -203,21 +203,26 @@ def push_published_to_notion(
     workspace_id: str,
     sb_client,
 ) -> dict:
-    """published 상태 회의의 Notion 페이지 + 액션 티켓을 생성한다.
+    """PUB-003/PUB-004 — published 상태 회의의 Notion 회의록 + 액션 티켓을 생성한다.
 
-    워커의 ``meeting/publish`` 핸들러가 호출한다. 멱등성: 같은 회의에 대해 여러 번
-    호출되면 ``notion_page_id`` 가 이미 있는 경우 업데이트로 동작 (notion_sync 가 처리).
+    0.5.txt 분리 정책:
+      * INTEG-001(`meeting_db_id`) 설정됨 → push_meeting (PUB-003)
+      * INTEG-002(`action_db_id`) 설정됨 → push_action_items (PUB-004)
+      * 두 연동은 독립. 한쪽만 설정돼도 다른쪽이 작동.
+
+    워커의 ``meeting/publish`` 핸들러가 호출. 멱등성: 같은 회의에 대해 여러 번
+    호출되면 ``notion_page_id`` 가 이미 있는 경우 notion_sync 가 업데이트로 처리.
 
     Returns:
-        ``{"notion_page_id": str | None, "action_ticket_count": int}``
+        ``{"notion_page_id": str | None, "action_ticket_count": int,
+           "reauth_required": bool}``
 
     Raises:
         RuntimeError: Notion API 호출 실패 (Modal run_publish_fn retries=3 가 처리).
-
-    Note:
-        Notion 미연동 시 외부 동기화 없이 성공으로 반환한다 (로컬 QA / 선택 연동).
+        NotionReauthRequired 는 내부에서 잡아 reauth_required=True 로 반환 (DB 발행 유지).
     """
     from src.notion_sync import (
+        NotionReauthRequired,
         check_notion_integration,
         push_action_items as _push_action_items,
         push_meeting as _push_meeting,
@@ -229,7 +234,7 @@ def push_published_to_notion(
             workspace_id,
             meeting_id,
         )
-        return {"notion_page_id": None, "action_ticket_count": 0}
+        return {"notion_page_id": None, "action_ticket_count": 0, "reauth_required": False}
 
     meeting_resp = (
         sb_client.table("meetings")
@@ -255,36 +260,53 @@ def push_published_to_notion(
     )
     action_items_data = actions_resp.data or []
 
-    notion_page_id = _push_meeting(
-        meeting_id=meeting_id,
-        title=meeting_data.get("title") or "",
-        summary=meeting_data.get("summary") or "",
-        decisions=decision_texts,
-        action_items=action_items_data,
-        meeting_date=meeting_data.get("meeting_date"),
-        workspace_id=workspace_id,
-        sb_client=sb_client,
-    )
+    notion_page_id: str | None = None
+    ticket_ids: list[str] = []
+    reauth_required = False
 
-    sb_client.table("meetings").update(
-        {"notion_page_id": notion_page_id, "updated_at": _now_iso()}
-    ).eq("id", meeting_id).execute()
+    # PUB-003: 회의록 push (INTEG-001) — 독립 try
+    try:
+        notion_page_id = _push_meeting(
+            meeting_id=meeting_id,
+            title=meeting_data.get("title") or "",
+            summary=meeting_data.get("summary") or "",
+            decisions=decision_texts,
+            action_items=action_items_data,
+            meeting_date=meeting_data.get("meeting_date"),
+            workspace_id=workspace_id,
+            sb_client=sb_client,
+        )
+        if notion_page_id:
+            sb_client.table("meetings").update(
+                {"notion_page_id": notion_page_id, "updated_at": _now_iso()}
+            ).eq("id", meeting_id).execute()
+    except NotionReauthRequired as e:
+        _log.warning("PUB-003 push_meeting reauth required: %s", e)
+        reauth_required = True
 
-    ticket_ids = _push_action_items(
-        meeting_id=meeting_id,
-        meeting_page_id=notion_page_id,
-        action_items=action_items_data,
-        workspace_id=workspace_id,
-        sb_client=sb_client,
-    )
+    # PUB-004: 액션 티켓 (INTEG-002) — 독립 try.
+    # reauth_required 이미면 호출 자체 skip (같은 토큰).
+    if not reauth_required:
+        try:
+            ticket_ids = _push_action_items(
+                meeting_id=meeting_id,
+                meeting_page_id=notion_page_id,
+                action_items=action_items_data,
+                workspace_id=workspace_id,
+                sb_client=sb_client,
+            )
+        except NotionReauthRequired as e:
+            _log.warning("PUB-004 push_action_items reauth required: %s", e)
+            reauth_required = True
 
     _log.info(
-        "push_published_to_notion 완료: meeting_id=%s notion_page_id=%s tickets=%d",
-        meeting_id, notion_page_id, len(ticket_ids),
+        "push_published_to_notion 완료: meeting_id=%s notion_page_id=%s tickets=%d reauth=%s",
+        meeting_id, notion_page_id, len(ticket_ids), reauth_required,
     )
     return {
         "notion_page_id": notion_page_id,
         "action_ticket_count": len(ticket_ids),
+        "reauth_required": reauth_required,
     }
 
 

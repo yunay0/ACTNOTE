@@ -81,15 +81,12 @@ Identify documents, materials, or references mentioned in the meeting.
 좋은 예시: "PRD v2", "Q3 roadmap", "프로젝트 기획서", "와이어프레임 v3"
 나쁜 예시: "문서" (너무 일반적), "회의 자료" (모호함), "지난주에 본 거" (구체적이지 않음)
 
-[Key Topics — required]
-Write "key_topics" as a concise English bullet list (T1., T2., … or plain lines).
-Extract the main themes the group discussed about project progress:
-- Milestone / roadmap status updates
-- Cross-team dependencies and coordination points
-- Scope, schedule, and resourcing topics
-- Status of in-flight workstreams
-Only include topics that were actually discussed in the meeting — do not infer or generalize.
-Keep each line short (one phrase or sentence). If nothing qualifies beyond the summary, use an empty string "".
+[Key Decisions — required]
+Write "key_decisions" as a concise English bullet list (D1., D2., … or plain lines).
+This mirrors the same content as the "decisions" JSON array above but is rendered as a single formatted string for the DRAFT-008-002 Project Review section UI.
+- Approved scope changes, schedule shifts, budget calls, go/no-go, prioritization, mitigation choices.
+- Keep wording crisp; one decision per line.
+- If "decisions" is [], output "" here.
 
 [Risks & Issues — required]
 Write "risks_and_issues" as an English bullet list (R1., R2., … or plain lines).
@@ -107,7 +104,7 @@ Output schema:
 {
   "title": "...",
   "summary": "...",
-  "key_topics": "...",
+  "key_decisions": "...",
   "risks_and_issues": "...",
   "decisions": ["..."],
   "action_items": [
