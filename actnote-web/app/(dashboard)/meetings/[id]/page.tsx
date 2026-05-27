@@ -56,6 +56,7 @@ interface MeetingRow {
   decisions: { content: string }[] | null;
   referenced_documents: string[] | null;
   audio_file_url: string | null;
+  audio_file_name?: string | null;
   workspace_id: string;
   created_by: string | null;
   error_message?: string | null;
@@ -205,7 +206,11 @@ function normalizeParticipants(raw: unknown): string[] {
 }
 
 /** 분석 진행 화면 — 스토리지 URL에서 표시용 파일 이름 */
-function basenameFromAnalyzingAudioUrl(url: string | null | undefined): string {
+function resolveRecordingLabel(
+  fileName: string | null | undefined,
+  url: string | null | undefined,
+): string {
+  if (fileName != null && fileName.trim() !== "") return fileName.trim();
   if (!url?.trim()) return "Uploaded recording";
   try {
     const u = url.split("?")[0] ?? url;
@@ -254,6 +259,7 @@ export default function MeetingDetailPage() {
   /** From ai_draft_notes.speaker_mapping — transcript names only (no draft speaker editor). */
   const [speakerMapping, setSpeakerMapping] = useState<Record<string, string>>({});
   const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
+  const [derivedDurationSec, setDerivedDurationSec] = useState<number | null>(null);
   /** Sidebar transcript drawer (draft UI only). */
   const [transcriptPanelOpen, setTranscriptPanelOpen] = useState(false);
 
@@ -321,7 +327,7 @@ export default function MeetingDetailPage() {
       (supabase as any)
         .from("meetings")
         .select(
-          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, workspace_id, created_by, error_message, description, meeting_type, participants, responsible_user_id, ai_draft_notes, duration_seconds, audio_file_size_bytes"
+          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, audio_file_name, workspace_id, created_by, error_message, description, meeting_type, participants, responsible_user_id, ai_draft_notes, duration_seconds, audio_file_size_bytes"
         )
         .eq("id", id)
         .is("deleted_at", null)
@@ -540,6 +546,39 @@ export default function MeetingDetailPage() {
     const interval = setInterval(fetchMeeting, 5000);
     return () => clearInterval(interval);
   }, [meeting, fetchMeeting]);
+
+  useEffect(() => {
+    const url = meeting?.audio_file_url?.trim() ?? "";
+    const persistedDuration = meeting?.duration_seconds;
+    if (!url) {
+      setDerivedDurationSec(null);
+      return;
+    }
+    if (typeof persistedDuration === "number" && persistedDuration > 0) {
+      setDerivedDurationSec(null);
+      return;
+    }
+    const audio = document.createElement("audio");
+    let cancelled = false;
+    const onMeta = () => {
+      if (cancelled) return;
+      const d = audio.duration;
+      if (Number.isFinite(d) && d > 0) setDerivedDurationSec(d);
+    };
+    const onError = () => {
+      if (!cancelled) setDerivedDurationSec(null);
+    };
+    audio.preload = "metadata";
+    audio.addEventListener("loadedmetadata", onMeta);
+    audio.addEventListener("error", onError);
+    audio.src = url;
+    return () => {
+      cancelled = true;
+      audio.removeEventListener("loadedmetadata", onMeta);
+      audio.removeEventListener("error", onError);
+      audio.src = "";
+    };
+  }, [meeting?.audio_file_url, meeting?.duration_seconds]);
 
   const wasProcessingRef = useRef<boolean | null>(null);
   useEffect(() => {
@@ -1193,7 +1232,11 @@ export default function MeetingDetailPage() {
   const scrollBottomPad =
     draftStickyChrome || analyzingFixedChrome ? "pb-28 md:pb-24" : "";
 
-  const analyzingAudioLabel = basenameFromAnalyzingAudioUrl(meeting.audio_file_url);
+  const recordingLabel = resolveRecordingLabel(meeting.audio_file_name, meeting.audio_file_url);
+  const displayDurationSec =
+    typeof meeting.duration_seconds === "number" && meeting.duration_seconds > 0
+      ? meeting.duration_seconds
+      : derivedDurationSec;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -1471,12 +1514,12 @@ export default function MeetingDetailPage() {
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="break-words text-[15px] font-bold leading-snug text-[#0a2540]">
-                              {analyzingAudioLabel}
+                              {recordingLabel}
                             </p>
                             <p className="mt-1 flex flex-wrap items-center gap-3 text-[13px] text-[#64748b]">
                               <span className="flex items-center gap-1">
                                 <CalendarDays className="size-3.5 opacity-70" aria-hidden />
-                                Duration {formatMmSsShort(meeting.duration_seconds ?? null)}
+                                Duration {formatMmSsShort(displayDurationSec)}
                               </span>
                               {meeting.audio_file_size_bytes != null && meeting.audio_file_size_bytes > 0 ? (
                                 <span className="flex items-center gap-1">
@@ -1543,7 +1586,8 @@ export default function MeetingDetailPage() {
               participantNames={meeting.participants}
               responsibleLabel={responsibleDisplayLabel}
               recordingUrl={meeting.audio_file_url}
-              durationSeconds={meeting.duration_seconds}
+              recordingFileName={meeting.audio_file_name ?? null}
+              durationSeconds={displayDurationSec}
               fileSizeBytes={meeting.audio_file_size_bytes}
               transcriptReady={transcriptLines.length > 0}
               onOpenTranscript={() => setTranscriptPanelOpen(true)}

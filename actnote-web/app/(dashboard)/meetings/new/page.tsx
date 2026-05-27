@@ -518,6 +518,7 @@ function NewMeetingPageInner() {
             status: "uploaded",
             meeting_date: new Date(datetime).toISOString(),
             audio_file_size_bytes: file.size,
+            audio_file_name: file.name,
             meeting_type: meetingType.trim(),
             description: description.trim() || null,
             responsible_user_id: responsibleUserId,
@@ -561,6 +562,7 @@ function NewMeetingPageInner() {
             created_by: user.id,
             meeting_date: new Date(datetime).toISOString(),
             audio_file_size_bytes: file.size,
+            audio_file_name: file.name,
             meeting_type: meetingType.trim(),
             description: description.trim() || null,
             responsible_user_id: responsibleUserId,
@@ -596,13 +598,42 @@ function NewMeetingPageInner() {
       const ckUpload = pipelineCheckpointRef.current;
       const needUpload = !(ckUpload?.storageUploadDone);
 
+      const isReattachFlow = ridTrim.length > 0;
+      // Re-attach 는 기존 `{meetingId}/audio.*` 가 있으면 upsert(UPDATE) 경로를 탄다.
+      // storage.objects UPDATE 정책이 없으면 RLS 위반 → 기존 파일 삭제 후 INSERT.
       const wantsStorageUpsert =
-        ridTrim.length > 0 ||
+        !isReattachFlow &&
         Boolean(resume && ckUpload && !ckUpload.storageUploadDone);
 
       if (needUpload) {
         setUploading(true);
         setUploadProgress(0);
+
+        if (isReattachFlow) {
+          const { data: listed, error: listErr } = await supabase.storage
+            .from("meetings")
+            .list(meetingId);
+          if (listErr) {
+            setUploading(false);
+            setLoading(false);
+            setAlertMsg(`Failed to inspect previous recording: ${listErr.message}`);
+            return;
+          }
+          if (listed?.length) {
+            const keys = listed
+              .filter((row) => typeof row.name === "string" && row.name.length > 0)
+              .map((row) => `${meetingId}/${row.name}`);
+            if (keys.length > 0) {
+              const { error: remErr } = await supabase.storage.from("meetings").remove(keys);
+              if (remErr) {
+                setUploading(false);
+                setLoading(false);
+                setAlertMsg(`Failed to remove previous recording: ${remErr.message}`);
+                return;
+              }
+            }
+          }
+        }
 
         const { data: { session } } = await supabase.auth.getSession();
         const accessToken = session?.access_token ?? "";
