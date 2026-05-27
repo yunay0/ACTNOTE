@@ -69,21 +69,30 @@ def _require_admin(user_id: str, workspace_id: str, sb_client) -> None:
 # ---------------------------------------------------------------------------
 
 def validate_for_publication(meeting_id: str, sb_client) -> tuple[bool, list[str]]:
-    """발행 가능 여부를 검증한다.
+    """발행 가능 여부를 검증한다 (045 RPC ``validate_meeting_for_publication`` 과 동일 규칙).
 
-    필수 조건:
+    필수 조건 (0.5.txt / DRAFT-008-002):
     - title 비어있지 않음
     - summary 비어있지 않음
-    - 유효한(open 또는 in_progress) 액션 아이템 최소 1개
+    - 유형별 필수 섹션 (standup: blockers / one_on_one: key_topics / other: key_points)
+    - action_items 가 존재하면 모든 필드 (assignee, due_date, content) 완전성
+
+    선택 (publish 차단 아님):
+    - action_items 수량 자체는 0 이어도 됨
+    - project_review 의 key_decisions / risks_and_issues 는 선택
+    - 1:1 의 follow_up 은 선택
 
     Returns:
-        (is_valid, missing_fields) — missing_fields는 is_valid=False일 때만 의미있음.
+        (is_valid, missing_fields)
     """
     missing: list[str] = []
 
     meeting_resp = (
         sb_client.table("meetings")
-        .select("title, summary")
+        .select(
+            "title, summary, meeting_type, "
+            "blockers, key_topics, key_points"
+        )
         .eq("id", meeting_id)
         .single()
         .execute()
@@ -95,16 +104,45 @@ def validate_for_publication(meeting_id: str, sb_client) -> tuple[bool, list[str
     if not (meeting.get("summary") or "").strip():
         missing.append("summary")
 
+    # 유형별 필수 섹션
+    meeting_type = (meeting.get("meeting_type") or "other").strip().lower()
+
+    def _is_blank(val: object) -> bool:
+        if val is None:
+            return True
+        if isinstance(val, str):
+            return not val.strip()
+        if isinstance(val, list):
+            return all(_is_blank(x) for x in val)
+        return False
+
+    if meeting_type == "standup" and _is_blank(meeting.get("blockers")):
+        missing.append("blockers")
+    elif meeting_type == "one_on_one" and _is_blank(meeting.get("key_topics")):
+        missing.append("key_topics")
+    elif meeting_type == "other" and _is_blank(meeting.get("key_points")):
+        missing.append("key_points")
+    # project_review 는 summary 외 필수 섹션 없음
+
+    # action_items 가 있으면 필드 완전성만 체크 (수량 자체는 선택)
     actions_resp = (
         sb_client.table("action_items")
-        .select("id", count="exact")
+        .select("id, content, assignee_user_id, due_date, valid_until, status")
         .eq("meeting_id", meeting_id)
+        .is_("valid_until", "null")
         .in_("status", ["open", "in_progress"])
         .execute()
     )
-    action_count = actions_resp.count or 0
-    if action_count < 1:
-        missing.append("action_items (유효한 항목 최소 1개 필요)")
+    actions = actions_resp.data or []
+    if actions:
+        has_incomplete = any(
+            (a.get("assignee_user_id") is None)
+            or (a.get("due_date") is None)
+            or (not (a.get("content") or "").strip())
+            for a in actions
+        )
+        if has_incomplete:
+            missing.append("action_item_fields")
 
     return len(missing) == 0, missing
 

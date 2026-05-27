@@ -118,3 +118,11 @@ Output schema:
   ],
   "referenced_documents": ["기획서 v2", "PRD 수정 건"]
 }
+
+[STRICT EMIT RULES — DRAFT-008-002]
+Always include EVERY key shown above in your JSON response, even if empty.
+- String fields with no content → emit "" (empty string), NOT null and NOT omitted.
+- "decisions" / "action_items" / "referenced_documents" with no content → emit [].
+- NEVER omit a key. Missing keys cause downstream validation failures.
+- Project Review REQUIRED key: "summary" must be a non-empty string.
+- Project Review OPTIONAL but recommended: "key_decisions" and "risks_and_issues" — emit "" only if truly nothing was surfaced in the transcript.

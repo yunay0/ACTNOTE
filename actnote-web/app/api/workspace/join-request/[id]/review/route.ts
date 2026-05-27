@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { ensureRepoRootEnvMerged } from "@/lib/server/repo-env";
 import {
-  isResendRecipientRestrictedError,
   isSmtpConfigured,
   resolvePublicAppUrl,
-  sendViaResend,
   sendViaSmtp,
 } from "@/lib/server/invite-email";
 import { buildJoinRequestResultEmail } from "@/lib/server/join-request-email";
@@ -134,11 +132,10 @@ export async function POST(
 
     if (isSmtpConfigured()) {
       await sendViaSmtp(row.requester_email, mail);
-    } else if (process.env.RESEND_API_KEY?.trim()) {
-      const out = await sendViaResend(row.requester_email, mail);
-      if (!out.ok && !isResendRecipientRestrictedError(out.message)) {
-        console.error("[join-request/review] resend failed:", out.message);
-      }
+    } else {
+      console.warn(
+        "[join-request/review] SMTP not configured — requester email skipped (set SMTP_USER/SMTP_PASSWORD)"
+      );
     }
   }
 

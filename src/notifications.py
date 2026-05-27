@@ -778,11 +778,25 @@ def notify_analysis_failed(
 # SEC-009: Notion 토큰 만료/권한 회수 — Owner 재연동 안내
 # ---------------------------------------------------------------------------
 
+_REAUTH_NOTIFICATION_COOLDOWN_HOURS = 6
+
+
 def notify_reauth_required(workspace_id: str, sb_client=None) -> int:
     """SEC-009: integrations.last_error 마킹 후 Owner 에게 인앱+SMTP 메일 발송.
 
-    notion_sync._raise_reauth_if_auth_error 에서 호출. 멱등하지 않으니
-    같은 토큰 invalid 응답이 반복되면 알림이 누적될 수 있다 — 추후 dedupe.
+    notion_sync._raise_reauth_if_auth_error 에서 호출.
+
+    R10 dedupe:
+        같은 워크스페이스의 disconnected_at 가 ``_REAUTH_NOTIFICATION_COOLDOWN_HOURS``
+        시간 이내인 경우 신규 알림/메일 발송을 건너뛴다. _mark_integration_invalid 가
+        호출되기 *직전* 의 disconnected_at 을 보고 판단하므로, 호출 순서:
+            _mark_integration_invalid (먼저 → disconnected_at NOW 마킹)
+            notify_reauth_required   (그 다음)
+        에서는 매번 NOW 라 무한 발송된다. 이를 막기 위해 disconnected_at 이 set 되기
+        직전 값 (old_disconnected_at) 을 _raise_reauth_if_auth_error 가 미리 조회해서
+        전달하거나, 여기서 동일 워크스페이스의 최근 알림 행을 조회해 cooldown 결정한다.
+
+        구현은 후자(notifications 테이블 조회)가 단순하고 정확.
 
     Returns:
         생성된 인앱 알림 건수 (1 또는 0).
@@ -808,6 +822,32 @@ def notify_reauth_required(workspace_id: str, sb_client=None) -> int:
     ws_name = ws.get("name") or "(workspace)"
     if not owner_id:
         return 0
+
+    # R10 dedupe — Cooldown 기간 내 같은 워크스페이스의 reauth 알림이 있으면 스킵
+    try:
+        from datetime import datetime, timedelta, timezone
+        cutoff = (
+            datetime.now(timezone.utc)
+            - timedelta(hours=_REAUTH_NOTIFICATION_COOLDOWN_HOURS)
+        ).isoformat()
+        recent = (
+            sb_client.table("notifications")
+            .select("id")
+            .eq("workspace_id", workspace_id)
+            .eq("user_id", owner_id)
+            .eq("type", "integration_reauth_required")
+            .gte("created_at", cutoff)
+            .limit(1)
+            .execute()
+        )
+        if recent.data:
+            _log.info(
+                "notify_reauth_required: dedupe skip (workspace=%s) — 직전 %dh 내 알림 있음",
+                workspace_id, _REAUTH_NOTIFICATION_COOLDOWN_HOURS,
+            )
+            return 0
+    except Exception as e:  # noqa: BLE001 — 조회 실패는 안전쪽으로 알림 발송 진행
+        _log.warning("notify_reauth_required: dedupe 조회 실패, 알림 발송 계속: %s", e)
 
     settings_url = f"{_app_url()}/settings/integrations"
 
