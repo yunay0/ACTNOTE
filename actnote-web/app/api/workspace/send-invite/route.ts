@@ -3,10 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 import { ensureRepoRootEnvMerged } from "@/lib/server/repo-env";
 import {
   buildInviteEmailParts,
-  isResendRecipientRestrictedError,
   isSmtpConfigured,
   resolvePublicAppUrl,
-  sendViaResend,
   sendViaSmtp,
 } from "@/lib/server/invite-email";
 import { isFreeEmailDomain } from "@/lib/auth/domain-check";
@@ -105,6 +103,8 @@ export async function POST(req: NextRequest) {
     inviterName,
   });
 
+  // [project_email_channel] 2026-05-26 다혜님 결정 — SMTP only.
+  // Resend 경로 제거. SMTP 미설정 시 링크만 반환.
   if (isSmtpConfigured()) {
     const out = await sendViaSmtp(normalizedEmail, mail, {
       replyTo: inviter?.email || undefined,
@@ -127,37 +127,12 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const resendKey = process.env.RESEND_API_KEY?.trim();
-  if (resendKey) {
-    const out = await sendViaResend(normalizedEmail, mail);
-    if (!out.ok) {
-      const notice_code = isResendRecipientRestrictedError(out.message)
-        ? "RESEND_RECIPIENT_RESTRICTED"
-        : "EMAIL_DELIVERY_FAILED";
-      return NextResponse.json({
-        ok: true,
-        email_sent: false,
-        invite_link: inviteLink,
-        delivery_error: out.message,
-        notice_code,
-      });
-    }
-    return NextResponse.json({
-      ok: true,
-      email_sent: true,
-      invite_link: inviteLink,
-      channel: "resend",
-      id: out.id,
-    });
-  }
-
-  // Inngest 제거(Modal 전환): 워커 위임 폴백 없음. SMTP/Resend 미설정이면 링크만 반환.
   return NextResponse.json({
     ok: true,
     email_sent: false,
     invite_link: inviteLink,
     notice_code: "NO_MAIL_TRANSPORT",
     delivery_error:
-      "No mail transport configured. Set SMTP_USER + SMTP_PASSWORD (Gmail SMTP) or RESEND_API_KEY (+ EMAIL_FROM). Share the invite link manually meanwhile.",
+      "No mail transport configured. Set SMTP_USER + SMTP_PASSWORD (Gmail SMTP). Share the invite link manually meanwhile.",
   });
 }

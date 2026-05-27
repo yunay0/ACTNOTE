@@ -26,6 +26,7 @@ from typing import Any
 
 import httpx
 from notion_client import Client as _NotionClient
+from notion_client.errors import APIErrorCode, APIResponseError
 
 from src.encryption import decrypt_token, encrypt_token
 
@@ -76,6 +77,83 @@ def _notion_page_url(page_id: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# SEC-009: Notion 토큰 invalid 응답 감지 + 재연동 알림 트리거
+# ---------------------------------------------------------------------------
+
+_AUTH_ERROR_CODES = {
+    APIErrorCode.Unauthorized,
+    APIErrorCode.RestrictedResource,
+}
+
+
+class NotionReauthRequired(RuntimeError):
+    """Notion 토큰이 invalid/revoked — Owner 재연동 필요.
+
+    호출자(예: publication.push_published_to_notion) 는 이 예외를 잡아
+    파이프라인을 안전하게 skip 해야 한다 (DB 발행은 유지).
+    """
+
+    def __init__(self, workspace_id: str, message: str) -> None:
+        self.workspace_id = workspace_id
+        super().__init__(f"Notion reauth required (workspace={workspace_id}): {message}")
+
+
+def _mark_integration_invalid(workspace_id: str, sb_client, *, error_code: str) -> None:
+    """integrations row 에 last_error / disconnected_at 마킹 (재인증 필요 상태).
+
+    disconnected_at 은 R10 (reauth 알림 dedupe) 기준. 같은 토큰 invalid 응답이
+    짧은 간격으로 반복될 때 알림이 스팸되지 않도록 한다.
+    """
+    try:
+        now = _now_iso()
+        sb_client.table("integrations").update(
+            {
+                "last_error": error_code,
+                "disconnected_at": now,
+                "last_sync_at": now,
+            }
+        ).eq("workspace_id", workspace_id).eq("platform", "notion").execute()
+    except Exception as e:  # noqa: BLE001 — DB 업데이트 실패는 알림 트리거에 영향 X
+        _log.warning(
+            "_mark_integration_invalid: DB update 실패 (workspace=%s): %s",
+            workspace_id, e,
+        )
+
+
+def _trigger_reauth_notification(workspace_id: str, sb_client) -> None:
+    """Owner 에게 재연동 인앱 알림 + SMTP 메일 발송. 실패해도 호출자 흐름 유지."""
+    try:
+        from src.notifications import notify_reauth_required  # 지연 import (순환 회피)
+        notify_reauth_required(workspace_id, sb_client)
+    except Exception as e:  # noqa: BLE001
+        _log.warning(
+            "_trigger_reauth_notification: 알림 실패 (workspace=%s): %s",
+            workspace_id, e,
+        )
+
+
+def _is_auth_error(err: APIResponseError) -> bool:
+    return getattr(err, "code", None) in _AUTH_ERROR_CODES
+
+
+def _raise_reauth_if_auth_error(
+    err: APIResponseError,
+    workspace_id: str,
+    sb_client,
+) -> None:
+    """Notion APIResponseError 가 auth 계열이면 마킹 + 알림 + NotionReauthRequired raise.
+
+    auth 계열이 아니면 그대로 흘려보낸다 (원본 예외는 호출자가 잡음).
+    """
+    if not _is_auth_error(err):
+        return
+    code = getattr(err, "code", "unauthorized")
+    _mark_integration_invalid(workspace_id, sb_client, error_code=f"notion_{code}")
+    _trigger_reauth_notification(workspace_id, sb_client)
+    raise NotionReauthRequired(workspace_id, str(err)) from err
 
 
 # ---------------------------------------------------------------------------
@@ -336,11 +414,15 @@ def search_notion_documents(
     token = _token_from_row(row)
     notion = _client(token)
 
-    response = notion.search(
-        query=query,
-        filter={"property": "object", "value": "page"},
-        page_size=min(limit * 3, 20),
-    )
+    try:
+        response = notion.search(
+            query=query,
+            filter={"property": "object", "value": "page"},
+            page_size=min(limit * 3, 20),
+        )
+    except APIResponseError as e:
+        _raise_reauth_if_auth_error(e, workspace_id, sb_client)
+        raise
 
     results: list[dict] = []
     query_lower = query.lower()
@@ -435,20 +517,25 @@ def push_meeting(
     workspace_id: str,
     sb_client,
     document_links: list[dict] | None = None,
-) -> str:
-    """회의록을 Notion 페이지로 생성/업데이트한다.
+) -> str | None:
+    """PUB-003 — 회의록을 INTEG-001 (`meeting_db_id`) 에 Notion 페이지로 생성/업데이트한다.
 
     Returns:
         Notion 페이지 ID (하이픈 포함 UUID 형식).
+        INTEG-001 미설정(`meeting_db_id` NULL) 시 ``None`` 반환 — 발행 흐름은 계속.
+
+    Raises:
+        NotionReauthRequired: 토큰 invalid/권한 회수 시. Owner 재연동 알림 자동 발송.
     """
     row = _get_integration_row(workspace_id, sb_client)
     token = _token_from_row(row)
     meeting_db_id: str | None = row.get("meeting_db_id") or (row.get("config") or {}).get("meeting_db_id")
     if not meeting_db_id:
-        raise ValueError(
-            "meeting_db_id가 integrations에 설정되지 않았습니다. "
-            "register_notion_integration() 시 meeting_db_id를 전달하세요."
+        _log.info(
+            "push_meeting: INTEG-001 미설정 — skip (workspace_id=%s, meeting_id=%s)",
+            workspace_id, meeting_id,
         )
+        return None
 
     notion = _client(token)
 
@@ -527,25 +614,29 @@ def push_meeting(
     )
     existing_page_id: str | None = (existing_resp.data or {}).get("notion_page_id")
 
-    if existing_page_id:
-        notion.pages.update(page_id=existing_page_id, properties=properties)
-        old_blocks = notion.blocks.children.list(block_id=existing_page_id)
-        for b in old_blocks.get("results") or []:
-            notion.blocks.delete(block_id=b["id"])
-        notion.blocks.children.append(block_id=existing_page_id, children=blocks)
-        page_id = existing_page_id
-        _log.info("push_meeting: 페이지 업데이트 (page_id=%s)", page_id)
-    else:
-        page = notion.pages.create(
-            **{
-                "parent": {"database_id": meeting_db_id},
-                "icon": {"type": "emoji", "emoji": "📋"},
-                "properties": properties,
-                "children": blocks,
-            }
-        )
-        page_id = page["id"]
-        _log.info("push_meeting: 신규 페이지 생성 (page_id=%s)", page_id)
+    try:
+        if existing_page_id:
+            notion.pages.update(page_id=existing_page_id, properties=properties)
+            old_blocks = notion.blocks.children.list(block_id=existing_page_id)
+            for b in old_blocks.get("results") or []:
+                notion.blocks.delete(block_id=b["id"])
+            notion.blocks.children.append(block_id=existing_page_id, children=blocks)
+            page_id = existing_page_id
+            _log.info("push_meeting: 페이지 업데이트 (page_id=%s)", page_id)
+        else:
+            page = notion.pages.create(
+                **{
+                    "parent": {"database_id": meeting_db_id},
+                    "icon": {"type": "emoji", "emoji": "📋"},
+                    "properties": properties,
+                    "children": blocks,
+                }
+            )
+            page_id = page["id"]
+            _log.info("push_meeting: 신규 페이지 생성 (page_id=%s)", page_id)
+    except APIResponseError as e:
+        _raise_reauth_if_auth_error(e, workspace_id, sb_client)
+        raise
 
     return page_id
 
@@ -556,62 +647,76 @@ def push_meeting(
 
 def push_action_items(
     meeting_id: str,
-    meeting_page_id: str,
+    meeting_page_id: str | None,
     action_items: list[dict],
     workspace_id: str,
     sb_client,
 ) -> list[str]:
-    """액션 아이템을 Notion DB에 티켓으로 생성한다.
+    """PUB-004 — 액션 아이템을 INTEG-002 (`action_db_id`) Notion DB 에 티켓으로 생성한다.
+
+    INTEG-002 는 INTEG-001 과 **독립적으로 설정 가능** (0.5.txt).
 
     Args:
         action_items: [{"id": str, "content": str, "assignee": str|None,
                         "due_date": str|None, "priority": str|None}]
+        meeting_page_id: 회의록 페이지 ID (INTEG-001 push 결과). 없으면 Description
+            링크가 빠질 뿐 티켓 생성 자체는 가능 (INTEG-002 독립).
 
     Returns:
-        생성된 Notion 페이지 ID 리스트 (입력 순서와 동일).
+        생성된 Notion 페이지 ID 리스트. INTEG-002 미설정 시 ``[]``.
+
+    Raises:
+        NotionReauthRequired: 토큰 invalid 시.
     """
     row = _get_integration_row(workspace_id, sb_client)
     token = _token_from_row(row)
     action_db_id: str | None = row.get("action_db_id") or (row.get("config") or {}).get("action_db_id")
 
-    notion = _client(token)
-
     if not action_db_id:
-        action_db_id = ensure_action_db(meeting_page_id, token)
-        sb_client.table("integrations").update(
-            {"action_db_id": action_db_id, "last_sync_at": _now_iso()}
-        ).eq("workspace_id", workspace_id).eq("platform", "notion").execute()
+        # INTEG-002 미설정 — 자동 생성 정책 폐기 (0.5.txt: 독립 설정).
+        # INTEG-006-002 템플릿을 사용자가 직접 복제 후 action_db_id 등록 필요.
+        _log.info(
+            "push_action_items: INTEG-002 미설정 — skip (workspace_id=%s)",
+            workspace_id,
+        )
+        return []
 
-    meeting_url = _notion_page_url(meeting_page_id)
+    notion = _client(token)
+    meeting_url = _notion_page_url(meeting_page_id) if meeting_page_id else None
     created_ids: list[str] = []
 
-    for item in action_items:
-        props: dict[str, Any] = {
-            "Name": {
-                "title": [{"type": "text", "text": {"content": item.get("content") or ""}}]
-            },
-            "Priority": {"select": {"name": item.get("priority") or _PRIORITY_DEFAULT}},
-            "Meeting Link": {"url": meeting_url},
-        }
-
-        if item.get("assignee"):
-            props["Assignee"] = {
-                "rich_text": [{"type": "text", "text": {"content": item["assignee"]}}]
+    try:
+        for item in action_items:
+            props: dict[str, Any] = {
+                "Name": {
+                    "title": [{"type": "text", "text": {"content": item.get("content") or ""}}]
+                },
+                "Priority": {"select": {"name": item.get("priority") or _PRIORITY_DEFAULT}},
             }
+            if meeting_url:
+                props["Meeting Link"] = {"url": meeting_url}
 
-        if item.get("due_date"):
-            props["Due Date"] = {"date": {"start": str(item["due_date"])}}
+            if item.get("assignee"):
+                props["Assignee"] = {
+                    "rich_text": [{"type": "text", "text": {"content": item["assignee"]}}]
+                }
 
-        page = notion.pages.create(
-            **{"parent": {"database_id": action_db_id}, "properties": props}
-        )
-        page_id: str = page["id"]
-        created_ids.append(page_id)
+            if item.get("due_date"):
+                props["Due Date"] = {"date": {"start": str(item["due_date"])}}
 
-        if item.get("id"):
-            sb_client.table("action_items").update(
-                {"notion_page_id": page_id}
-            ).eq("id", item["id"]).execute()
+            page = notion.pages.create(
+                **{"parent": {"database_id": action_db_id}, "properties": props}
+            )
+            page_id: str = page["id"]
+            created_ids.append(page_id)
+
+            if item.get("id"):
+                sb_client.table("action_items").update(
+                    {"notion_page_id": page_id}
+                ).eq("id", item["id"]).execute()
+    except APIResponseError as e:
+        _raise_reauth_if_auth_error(e, workspace_id, sb_client)
+        raise
 
     sb_client.table("integrations").update(
         {"last_sync_at": _now_iso()}

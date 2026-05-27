@@ -1,59 +1,54 @@
-# Meeting Type Templates (MTG-004)
+# Meeting Type Templates (MTG-004 / MTG-004-002)
 
-회의 유형(`meetings.meeting_type`)에 따라 LLM 추출 단계의 system prompt 를 분기.
+회의 유형(`meetings.meeting_type`)에 따라 LLM 추출 단계의 system prompt 를 분기. 0.5v 부터 **4종 체계**로 통일.
 
-## v0.3 제품 UI (4종)
+## 0.5v 제품 UI (4종 — 단일 소스: 0.5.txt)
 
 신규 회의 업로드 폼에서 선택하는 값은 아래 4개만 노출한다 (`actnote-web/lib/meetings/meeting-types.ts`).
 
-| 저장값 (`meeting_type`) | 사용자에게 보이는 라벨 | 로드되는 템플릿 |
-|-------------------------|------------------------|-----------------|
-| `standup` | Team Standup | `standup.md` |
-| `project_review` | Project Review | `project_review.md` |
-| `one_on_one` | 1:1 | `one_on_one.md` |
-| `other` | Other | `default.md` (`other` 는 alias 로 `default` 와 동일) |
+| 저장값 (`meeting_type`) | 라벨 | 템플릿 파일 | 필수 섹션 (DRAFT-008-002) | 선택 섹션 (DRAFT-008-002) |
+|-------------------------|------|-------------|---------------------------|---------------------------|
+| `standup` | Team Standup | `standup.md` | Summary · Blockers | Action Items |
+| `project_review` | Project Review | `project_review.md` | Summary | Key Decisions · Risks & Issues · Action Items |
+| `one_on_one` | 1:1 | `one_on_one.md` | Summary · Key Topics | Action Items · Follow-up |
+| `other` | Other | `other.md` | Summary · Key Points | Action Items |
 
-## 파일 = 템플릿
+필수 섹션은 항상 노출, 선택 섹션은 LLM 결과가 비어도 빈 상태로 노출되며 Owner가 Edit Mode에서 추가 가능. 선택 섹션이 비어있어도 Publish 가능.
 
-| 파일 | 표준 type | 한국어/영어 alias |
-|------|-----------|------------------|
-| `default.md` | `default` | `general`, `기본`, `일반`, `other`, `기타` |
-| `one_on_one.md` | `one_on_one` | `1on1`, `1:1`, `oneonone` |
-| `standup.md` | `standup` | `team_standup`, `sprint`, `sprint_planning`, `sprint_review`, `daily`, `데일리`, `스프린트` |
-| `project_review.md` | `project_review` | `project_update`, `status_review` |
-| `brainstorming.md` | `brainstorming` | — |
-| `client.md` | `client` | `external`, `customer` |
-| `board.md` | `board` | — |
-| `all_hands.md` | `all_hands` | `town_hall`, `townhall`, `all_hands_meeting` |
-| `workshop.md` | `workshop` | — |
-| `planning.md` | `planning` *(레거시)* | `기획`, `kickoff` |
-| `retro.md` | `retro` *(레거시)* | `회고`, `postmortem` |
+## Alias 매핑 (기존 데이터 호환)
 
-> **레거시 타입:** `planning` / `retro` 등 추가 파일은 하위 호환·API 용으로 유지. **신규 사용자 경로**는 위 **v0.3 제품 UI (4종)** 만 사용.
+`src/llm_extractor.py::_TYPE_ALIAS` 에서 정규화. 신규 작성자는 4종만 사용한다.
+
+| 표준 type | 한국어/영어 alias |
+|-----------|------------------|
+| `standup` | `team_standup`, `sprint`, `sprint_planning`, `sprint_review`, `daily`, `데일리`, `스프린트` |
+| `project_review` | `project_update`, `status_review`, `retro`, `회고`, `postmortem`, `client`, `external`, `customer`, `board`, `all_hands`, `town_hall`, `townhall` |
+| `one_on_one` | `1on1`, `1:1`, `oneonone` |
+| `other` | `default`, `general`, `기본`, `일반`, `기타`, `brainstorming`, `workshop`, `planning`, `기획`, `kickoff` |
+
+> **레거시 정리:** 0.3v 시절 11종 prompt 파일 중 `default.md` 는 `other.md` 의 fallback 백업으로 유지. 그 외 `brainstorming.md`, `client.md`, `board.md`, `all_hands.md`, `workshop.md`, `planning.md`, `retro.md` 는 0.5v 에서 alias 로 흡수.
 
 ## 폴백 규칙
 
-- `meeting_type` 컬럼이 NULL/빈 문자열 → `default.md`
-- 위 표에 없는 임의 type → `default.md`
-- `default.md` 파일조차 없으면 → 코드 내 인라인 fallback (`_SYSTEM_PROMPT_BASE_FALLBACK`)
+- `meeting_type` 컬럼이 NULL/빈 문자열 → `other.md`
+- 위 표에 없는 임의 type → `other.md`
+- `other.md` 파일조차 없으면 → 코드 내 인라인 fallback (`_SYSTEM_PROMPT_BASE_FALLBACK`, default.md 본문)
 
-## 새 template 추가
+## LLM 출력 스키마 (DRAFT-008-002 / MTG-004-002)
 
-1. 이 디렉터리에 `<type>.md` 추가 (전체 system prompt 자체를 self-contained 로)
-2. `src/llm_extractor.py` 의 `_SUPPORTED_TYPES` 에 `<type>` 추가
-3. (선택) `_TYPE_ALIAS` 에 한국어/영어 별칭 추가
-4. 모듈 캐시는 프로세스 lifetime 동안 유지 — 워커 재시작 필요
+공통 출력 키:
+- `title`, `summary`, `decisions`, `action_items`, `referenced_documents`
 
-## 운영 노트
+유형별 추가 키(영어 문자열로 정규화; `meetings` 신규 컬럼 + `ai_draft_notes` 에 모두 저장):
 
-- 공통 출력 키: `title`, `summary`, `decisions`, `action_items`, `referenced_documents`.
-- **Draft UI 제3섹션** 과 맞추기 위해 유형별 추가 키(영어 문자열 또는 문자열 리스트→정규화; `meetings.ai_draft_notes`에 저장):
-  - `project_review`: `key_topics`, `risks_and_issues`
-  - `one_on_one`: `key_topics`, `follow_up`
-  - `standup`: `blockers`
-  - `other`/`default`: `key_topics`
-- 레이아웃 분기는 `actnote-web/lib/meetings/meeting-analysis-layout.ts`; 추출 타입은 `schemas.py::ExtractedResult` (`NotRequired` 필드).
-- 비용 가드레일은 system prompt 길이도 토큰 추정에 포함하므로, 템플릿이 크게 늘면 단가도 상승.
+| 유형 | 추가 키 | DB 컬럼 |
+|------|---------|---------|
+| `standup` | `blockers` | `meetings.blockers` |
+| `project_review` | `key_decisions`, `risks_and_issues` | `meetings.key_decisions`, `meetings.risks_and_issues` |
+| `one_on_one` | `key_topics`, `follow_up` | `meetings.key_topics`, `meetings.follow_up` |
+| `other` | `key_points` | `meetings.key_points` |
+
+각 추가 키는 `NotRequired` (`schemas.py::ExtractedResult`) — 누락 시 프론트가 빈 섹션으로 렌더.
 
 ## 빠른 검증
 
@@ -61,5 +56,10 @@
 uv run python src/llm_extractor.py
 ```
 
-테스트 0: 전체 alias → 표준 type resolve 결과 확인 (API 호출 없음).
-테스트 4: 5개 유형 system prompt 내용 차이 비교 (API 호출 없음).
+테스트 0: 전체 alias → 4종 표준 type resolve 결과 (API 호출 없음).
+
+## 새 alias 추가
+
+1. `src/llm_extractor.py::_TYPE_ALIAS` dict 에 신규 키 추가
+2. 4종 외 신규 유형이 정말 필요하면 위 표와 _SUPPORTED_TYPES 동시 갱신 (0.5v 이후 결정)
+3. 모듈 캐시는 프로세스 lifetime — 워커 재시작 필요
