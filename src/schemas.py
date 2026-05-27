@@ -45,7 +45,7 @@ class DocumentLink(TypedDict):
 class ExtractedResult(TypedDict):
     """LLM 출력 정규화 결과. 회의유형별로 선택 필드 포함.
 
-    저장 위치 (DRAFT-008-002 / migrations/044):
+    저장 위치 (DRAFT-008-002 / migrations/050):
         * `meetings` 정규화 컬럼 (blockers/key_topics/key_decisions/risks_and_issues/follow_up/key_points)
         * `meetings.ai_draft_notes` JSON 백업 (전체)
     """

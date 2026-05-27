@@ -3,7 +3,7 @@
  * `llm_extractor._resolve_template_name` → `prompts/templates/<name>.md`
  *
  * 0.5v 단일 소스 (0.5.txt): 4종으로 통일.
- * DB CHECK 제약 (`migrations/046`): meeting_type IN ('standup','project_review','one_on_one','other')
+ * DB CHECK 제약 (`migrations/052`): meeting_type IN ('standup','project_review','one_on_one','other')
  */
 export const MEETING_TYPE_OPTIONS: readonly { value: string; label: string }[] = [
   { value: "standup", label: "Team Standup" },

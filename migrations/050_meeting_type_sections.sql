@@ -1,4 +1,5 @@
--- 044: DRAFT-008-002 / MTG-004-002 — 회의 유형별 신규 섹션 컬럼 (정규화)
+-- 050: DRAFT-008-002 / MTG-004-002 — 회의 유형별 신규 섹션 컬럼 (정규화)
+-- (Renamed from 044; 044 번호는 044_meeting_attribution_snapshots.sql 가 점유)
 --
 -- 0.5.txt 단일 소스. 4종 유형(standup/project_review/one_on_one/other)이
 -- 사용하는 추출 결과 필드를 meetings 테이블에 정규화 컬럼으로 추가한다.
