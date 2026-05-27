@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useState, type ReactElement } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
+import { AnalysisErrorModal } from "@/components/meetings/AnalysisErrorModal";
+import { MeetingErrorMetaReadonly } from "@/components/meetings/MeetingErrorMetaReadonly";
 import { createClient } from "@/lib/supabase/client";
+import { analysisErrorModalCopy } from "@/lib/meetings/analysis-error-modal-copy";
 import {
   parsePipelineErrorCode,
   analysisErrorUxKindFromCode,
   type AnalysisErrorUxKind,
 } from "@/lib/meetings/analysis-error-ux";
 import { analysisFailureSupportComposeUrl } from "@/lib/meetings/analysis-support-mailto";
+import { responsibleLabelFromSnapshot } from "@/lib/meetings/meeting-attribution";
 import { retryMeetingPipeline } from "@/lib/meetings/retry-pipeline";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 
@@ -20,39 +24,35 @@ type LoadedMeeting = {
   title: string;
   status: string;
   meeting_date: string | null;
+  meeting_type: string | null;
+  description: string | null;
+  participants: string[];
   workspace_id: string;
   audio_file_url: string | null;
   error_message: string | null;
+  responsible_user_id: string | null;
+  responsible_display_name: string | null;
+  responsible_display_email: string | null;
 };
 
-function formatMeetingDetailLine(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+function normalizeParticipants(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((p) => String(p).trim()).filter(Boolean);
 }
 
-function primaryButtonClass(): string {
-  return (
-    "inline-flex min-h-[48px] w-full max-w-sm items-center justify-center rounded-xl text-[14px] font-bold " +
-    "text-white shadow-[0px_4px_6px_rgba(255,107,53,0.2)] transition-opacity hover:opacity-90 " +
-    "disabled:opacity-50"
-  );
-}
-
-/** Full-page branching UX after home / bell entry (Figma 147:10670 / :10825 / :10977 / :11135). */
-export function AnalysisErrorFlow({ meetingId }: { meetingId: string }) {
+/** View error: 회의 메타(읽기 전용) + Figma 180:9060 모달. Re-attach → `/meetings/new?reattach=`. */
+export function AnalysisErrorFlow({ meetingId }: { meetingId: string }): ReactElement {
   const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const thanks = searchParams.get("thanks") === "1";
   const { workspaceId, workspaceName } = useWorkspaceContext();
 
   const [row, setRow] = useState<LoadedMeeting | null | undefined>(undefined);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(true);
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  const [responsibleLabel, setResponsibleLabel] = useState<string | null>(null);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -63,7 +63,7 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }) {
       const { data, error } = await (supabase as any)
         .from("meetings")
         .select(
-          "id, title, status, meeting_date, workspace_id, audio_file_url, error_message",
+          "id, title, status, meeting_date, meeting_type, description, participants, workspace_id, audio_file_url, error_message, responsible_user_id, responsible_display_name, responsible_display_email",
         )
         .eq("id", meetingId)
         .eq("workspace_id", workspaceId)
@@ -81,15 +81,49 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }) {
         setRow(null);
         return;
       }
+
+      const snapLabel = responsibleLabelFromSnapshot({
+        responsible_display_name: data.responsible_display_name as string | null,
+        responsible_display_email: data.responsible_display_email as string | null,
+      });
+
+      let respLabel = snapLabel;
+      const respId =
+        typeof data.responsible_user_id === "string" ? data.responsible_user_id : null;
+      if (respId) {
+        const { data: u } = await (supabase as any)
+          .from("users")
+          .select("name, email")
+          .eq("id", respId)
+          .maybeSingle();
+        if (!cancelled && u) {
+          const name = typeof u.name === "string" ? u.name.trim() : "";
+          const email = typeof u.email === "string" ? u.email.trim() : "";
+          if (name && email) respLabel = `${name} (${email})`;
+          else if (name) respLabel = name;
+          else if (email) respLabel = email;
+        }
+      }
+
+      if (cancelled) return;
       setLoadErr(null);
+      setResponsibleLabel(respLabel);
       setRow({
         id: data.id as string,
         title: (data.title as string) || "Untitled Meeting",
         status: String(data.status),
         meeting_date: (data.meeting_date as string | null) ?? null,
+        meeting_type: typeof data.meeting_type === "string" ? data.meeting_type : null,
+        description: typeof data.description === "string" ? data.description : null,
+        participants: normalizeParticipants(data.participants),
         workspace_id: data.workspace_id as string,
         audio_file_url: (data.audio_file_url as string | null) ?? null,
         error_message: (data.error_message as string | null) ?? null,
+        responsible_user_id: respId,
+        responsible_display_name:
+          typeof data.responsible_display_name === "string" ? data.responsible_display_name : null,
+        responsible_display_email:
+          typeof data.responsible_display_email === "string" ? data.responsible_display_email : null,
       });
     })();
     return () => {
@@ -103,6 +137,10 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }) {
       router.replace(`/meetings/${meetingId}`);
     }
   }, [row, meetingId, router]);
+
+  const code = parsePipelineErrorCode(row?.error_message ?? "");
+  const kind: AnalysisErrorUxKind = analysisErrorUxKindFromCode(code);
+  const modalCopy = useMemo(() => analysisErrorModalCopy(kind), [kind]);
 
   async function handleTryAgain(): Promise<void> {
     if (!row || !workspaceId) return;
@@ -128,20 +166,40 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }) {
     const compose = analysisFailureSupportComposeUrl({
       meetingTitle: row.title,
       workspaceName: workspaceName.trim() || "—",
-      dateTimeLine: formatMeetingDetailLine(row.meeting_date ?? undefined),
+      dateTimeLine:
+        row.meeting_date != null
+          ? new Date(row.meeting_date).toLocaleString("en-US", {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })
+          : "—",
       meetingId: row.id,
     });
-    const opened = typeof window !== "undefined" ? window.open(compose, "_blank", "noopener,noreferrer") : null;
+    const opened =
+      typeof window !== "undefined" ? window.open(compose, "_blank", "noopener,noreferrer") : null;
     if (!opened && typeof window !== "undefined") {
       window.location.assign(compose);
     }
-    router.replace(`${pathname}?thanks=1`);
+    router.replace(`/meetings/${meetingId}/analysis-error?thanks=1`);
+    setModalOpen(false);
+  }
+
+  function handlePrimary(): void {
+    if (kind === "reattach_file") {
+      router.push(`/meetings/new?reattach=${encodeURIComponent(meetingId)}`);
+      return;
+    }
+    if (kind === "retry_network") {
+      void handleTryAgain();
+      return;
+    }
+    handleContactSupport();
   }
 
   if (row === undefined) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
-        <DashboardHeader title="Analysis issue" backHref="/meetings" />
+        <DashboardHeader title="Meeting details" backHref="/meetings" />
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-[#64748b]">
           <Loader2 className="h-8 w-8 animate-spin" aria-hidden />
           <p className="text-[14px]">Loading meeting…</p>
@@ -153,7 +211,7 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }) {
   if (loadErr || row === null) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
-        <DashboardHeader title="Analysis issue" backHref="/meetings" />
+        <DashboardHeader title="Meeting details" backHref="/meetings" />
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
           <p className="max-w-md text-[15px] font-semibold text-[#0a2540]">
             {loadErr ?? "Could not open this meeting."}
@@ -171,141 +229,51 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }) {
 
   if (row.status !== "error") return null;
 
-  const code = parsePipelineErrorCode(row.error_message ?? "");
-  const codeLabel = code;
-  const kind: AnalysisErrorUxKind = analysisErrorUxKindFromCode(code);
+  return (
+    <div className="relative flex flex-1 flex-col overflow-hidden bg-[#f8fafc]">
+      <DashboardHeader title="Meeting details" backHref="/meetings" />
 
-  function recapBox(r: LoadedMeeting): ReactElement {
-    return (
-      <div className="w-full max-w-lg rounded-xl border border-[#e2e8f0] bg-[#f8fafc] px-5 py-4 text-left">
-        <p className="text-[12px] font-bold uppercase tracking-wide text-[#94a3b8]">
-          Meeting
-        </p>
-        <p className="mt-1 text-[16px] font-bold leading-snug text-[#0a2540]">{r.title}</p>
-        <p className="mt-2 text-[13px] text-[#64748b]">
-          {formatMeetingDetailLine(r.meeting_date ?? undefined)}
-        </p>
-        <p className="mt-1 text-[13px] text-[#64748b]">
-          Workspace: <span className="font-semibold text-[#0a2540]">{workspaceName || "—"}</span>
-        </p>
-        {kind === "contact_support" && codeLabel ? (
-          <p className="mt-2 font-mono text-[11px] text-[#94a3b8]">
-            [{`code:${codeLabel}`}]
+      <div className="flex-1 overflow-y-auto px-6 py-8 md:px-10">
+        <MeetingErrorMetaReadonly
+          meetingTitle={row.title}
+          meetingTypeRaw={row.meeting_type}
+          meetingScheduledAtIso={row.meeting_date}
+          description={row.description}
+          participantNames={row.participants}
+          responsibleLabel={responsibleLabel}
+        />
+        {actionErr ? (
+          <p className="mx-auto mt-6 max-w-3xl rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[13px] text-red-800">
+            {actionErr}
           </p>
         ) : null}
       </div>
-    );
-  }
 
-  return (
-    <div className="relative flex flex-1 flex-col overflow-hidden bg-white">
-      <DashboardHeader title="Analysis issue" backHref="/meetings" />
-
-      <div className="flex flex-1 flex-col items-center px-6 py-12">
-        {!thanks ? (
-          <>
-            {kind === "retry_network" ? (
-              <div className="flex max-w-xl flex-col items-center text-center">
-                <div className="mb-6 flex size-14 items-center justify-center rounded-full bg-orange-50 text-[28px]" aria-hidden>📶</div>
-                <h2 className="text-[22px] font-bold text-[#0a2540]">Check your connection</h2>
-                <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-[#64748b]">
-                  We could not sync with the server. This usually means a temporary network glitch or an issue saving analysis results.
-                </p>
-                <div className="mt-8 w-full max-w-lg">{recapBox(row)}</div>
-                {actionErr ? (
-                  <p className="mt-4 max-w-lg rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[13px] text-red-800">
-                    {actionErr}
-                  </p>
-                ) : null}
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void handleTryAgain()}
-                  className={`${primaryButtonClass()} mt-8`}
-                  style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-                >
-                  {busy ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> Retrying…
-                    </>
-                  ) : (
-                    "Try again"
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => router.push("/meetings")}
-                  className="mt-4 text-[14px] font-semibold text-[#64748b] underline-offset-4 hover:text-[#0a2540] hover:underline"
-                >
-                  Back
-                </button>
-              </div>
-            ) : null}
-
-            {kind === "reattach_file" ? (
-              <div className="flex max-w-xl flex-col items-center text-center">
-                <div className="mb-6 flex size-14 items-center justify-center rounded-full bg-amber-50 text-[26px]" aria-hidden>📎</div>
-                <h2 className="text-[22px] font-bold text-[#0a2540]">Replace your recording</h2>
-                <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-[#64748b]">
-                  The uploaded file could not be read or had no usable audio. Upload a supported recording (.mp3, .m4a, .wav, .mp4, .mov — max 50 MB).
-                </p>
-                <div className="mt-8 w-full max-w-lg">{recapBox(row)}</div>
-                <button
-                  type="button"
-                  onClick={() => router.push(`/meetings/new?reattach=${encodeURIComponent(meetingId)}`)}
-                  className={`${primaryButtonClass()} mt-8`}
-                  style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-                >
-                  Reattach file
-                </button>
-              </div>
-            ) : null}
-
-            {kind === "contact_support" ? (
-              <div className="flex max-w-xl flex-col items-center text-center">
-                <div className="mb-6 flex size-14 items-center justify-center rounded-full bg-red-50 text-[28px]" aria-hidden>⚙️</div>
-                <h2 className="text-[22px] font-bold text-[#0a2540]">Server issue</h2>
-                <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-[#64748b]">
-                  Analysis failed due to a problem on our side (storage quota or AI service). Contact support — we&apos;ll investigate.
-                </p>
-                <div className="mt-8 w-full max-w-lg">{recapBox(row)}</div>
-                <button
-                  type="button"
-                  onClick={handleContactSupport}
-                  className={`${primaryButtonClass()} mt-8`}
-                  style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-                >
-                  Contact support
-                </button>
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <div className="flex max-w-xl flex-col items-center text-center">
-            <div className="mb-6 flex size-14 items-center justify-center rounded-full bg-green-50 text-[28px]" aria-hidden>✉️</div>
-            <h2 className="text-[22px] font-bold text-[#0a2540]">Thanks — request received</h2>
-            <p className="mt-4 max-w-lg text-[15px] leading-relaxed text-[#64748b]">
+      {!thanks ? (
+        <AnalysisErrorModal
+          open={modalOpen}
+          copy={modalCopy}
+          busy={busy}
+          onClose={() => setModalOpen(false)}
+          onPrimary={handlePrimary}
+        />
+      ) : (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0a2540]/40 p-4 backdrop-blur-[2px]">
+          <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center shadow-xl">
+            <p className="text-[18px] font-bold text-[#0a2540]">Thanks — request received</p>
+            <p className="mt-3 text-[14px] text-[#64748b]">
               Our team is reviewing your request. You should hear back within 3–4 business days.
             </p>
-            <div className="mt-8 w-full max-w-lg rounded-xl border border-red-100 bg-red-50 px-5 py-4 text-left">
-              <p className="text-[13px] font-bold text-[#b91c1c]">What happens next?</p>
-              <ul className="mt-2 list-disc space-y-2 pl-5 text-[13px] leading-relaxed text-[#991b1b]">
-                <li>Support may reply by email.</li>
-                <li>You can keep working in ACTNOTE meanwhile.</li>
-                <li>Include any extra detail in follow-up replies.</li>
-              </ul>
-            </div>
             <button
               type="button"
               onClick={() => router.push("/meetings")}
-              className={`${primaryButtonClass()} mt-10`}
-              style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+              className="mt-6 inline-flex min-h-[44px] items-center justify-center rounded-xl bg-[#ff6b35] px-8 text-[14px] font-bold text-white hover:opacity-90"
             >
               Go to Home
             </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

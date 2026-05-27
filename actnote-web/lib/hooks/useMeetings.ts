@@ -18,8 +18,18 @@ function rowToMeeting(m: Record<string, unknown>): Meeting {
     | { name?: string | null; email?: string | null }
     | null
     | undefined;
-  const creator_name = typeof creatorObj?.name === "string" ? creatorObj.name : null;
-  const creator_email = typeof creatorObj?.email === "string" ? creatorObj.email : null;
+  const snapName =
+    typeof m.creator_display_name === "string" && m.creator_display_name.trim()
+      ? m.creator_display_name.trim()
+      : null;
+  const snapEmail =
+    typeof m.creator_email === "string" && m.creator_email.trim()
+      ? m.creator_email.trim()
+      : null;
+  const creator_name =
+    snapName ?? (typeof creatorObj?.name === "string" ? creatorObj.name : null);
+  const creator_email =
+    snapEmail ?? (typeof creatorObj?.email === "string" ? creatorObj.email : null);
 
   return {
     id: m.id as string,
@@ -55,7 +65,7 @@ export function useMeetings() {
     const { data } = await (supabase as any)
       .from("meetings")
       .select(
-        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, error_message, created_by, action_items(count), creator:users!created_by(name, email)"
+        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, workspace_id, participants, meeting_type, error_message, created_by, creator_display_name, creator_email, action_items(count), creator:users!created_by(name, email)"
       )
       .eq("workspace_id", wsId)
       .is("deleted_at", null)

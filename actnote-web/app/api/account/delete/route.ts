@@ -135,6 +135,14 @@ export async function POST(request: Request) {
     }
   }
 
+  // ── 회의 생성자·담당자 표시 스냅샷 (044) ─────────────────────────────
+  const { error: snapErr } = await admin.rpc("snapshot_meeting_attribution_on_user_delete", {
+    p_user_id: user.id,
+  });
+  if (snapErr) {
+    console.warn("[account/delete] snapshot attribution:", snapErr.message);
+  }
+
   // ── public.users 정리 ────────────────────────────────────────────────
   // auth.users ↔ public.users 사이에 FK CASCADE 없음.
   // deleteUser 만 호출하면 public.users·workspace_members 등 DB 데이터가 잔존한다.
