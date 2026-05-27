@@ -558,25 +558,42 @@ export default function MeetingDetailPage() {
       setDerivedDurationSec(null);
       return;
     }
-    const audio = document.createElement("audio");
+    const probe = async (): Promise<number | null> => {
+      const tryTag = (tag: "audio" | "video"): Promise<number | null> =>
+        new Promise((resolve) => {
+          const el =
+            tag === "audio"
+              ? document.createElement("audio")
+              : document.createElement("video");
+          let done = false;
+          const finish = (value: number | null) => {
+            if (done) return;
+            done = true;
+            el.removeAttribute("src");
+            el.load();
+            resolve(value);
+          };
+          el.preload = "metadata";
+          el.addEventListener("loadedmetadata", () => {
+            const d = el.duration;
+            if (Number.isFinite(d) && d > 0) finish(d);
+            else finish(null);
+          });
+          el.addEventListener("error", () => finish(null));
+          el.src = url;
+          el.load();
+        });
+      const fromVideo = await tryTag("video");
+      if (fromVideo != null) return fromVideo;
+      return await tryTag("audio");
+    };
     let cancelled = false;
-    const onMeta = () => {
+    void probe().then((seconds) => {
       if (cancelled) return;
-      const d = audio.duration;
-      if (Number.isFinite(d) && d > 0) setDerivedDurationSec(d);
-    };
-    const onError = () => {
-      if (!cancelled) setDerivedDurationSec(null);
-    };
-    audio.preload = "metadata";
-    audio.addEventListener("loadedmetadata", onMeta);
-    audio.addEventListener("error", onError);
-    audio.src = url;
+      setDerivedDurationSec(seconds);
+    });
     return () => {
       cancelled = true;
-      audio.removeEventListener("loadedmetadata", onMeta);
-      audio.removeEventListener("error", onError);
-      audio.src = "";
     };
   }, [meeting?.audio_file_url, meeting?.duration_seconds]);
 
