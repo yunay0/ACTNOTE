@@ -69,21 +69,30 @@ def _require_admin(user_id: str, workspace_id: str, sb_client) -> None:
 # ---------------------------------------------------------------------------
 
 def validate_for_publication(meeting_id: str, sb_client) -> tuple[bool, list[str]]:
-    """발행 가능 여부를 검증한다.
+    """발행 가능 여부를 검증한다 (045 RPC ``validate_meeting_for_publication`` 과 동일 규칙).
 
-    필수 조건:
+    필수 조건 (0.5.txt / DRAFT-008-002):
     - title 비어있지 않음
     - summary 비어있지 않음
-    - 유효한(open 또는 in_progress) 액션 아이템 최소 1개
+    - 유형별 필수 섹션 (standup: blockers / one_on_one: key_topics / other: key_points)
+    - action_items 가 존재하면 모든 필드 (assignee, due_date, content) 완전성
+
+    선택 (publish 차단 아님):
+    - action_items 수량 자체는 0 이어도 됨
+    - project_review 의 key_decisions / risks_and_issues 는 선택
+    - 1:1 의 follow_up 은 선택
 
     Returns:
-        (is_valid, missing_fields) — missing_fields는 is_valid=False일 때만 의미있음.
+        (is_valid, missing_fields)
     """
     missing: list[str] = []
 
     meeting_resp = (
         sb_client.table("meetings")
-        .select("title, summary")
+        .select(
+            "title, summary, meeting_type, "
+            "blockers, key_topics, key_points"
+        )
         .eq("id", meeting_id)
         .single()
         .execute()
@@ -95,16 +104,45 @@ def validate_for_publication(meeting_id: str, sb_client) -> tuple[bool, list[str
     if not (meeting.get("summary") or "").strip():
         missing.append("summary")
 
+    # 유형별 필수 섹션
+    meeting_type = (meeting.get("meeting_type") or "other").strip().lower()
+
+    def _is_blank(val: object) -> bool:
+        if val is None:
+            return True
+        if isinstance(val, str):
+            return not val.strip()
+        if isinstance(val, list):
+            return all(_is_blank(x) for x in val)
+        return False
+
+    if meeting_type == "standup" and _is_blank(meeting.get("blockers")):
+        missing.append("blockers")
+    elif meeting_type == "one_on_one" and _is_blank(meeting.get("key_topics")):
+        missing.append("key_topics")
+    elif meeting_type == "other" and _is_blank(meeting.get("key_points")):
+        missing.append("key_points")
+    # project_review 는 summary 외 필수 섹션 없음
+
+    # action_items 가 있으면 필드 완전성만 체크 (수량 자체는 선택)
     actions_resp = (
         sb_client.table("action_items")
-        .select("id", count="exact")
+        .select("id, content, assignee_user_id, due_date, valid_until, status")
         .eq("meeting_id", meeting_id)
+        .is_("valid_until", "null")
         .in_("status", ["open", "in_progress"])
         .execute()
     )
-    action_count = actions_resp.count or 0
-    if action_count < 1:
-        missing.append("action_items (유효한 항목 최소 1개 필요)")
+    actions = actions_resp.data or []
+    if actions:
+        has_incomplete = any(
+            (a.get("assignee_user_id") is None)
+            or (a.get("due_date") is None)
+            or (not (a.get("content") or "").strip())
+            for a in actions
+        )
+        if has_incomplete:
+            missing.append("action_item_fields")
 
     return len(missing) == 0, missing
 
@@ -203,21 +241,26 @@ def push_published_to_notion(
     workspace_id: str,
     sb_client,
 ) -> dict:
-    """published 상태 회의의 Notion 페이지 + 액션 티켓을 생성한다.
+    """PUB-003/PUB-004 — published 상태 회의의 Notion 회의록 + 액션 티켓을 생성한다.
 
-    워커의 ``meeting/publish`` 핸들러가 호출한다. 멱등성: 같은 회의에 대해 여러 번
-    호출되면 ``notion_page_id`` 가 이미 있는 경우 업데이트로 동작 (notion_sync 가 처리).
+    0.5.txt 분리 정책:
+      * INTEG-001(`meeting_db_id`) 설정됨 → push_meeting (PUB-003)
+      * INTEG-002(`action_db_id`) 설정됨 → push_action_items (PUB-004)
+      * 두 연동은 독립. 한쪽만 설정돼도 다른쪽이 작동.
+
+    워커의 ``meeting/publish`` 핸들러가 호출. 멱등성: 같은 회의에 대해 여러 번
+    호출되면 ``notion_page_id`` 가 이미 있는 경우 notion_sync 가 업데이트로 처리.
 
     Returns:
-        ``{"notion_page_id": str | None, "action_ticket_count": int}``
+        ``{"notion_page_id": str | None, "action_ticket_count": int,
+           "reauth_required": bool}``
 
     Raises:
         RuntimeError: Notion API 호출 실패 (Modal run_publish_fn retries=3 가 처리).
-
-    Note:
-        Notion 미연동 시 외부 동기화 없이 성공으로 반환한다 (로컬 QA / 선택 연동).
+        NotionReauthRequired 는 내부에서 잡아 reauth_required=True 로 반환 (DB 발행 유지).
     """
     from src.notion_sync import (
+        NotionReauthRequired,
         check_notion_integration,
         push_action_items as _push_action_items,
         push_meeting as _push_meeting,
@@ -229,7 +272,7 @@ def push_published_to_notion(
             workspace_id,
             meeting_id,
         )
-        return {"notion_page_id": None, "action_ticket_count": 0}
+        return {"notion_page_id": None, "action_ticket_count": 0, "reauth_required": False}
 
     meeting_resp = (
         sb_client.table("meetings")
@@ -255,36 +298,53 @@ def push_published_to_notion(
     )
     action_items_data = actions_resp.data or []
 
-    notion_page_id = _push_meeting(
-        meeting_id=meeting_id,
-        title=meeting_data.get("title") or "",
-        summary=meeting_data.get("summary") or "",
-        decisions=decision_texts,
-        action_items=action_items_data,
-        meeting_date=meeting_data.get("meeting_date"),
-        workspace_id=workspace_id,
-        sb_client=sb_client,
-    )
+    notion_page_id: str | None = None
+    ticket_ids: list[str] = []
+    reauth_required = False
 
-    sb_client.table("meetings").update(
-        {"notion_page_id": notion_page_id, "updated_at": _now_iso()}
-    ).eq("id", meeting_id).execute()
+    # PUB-003: 회의록 push (INTEG-001) — 독립 try
+    try:
+        notion_page_id = _push_meeting(
+            meeting_id=meeting_id,
+            title=meeting_data.get("title") or "",
+            summary=meeting_data.get("summary") or "",
+            decisions=decision_texts,
+            action_items=action_items_data,
+            meeting_date=meeting_data.get("meeting_date"),
+            workspace_id=workspace_id,
+            sb_client=sb_client,
+        )
+        if notion_page_id:
+            sb_client.table("meetings").update(
+                {"notion_page_id": notion_page_id, "updated_at": _now_iso()}
+            ).eq("id", meeting_id).execute()
+    except NotionReauthRequired as e:
+        _log.warning("PUB-003 push_meeting reauth required: %s", e)
+        reauth_required = True
 
-    ticket_ids = _push_action_items(
-        meeting_id=meeting_id,
-        meeting_page_id=notion_page_id,
-        action_items=action_items_data,
-        workspace_id=workspace_id,
-        sb_client=sb_client,
-    )
+    # PUB-004: 액션 티켓 (INTEG-002) — 독립 try.
+    # reauth_required 이미면 호출 자체 skip (같은 토큰).
+    if not reauth_required:
+        try:
+            ticket_ids = _push_action_items(
+                meeting_id=meeting_id,
+                meeting_page_id=notion_page_id,
+                action_items=action_items_data,
+                workspace_id=workspace_id,
+                sb_client=sb_client,
+            )
+        except NotionReauthRequired as e:
+            _log.warning("PUB-004 push_action_items reauth required: %s", e)
+            reauth_required = True
 
     _log.info(
-        "push_published_to_notion 완료: meeting_id=%s notion_page_id=%s tickets=%d",
-        meeting_id, notion_page_id, len(ticket_ids),
+        "push_published_to_notion 완료: meeting_id=%s notion_page_id=%s tickets=%d reauth=%s",
+        meeting_id, notion_page_id, len(ticket_ids), reauth_required,
     )
     return {
         "notion_page_id": notion_page_id,
         "action_ticket_count": len(ticket_ids),
+        "reauth_required": reauth_required,
     }
 
 

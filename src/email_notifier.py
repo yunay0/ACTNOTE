@@ -443,6 +443,143 @@ def render_analysis_complete_email(
     }
 
 
+# ---------------------------------------------------------------------------
+# SEC-009: Notion 토큰 만료 / 권한 회수 — Owner 재연동 안내
+# ---------------------------------------------------------------------------
+
+def render_reauth_required_email(
+    *,
+    workspace_name: str,
+    integration_settings_url: str,
+    app_url: str | None = None,
+) -> dict[str, str]:
+    """SEC-009 — Notion 토큰 invalid 시 Owner 에게 발송."""
+    safe_ws = escape(workspace_name)
+    safe_url = escape(integration_settings_url)
+    title = "Notion 연동이 끊어졌습니다 — 재연동이 필요합니다"
+    body = (
+        f'<p style="margin:0 0 16px 0;line-height:1.6">'
+        f'<b>{safe_ws}</b> 워크스페이스의 Notion 연동 토큰이 유효하지 않습니다.'
+        f'</p>'
+        f'<p style="margin:0 0 24px 0;line-height:1.6;color:#374151">'
+        f'권한이 회수되었거나 토큰이 만료되었을 수 있습니다. '
+        f'Notion 연동을 재설정해야 회의록 발행과 액션 티켓 자동 생성이 다시 동작합니다.'
+        f'</p>'
+        f'<a href="{safe_url}" '
+        f'style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;'
+        f'padding:12px 24px;border-radius:8px;font-weight:600">'
+        f'Notion 재연동하기</a>'
+    )
+    text = (
+        f"{workspace_name} 워크스페이스의 Notion 연동 토큰이 유효하지 않습니다.\n\n"
+        f"재연동 링크:\n{integration_settings_url}\n\n"
+        "Actnote 자동 발송"
+    )
+    return {
+        "subject": title,
+        "html": _wrap_html(title, body, app_url=app_url),
+        "text": text,
+    }
+
+
+# ---------------------------------------------------------------------------
+# WS-006-002 / WS-007 / NOTI-002: 접근 요청·승인·거절 메일 3종
+# ---------------------------------------------------------------------------
+
+def render_join_request_received_email(
+    *,
+    workspace_name: str,
+    requester_name: str,
+    requester_email: str,
+    review_url: str,
+    app_url: str | None = None,
+) -> dict[str, str]:
+    """WS-006-002 — Owner 에게 접근 요청 도착 알림."""
+    title = f"{escape(requester_name)}님이 워크스페이스 합류를 요청했습니다"
+    body = (
+        f'<p style="margin:0 0 16px 0;line-height:1.6">'
+        f'<b>{escape(workspace_name)}</b> 워크스페이스 합류 요청이 도착했습니다.'
+        f'</p>'
+        f'<div style="background:#f3f4f6;border-radius:8px;padding:16px;'
+        f'margin:0 0 24px 0;line-height:1.6">'
+        f'<div><b>{escape(requester_name)}</b></div>'
+        f'<div style="color:#6b7280;font-size:13px">{escape(requester_email)}</div>'
+        f'</div>'
+        f'<a href="{escape(review_url)}" '
+        f'style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;'
+        f'padding:12px 24px;border-radius:8px;font-weight:600">'
+        f'요청 검토하기</a>'
+    )
+    text = (
+        f"{requester_name}({requester_email})님이 {workspace_name} 합류를 요청했습니다.\n\n"
+        f"검토 링크:\n{review_url}\n"
+    )
+    return {
+        "subject": title,
+        "html": _wrap_html(title, body, app_url=app_url),
+        "text": text,
+    }
+
+
+def render_join_approved_email(
+    *,
+    workspace_name: str,
+    workspace_url: str,
+    app_url: str | None = None,
+) -> dict[str, str]:
+    """WS-007 / NOTI-002 — 요청자에게 승인 알림."""
+    title = f"{escape(workspace_name)} 워크스페이스 합류가 승인되었습니다"
+    body = (
+        f'<p style="margin:0 0 24px 0;line-height:1.6">'
+        f'<b>{escape(workspace_name)}</b> 워크스페이스 합류가 승인되었습니다. 이제 회의록을 함께 볼 수 있습니다.'
+        f'</p>'
+        f'<a href="{escape(workspace_url)}" '
+        f'style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;'
+        f'padding:12px 24px;border-radius:8px;font-weight:600">'
+        f'워크스페이스로 이동</a>'
+    )
+    text = (
+        f"{workspace_name} 합류가 승인되었습니다.\n\n"
+        f"이동:\n{workspace_url}\n"
+    )
+    return {
+        "subject": title,
+        "html": _wrap_html(title, body, app_url=app_url),
+        "text": text,
+    }
+
+
+def render_join_declined_email(
+    *,
+    workspace_name: str,
+    retry_url: str,
+    app_url: str | None = None,
+) -> dict[str, str]:
+    """WS-007 / NOTI-002 — 요청자에게 거절 알림."""
+    title = f"{escape(workspace_name)} 워크스페이스 합류 요청이 거절되었습니다"
+    body = (
+        f'<p style="margin:0 0 16px 0;line-height:1.6">'
+        f'<b>{escape(workspace_name)}</b> 워크스페이스 합류 요청이 거절되었습니다.'
+        f'</p>'
+        f'<p style="margin:0 0 24px 0;line-height:1.6;color:#374151">'
+        f'다른 워크스페이스를 찾거나 관리자에게 직접 문의 후 다시 요청할 수 있습니다.'
+        f'</p>'
+        f'<a href="{escape(retry_url)}" '
+        f'style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;'
+        f'padding:12px 24px;border-radius:8px;font-weight:600">'
+        f'다시 시도하기</a>'
+    )
+    text = (
+        f"{workspace_name} 합류 요청이 거절되었습니다.\n\n"
+        f"다시 시도:\n{retry_url}\n"
+    )
+    return {
+        "subject": title,
+        "html": _wrap_html(title, body, app_url=app_url),
+        "text": text,
+    }
+
+
 if __name__ == "__main__":
     from dotenv import load_dotenv
 

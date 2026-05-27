@@ -1,8 +1,8 @@
 """Claude Sonnet 4.6으로 회의록에서 요약·결정·액션 아이템을 JSON으로 추출한다.
 
 회의 유형(meeting_type)에 따라 ``prompts/templates/<type>.md`` 를 system prompt 로 로드한다.
-지원 유형 4종: ``standup``, ``project_review``, ``one_on_one``, ``workshop``.
-미지원 / NULL 인 경우 자동으로 ``default`` 로 폴백한다 (MTG-004).
+0.5.txt 단일 소스 기준 4종: ``standup``, ``project_review``, ``one_on_one``, ``other``.
+미지원 / NULL 인 경우 자동으로 ``other`` 로 폴백한다 (MTG-004-002).
 """
 
 from __future__ import annotations
@@ -34,22 +34,26 @@ MAX_RETRIES_API = 2
 # ---------------------------------------------------------------------------
 
 _TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "prompts" / "templates"
-_DEFAULT_TEMPLATE = "default"
+_DEFAULT_TEMPLATE = "other"  # 0.5.txt: 미지원/NULL → other 폴백
 _SUPPORTED_TYPES: set[str] = {
-    "default",
     "standup",
     "project_review",
     "one_on_one",
-    "workshop",
+    "other",
 }
 _TYPE_ALIAS: dict[str, str] = {
-    # 범용 폴백
-    "general": "default",
-    "기본": "default",
-    "일반": "default",
-    "other": "default",
-    "기타": "default",
-    # 스탠드업
+    # other 폴백
+    "default": "other",
+    "general": "other",
+    "기본": "other",
+    "일반": "other",
+    "기타": "other",
+    "brainstorming": "other",
+    "workshop": "other",
+    "planning": "other",
+    "기획": "other",
+    "kickoff": "other",
+    # standup
     "team_standup": "standup",
     "sprint": "standup",
     "sprint_review": "standup",
@@ -57,13 +61,24 @@ _TYPE_ALIAS: dict[str, str] = {
     "데일리": "standup",
     "스프린트": "standup",
     "daily": "standup",
-    # 1:1
+    # one_on_one
     "1on1": "one_on_one",
     "1:1": "one_on_one",
     "oneonone": "one_on_one",
-    # 프로젝트 리뷰
+    # project_review
     "project_update": "project_review",
     "status_review": "project_review",
+    "retro": "project_review",
+    "회고": "project_review",
+    "postmortem": "project_review",
+    "client": "project_review",
+    "external": "project_review",
+    "customer": "project_review",
+    "board": "project_review",
+    "all_hands": "project_review",
+    "town_hall": "project_review",
+    "townhall": "project_review",
+    "all_hands_meeting": "project_review",
 }
 _template_cache: dict[str, str] = {}
 
@@ -71,14 +86,14 @@ _template_cache: dict[str, str] = {}
 def _resolve_template_name(meeting_type: str | None) -> str:
     """meeting_type 입력값을 표준 템플릿 이름으로 정규화한다.
 
-    NULL/빈 문자열/미지원 type 은 모두 ``default`` 로 폴백.
+    NULL/빈 문자열/미지원 type 은 모두 ``other`` 로 폴백 (0.5.txt).
     """
     if not meeting_type:
         return _DEFAULT_TEMPLATE
     key = meeting_type.strip().lower().replace("-", "_").replace(" ", "_")
     key = _TYPE_ALIAS.get(key, key)
     if key in _SUPPORTED_TYPES:
-        return key if key != "general" else _DEFAULT_TEMPLATE
+        return key
     return _DEFAULT_TEMPLATE
 
 
@@ -147,11 +162,17 @@ Output schema:
 
 
 def _system_prompt_base_fallback_body() -> str:
-    dp = Path(__file__).resolve().parents[1] / "prompts" / "templates" / "default.md"
-    try:
-        return dp.read_text(encoding="utf-8")
-    except OSError:
-        return _read_default_template_text()
+    """디스크 템플릿 전부 누락 시 사용할 인라인 fallback.
+
+    other.md → default.md → 코드 내장 텍스트 순으로 시도.
+    """
+    base_dir = Path(__file__).resolve().parents[1] / "prompts" / "templates"
+    for name in ("other.md", "default.md"):
+        try:
+            return (base_dir / name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+    return _read_default_template_text()
 
 
 _SYSTEM_PROMPT_BASE_FALLBACK = _system_prompt_base_fallback_body()
@@ -226,8 +247,8 @@ def extract(
             Anthropic API는 기본적으로 API 데이터를 학습에 미사용.
             metadata는 요청 추적/감사용으로만 사용됨.
         workspace_id: 감사 metadata에 포함할 워크스페이스 ID.
-        meeting_type: 회의 유형 (MTG-004). ``standup``/``project_review``/``one_on_one``/
-            ``workshop`` 또는 alias. 미지원/NULL 이면 default 폴백.
+        meeting_type: 회의 유형 (MTG-004-002, 0.5.txt). ``standup``/``project_review``/
+            ``one_on_one``/``other`` 또는 alias. 미지원/NULL 이면 ``other`` 폴백.
     """
     tr = tracker if tracker is not None else cost_tracker.default_tracker
     system_prompt = _build_system_prompt(previous_context, meeting_type)
@@ -384,14 +405,17 @@ def _normalize_result(data: dict) -> ExtractedResult:
         "referenced_documents": referenced_documents,
         "document_links": [],
     }
-    if "key_topics" in data:
-        out["key_topics"] = _normalize_multiline_field(data["key_topics"])
-    if "risks_and_issues" in data:
-        out["risks_and_issues"] = _normalize_multiline_field(data["risks_and_issues"])
-    if "follow_up" in data:
-        out["follow_up"] = _normalize_multiline_field(data["follow_up"])
-    if "blockers" in data:
-        out["blockers"] = _normalize_multiline_field(data["blockers"])
+    # DRAFT-008-002 / MTG-004-002: 4종 유형별 추가 섹션 정규화
+    for field in (
+        "blockers",
+        "key_topics",
+        "follow_up",
+        "key_decisions",
+        "risks_and_issues",
+        "key_points",
+    ):
+        if field in data:
+            out[field] = _normalize_multiline_field(data[field])
     return out
 
 
@@ -422,8 +446,13 @@ if __name__ == "__main__":
     # --- 테스트 0: MTG-004 템플릿 로드 검증 (API 호출 없음) ---
     _console.print("\n[bold cyan]=== 테스트 0: MTG-004 템플릿 로드/폴백 검증 ===[/]")
     for case in [
-        ("default", "default"),
-        (None, "default"),
+        ("other", "other"),
+        (None, "other"),
+        ("default", "other"),
+        ("기타", "other"),
+        ("unknown_type_xyz", "other"),
+        ("workshop", "other"),
+        ("brainstorming", "other"),
         ("standup", "standup"),
         ("team_standup", "standup"),
         ("sprint", "standup"),
@@ -432,13 +461,13 @@ if __name__ == "__main__":
         ("project_review", "project_review"),
         ("project_update", "project_review"),
         ("status_review", "project_review"),
+        ("retro", "project_review"),
+        ("client", "project_review"),
+        ("board", "project_review"),
+        ("all_hands", "project_review"),
         ("one_on_one", "one_on_one"),
         ("1:1", "one_on_one"),
         ("1on1", "one_on_one"),
-        ("workshop", "workshop"),
-        ("other", "default"),
-        ("기타", "default"),
-        ("unknown_type_xyz", "default"),
     ]:
         in_type, expected = case
         resolved = _resolve_template_name(in_type)
@@ -512,9 +541,9 @@ if __name__ == "__main__":
     _console.print("\n[bold cyan]=== 테스트 4: 유형별 system prompt 구별 검증 ===[/]")
     type_samples = [
         ("standup", "어제 한 일, 오늘 할 일, 블로커"),
-        ("project_review", "마일스톤, 리스크, 범위 변경"),
-        ("one_on_one", "개인 성장, 커리어 목표, 1:1"),
-        ("workshop", "워크숍 아젠다, 그룹 활동, 결과물"),
+        ("project_review", "마일스톤, 리스크, key decisions"),
+        ("one_on_one", "key topics, follow up, 1:1"),
+        ("other", "기타 — Summary + key_points 필수"),
     ]
     prompts: dict[str, str] = {}
     for t, desc in type_samples:

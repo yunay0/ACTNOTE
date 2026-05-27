@@ -1,87 +1,210 @@
 /**
- * Draft 화면 "AI ANALYSIS RESULTS" 섹션: `meetings.meeting_type`(및 레거시 alias)별 필드 순서·라벨.
- * 백엔드 `prompts/templates/*.md` / `meetings.ai_draft_notes` 키와 정합 유지 (`key_topics`, `risks_and_issues`, …).
+ * DRAFT-008-002 / MTG-004-002 — Draft 화면 "AI ANALYSIS RESULTS" 섹션 레이아웃.
+ *
+ * 단일 소스: 0.5.txt + 기획 추가 문서 (2026-05-27 동욱·기획팀 결정).
+ * 4종 유형 + 유형별 고정 순서 + 필수/선택 구분.
+ *
+ * 백엔드 정합:
+ *   - `prompts/templates/*.md` 가 emit 하는 JSON 키 (`blockers`, `key_topics`,
+ *     `key_decisions`, `risks_and_issues`, `follow_up`, `key_points`)
+ *   - `meetings` 신규 컬럼 (`migrations/044`)
+ *   - `validate_meeting_for_publication` RPC (`migrations/045`) 가 필수 섹션 검증
+ *
+ * Action Items 는 별도 컴포넌트 (`MeetingDraftActionItemsSection`) 가 렌더링.
  */
 
+// ---------------------------------------------------------------------------
+// 타입
+// ---------------------------------------------------------------------------
+
 export type MeetingAnalysisCanonical =
+  | "standup"
   | "project_review"
   | "one_on_one"
-  | "standup"
-  | "workshop";
+  | "other";
 
+/** 본문 섹션 키 (Action Items 는 별도) */
 export type MeetingAnalysisDraftKey =
   | "summary"
+  | "blockers"
   | "key_topics"
+  | "key_decisions"
   | "risks_and_issues"
   | "follow_up"
-  | "blockers"
-  | "decisions";
+  | "key_points";
 
 export interface MeetingAnalysisSegment {
-  /** UI에 쓰이는 블록 식별자 */
+  /** UI 블록 식별자 = LLM JSON 키 = DB 컬럼명 */
   draftKey: MeetingAnalysisDraftKey;
-  /** 필드 헤더 (영어 카피) */
+  /** 영문 헤더 */
   title: string;
-  /** 카드 안 회색 부제목 (옵션) */
+  /** 카드 회색 부제목 (옵션) */
   subtitle?: string;
+  /** 필수 섹션 여부 — publish 차단 기준 (045 RPC) */
+  required: boolean;
 }
 
-/** DB/폼 문자열값을 레이아웃 스위치용으로 표준화 */
+// ---------------------------------------------------------------------------
+// canonical 정규화 — _TYPE_ALIAS (src/llm_extractor.py) 와 동일 매핑
+// ---------------------------------------------------------------------------
+
 export function canonicalMeetingAnalysisType(
   raw: string | null | undefined,
 ): MeetingAnalysisCanonical {
-  const key = typeof raw === "string" ? raw.trim().toLowerCase().replace(/-/g, "_") : "";
-  if (key === "project_review" || key === "project_update" || key === "status_review") {
+  const key =
+    typeof raw === "string" ? raw.trim().toLowerCase().replace(/-/g, "_") : "";
+
+  // standup
+  if (
+    key === "standup" ||
+    key === "team_standup" ||
+    key === "sprint" ||
+    key === "sprint_planning" ||
+    key === "sprint_review" ||
+    key === "daily" ||
+    key === "데일리" ||
+    key === "스프린트"
+  ) {
+    return "standup";
+  }
+
+  // project_review (retro/client/board/all_hands 등 흡수)
+  if (
+    key === "project_review" ||
+    key === "project_update" ||
+    key === "status_review" ||
+    key === "retro" ||
+    key === "회고" ||
+    key === "postmortem" ||
+    key === "client" ||
+    key === "external" ||
+    key === "customer" ||
+    key === "board" ||
+    key === "all_hands" ||
+    key === "town_hall" ||
+    key === "townhall" ||
+    key === "all_hands_meeting"
+  ) {
     return "project_review";
   }
-  if (key === "one_on_one" || key === "1on1" || key === "oneonone") return "one_on_one";
-  if (key === "standup" || key === "team_standup") return "standup";
-  if (key === "workshop") return "workshop";
-  return "workshop";
+
+  // one_on_one
+  if (key === "one_on_one" || key === "1on1" || key === "1:1" || key === "oneonone") {
+    return "one_on_one";
+  }
+
+  // 나머지는 모두 other (workshop, brainstorming, planning, default 등 포함)
+  return "other";
 }
 
-export function meetingAnalysisSegments(mt: MeetingAnalysisCanonical): MeetingAnalysisSegment[] {
+// ---------------------------------------------------------------------------
+// 유형별 섹션 순서 (0.5.txt + 기획 추가 문서)
+//   - 필수 섹션은 항상 노출
+//   - 선택 섹션은 LLM 결과 없을 시 빈 상태로 노출 → Edit Mode 추가 가능
+//   - Owner 는 선택 섹션이 비어도 [Publish] 가능
+// ---------------------------------------------------------------------------
+
+export function meetingAnalysisSegments(
+  mt: MeetingAnalysisCanonical,
+): MeetingAnalysisSegment[] {
   switch (mt) {
     case "standup":
+      // 1. Summary  2. Blockers  (3. Action Items 별도)
       return [
-        { draftKey: "summary", title: "Summary" },
-        { draftKey: "blockers", title: "Blockers", subtitle: "(if any) Issues needing immediate attention" },
+        { draftKey: "summary", title: "Summary", required: true },
+        {
+          draftKey: "blockers",
+          title: "Blockers",
+          subtitle: "Impediments raised by participants",
+          required: true,
+        },
       ];
+
     case "project_review":
+      // 1. Key Decisions  2. Summary  3. Risks & Issues  (4. Action Items 별도)
       return [
-        { draftKey: "summary", title: "Summary" },
-        { draftKey: "key_topics", title: "Key Topics" },
-        { draftKey: "risks_and_issues", title: "Risks & Issues", subtitle: "Flagged risks or unresolved problems" },
-        { draftKey: "decisions", title: "Decisions Made" },
+        {
+          draftKey: "key_decisions",
+          title: "Key Decisions",
+          subtitle: "Confirmed decisions about project direction",
+          required: false,
+        },
+        { draftKey: "summary", title: "Summary", required: true },
+        {
+          draftKey: "risks_and_issues",
+          title: "Risks & Issues",
+          subtitle: "Flagged risks or unresolved problems",
+          required: false,
+        },
       ];
+
     case "one_on_one":
+      // 1. Key Topics  2. Summary  3. Follow-up  (4. Action Items 별도)
       return [
-        { draftKey: "summary", title: "Summary" },
-        { draftKey: "key_topics", title: "Key Topics", subtitle: "Main themes discussed" },
-        { draftKey: "follow_up", title: "Follow-up", subtitle: "Items to revisit in the next 1:1" },
+        {
+          draftKey: "key_topics",
+          title: "Key Topics",
+          subtitle: "Main themes discussed",
+          required: true,
+        },
+        { draftKey: "summary", title: "Summary", required: true },
+        {
+          draftKey: "follow_up",
+          title: "Follow-up",
+          subtitle: "Items to revisit in the next 1:1",
+          required: false,
+        },
       ];
-    case "workshop":
+
+    case "other":
     default:
+      // 1. Key Points  2. Summary  (3. Action Items 별도)
       return [
-        { draftKey: "summary", title: "Summary" },
-        { draftKey: "key_topics", title: "Key Topics" },
-        { draftKey: "decisions", title: "Decisions Made" },
+        {
+          draftKey: "key_points",
+          title: "Key Points",
+          subtitle: "Most important takeaways from this meeting",
+          required: true,
+        },
+        { draftKey: "summary", title: "Summary", required: true },
       ];
   }
 }
 
-export function meetingAnalysisSegmentsForRow(raw: string | null | undefined): MeetingAnalysisSegment[] {
+export function meetingAnalysisSegmentsForRow(
+  raw: string | null | undefined,
+): MeetingAnalysisSegment[] {
   return meetingAnalysisSegments(canonicalMeetingAnalysisType(raw));
 }
 
+// ---------------------------------------------------------------------------
+// Edit Mode 폼 상태 — 6개 신규 섹션 전부 포함
+// ---------------------------------------------------------------------------
+
 export interface AnalysisExtrasState {
+  blockers: string;
   key_topics: string;
+  key_decisions: string;
   risks_and_issues: string;
   follow_up: string;
-  blockers: string;
+  key_points: string;
 }
 
-export function readDraftAnalysisText(doc: Record<string, unknown>, field: string): string {
+export function emptyAnalysisExtras(): AnalysisExtrasState {
+  return {
+    blockers: "",
+    key_topics: "",
+    key_decisions: "",
+    risks_and_issues: "",
+    follow_up: "",
+    key_points: "",
+  };
+}
+
+export function readDraftAnalysisText(
+  doc: Record<string, unknown>,
+  field: string,
+): string {
   const v = doc[field];
   if (typeof v === "string") return v;
   if (Array.isArray(v)) {
@@ -93,31 +216,50 @@ export function readDraftAnalysisText(doc: Record<string, unknown>, field: strin
   return "";
 }
 
-/**
- * 편집 저장 시: 현재 회의 유형에 해당하는 분석 필드만 `draft` 문서에 반영하고 나머지 키는 유지한다.
- */
+// ---------------------------------------------------------------------------
+// 편집 저장: 현재 회의 유형에 해당하는 분석 필드만 draft 에 반영
+// ---------------------------------------------------------------------------
+
 export function mergeAnalysisExtrasIntoDraftDoc(
   base: Record<string, unknown>,
   meetingType: string | null,
-  extras: AnalysisExtrasState,
+  extras: Partial<AnalysisExtrasState>,
 ): Record<string, unknown> {
   const out = { ...base };
   const canon = canonicalMeetingAnalysisType(meetingType ?? undefined);
+  const allowed = new Set(
+    meetingAnalysisSegments(canon).map((s) => s.draftKey),
+  );
 
-  const setBlock = (k: keyof AnalysisExtrasState, allow: boolean) => {
-    if (!allow) return;
-    const val = extras[k].trim();
+  const setBlock = (k: keyof AnalysisExtrasState) => {
+    if (!allowed.has(k as MeetingAnalysisDraftKey)) {
+      // 현재 유형에 속하지 않는 필드는 건드리지 않음 (재분석/유형 변경 시 보존)
+      return;
+    }
+    const raw = extras[k];
+    if (raw === undefined) return; // 호출자가 전달하지 않은 키는 그대로 두기
+    const val = raw.trim();
     if (val) out[k] = val;
     else delete out[k];
   };
 
-  setBlock(
-    "key_topics",
-    canon === "project_review" || canon === "one_on_one" || canon === "workshop",
-  );
-  setBlock("risks_and_issues", canon === "project_review");
-  setBlock("follow_up", canon === "one_on_one");
-  setBlock("blockers", canon === "standup");
-
+  (Object.keys(extras) as (keyof AnalysisExtrasState)[]).forEach(setBlock);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// publish 검증 — 045 RPC 와 동일 규칙을 프론트에서 미리 체크
+// (서버 응답 기다리지 않고 즉시 사용자 안내)
+// ---------------------------------------------------------------------------
+
+export function getMissingRequiredSegments(
+  meetingType: string | null,
+  doc: Record<string, unknown>,
+): MeetingAnalysisSegment[] {
+  const segs = meetingAnalysisSegments(canonicalMeetingAnalysisType(meetingType));
+  return segs.filter((s) => {
+    if (!s.required) return false;
+    const val = readDraftAnalysisText(doc, s.draftKey).trim();
+    return val.length === 0;
+  });
 }

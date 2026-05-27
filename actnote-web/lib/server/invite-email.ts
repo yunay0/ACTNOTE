@@ -123,7 +123,10 @@ export async function sendViaSmtp(
   }
 }
 
-/** POST https://api.resend.com/emails — no extra npm dependency. */
+/**
+ * @deprecated Resend 미사용 결정 (2026-05-26 다혜님). 새 코드는 ``sendViaSmtp`` 만 사용.
+ * 이 함수는 외부 호출자(있다면) 보호를 위해 남겨두지만, 운영 라우트에서는 호출하지 않는다.
+ */
 export async function sendViaResend(
   to: string,
   payload: InviteMailBody
