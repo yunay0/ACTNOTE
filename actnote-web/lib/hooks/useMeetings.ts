@@ -7,11 +7,7 @@ import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 
-function rowToMeeting(m: Record<string, unknown>): Meeting {
-  // action_items는 Supabase nested select count: [{ count: N }] 형태로 반환됨
-  const countArr = m.action_items as { count: number }[] | null;
-  const action_items_count = countArr?.[0]?.count ?? 0;
-
+function rowToMeeting(m: Record<string, unknown>, actionItemsCount: number): Meeting {
   // Supabase nested join (`creator:users!created_by(name, email)`)는 단일 row 객체 또는 배열로 반환.
   const rawCreator = m.creator;
   const creatorObj = (Array.isArray(rawCreator) ? rawCreator[0] : rawCreator) as
@@ -47,7 +43,7 @@ function rowToMeeting(m: Record<string, unknown>): Meeting {
     workspace_id: m.workspace_id as string,
     participants: (m.participants as string[] | null) ?? [],
     meeting_type: (m.meeting_type as string | null) ?? null,
-    action_items_count,
+    action_items_count: actionItemsCount,
     error_message: (m.error_message as string | null) ?? null,
     creator_name,
     creator_email,
@@ -65,16 +61,37 @@ export function useMeetings() {
 
   const loadMeetings = useCallback(async (wsId: string) => {
     const supabase = createClient();
-    const { data } = await (supabase as any)
-      .from("meetings")
-      .select(
-        "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, audio_file_name, workspace_id, participants, meeting_type, error_message, created_by, creator_display_name, creator_email, action_items(count), creator:users!created_by(name, email)"
-      )
-      .eq("workspace_id", wsId)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false });
+    const [{ data: meetingsData }, { data: currentActions }] = await Promise.all([
+      (supabase as any)
+        .from("meetings")
+        .select(
+          "id, title, status, approval_status, created_at, meeting_date, summary, audio_file_url, audio_file_name, workspace_id, participants, meeting_type, error_message, created_by, creator_display_name, creator_email, creator:users!created_by(name, email)"
+        )
+        .eq("workspace_id", wsId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false }),
+      (supabase as any)
+        .from("action_items")
+        .select("meeting_id")
+        .eq("workspace_id", wsId)
+        .is("valid_until", null)
+        .neq("status", "cancelled"),
+    ]);
 
-    if (data) setMeetings((data as Record<string, unknown>[]).map(rowToMeeting));
+    if (!meetingsData) return;
+
+    const countByMeetingId = new Map<string, number>();
+    for (const row of (currentActions ?? []) as Array<{ meeting_id?: string | null }>) {
+      const meetingId = typeof row.meeting_id === "string" ? row.meeting_id : "";
+      if (!meetingId) continue;
+      countByMeetingId.set(meetingId, (countByMeetingId.get(meetingId) ?? 0) + 1);
+    }
+
+    setMeetings(
+      (meetingsData as Record<string, unknown>[]).map((row) =>
+        rowToMeeting(row, countByMeetingId.get(String(row.id ?? "")) ?? 0),
+      ),
+    );
   }, []);
 
   useEffect(() => {
