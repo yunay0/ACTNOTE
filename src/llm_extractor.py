@@ -247,8 +247,8 @@ def extract(
             Anthropic API는 기본적으로 API 데이터를 학습에 미사용.
             metadata는 요청 추적/감사용으로만 사용됨.
         workspace_id: 감사 metadata에 포함할 워크스페이스 ID.
-        meeting_type: 회의 유형 (MTG-004). ``standup``/``project_review``/``one_on_one``/
-            ``workshop`` 또는 alias. 미지원/NULL 이면 default 폴백.
+        meeting_type: 회의 유형 (MTG-004-002, 0.5.txt). ``standup``/``project_review``/
+            ``one_on_one``/``other`` 또는 alias. 미지원/NULL 이면 ``other`` 폴백.
     """
     tr = tracker if tracker is not None else cost_tracker.default_tracker
     system_prompt = _build_system_prompt(previous_context, meeting_type)

@@ -102,10 +102,19 @@ class NotionReauthRequired(RuntimeError):
 
 
 def _mark_integration_invalid(workspace_id: str, sb_client, *, error_code: str) -> None:
-    """integrations row 에 last_error 마킹 (재인증 필요 상태)."""
+    """integrations row 에 last_error / disconnected_at 마킹 (재인증 필요 상태).
+
+    disconnected_at 은 R10 (reauth 알림 dedupe) 기준. 같은 토큰 invalid 응답이
+    짧은 간격으로 반복될 때 알림이 스팸되지 않도록 한다.
+    """
     try:
+        now = _now_iso()
         sb_client.table("integrations").update(
-            {"last_error": error_code, "last_sync_at": _now_iso()}
+            {
+                "last_error": error_code,
+                "disconnected_at": now,
+                "last_sync_at": now,
+            }
         ).eq("workspace_id", workspace_id).eq("platform", "notion").execute()
     except Exception as e:  # noqa: BLE001 — DB 업데이트 실패는 알림 트리거에 영향 X
         _log.warning(
