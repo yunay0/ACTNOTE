@@ -7,7 +7,7 @@ interface DraftGuidanceSidebarProps {
   publishBlockedForActions: boolean;
 }
 
-/** Draft 오른쪽 패널: 안내 카드·CAUTION (Figma 157:11140). 부모가 폭·sticky를 제어. */
+/** Draft 본문 오른쪽 안내 카드·CAUTION (Figma Draft Edit Mode). 단일 화면 그리드 안 sticky 배치. */
 export function DraftGuidanceSidebar(props: DraftGuidanceSidebarProps): ReactElement {
   return (
     <div className="flex w-full flex-col gap-4">

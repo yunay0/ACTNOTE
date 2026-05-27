@@ -1237,15 +1237,20 @@ export default function MeetingDetailPage() {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <div className={`min-h-0 flex-1 overflow-y-auto p-10 ${scrollBottomPad}`}>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className={`min-h-0 flex-1 overflow-y-auto ${scrollBottomPad}`}>
           <div
-            className={`w-full ${
-              showMdDraftRightRail
-                ? "mr-auto ml-0 max-w-[min(680px,100%)]"
-                : "mx-auto flex max-w-3xl flex-col gap-10"
+            className={`mx-auto w-full px-6 py-8 md:px-10 ${
+              showMdDraftRightRail ? "max-w-[1400px]" : "max-w-3xl"
             }`}
           >
+            <div
+              className={
+                showMdDraftRightRail
+                  ? "grid grid-cols-1 items-start gap-8 md:grid-cols-[minmax(0,1fr)_min(340px,30%)] md:gap-10"
+                  : undefined
+              }
+            >
             <div className={`min-w-0 space-y-6 ${canEdit ? "" : "w-full"}`}>
           {/* 뒤로가기 */}
           <button onClick={() => router.push("/meetings")} className="inline-flex items-center gap-1.5 text-sm text-[#64748b] hover:text-[#0a2540] transition-colors">
@@ -1608,51 +1613,54 @@ export default function MeetingDetailPage() {
           ) : null}
             </div>
 
+              {showMdDraftRightRail ? (
+                <div className="hidden min-w-0 md:block">
+                  <div className="sticky top-6">
+                    {transcriptSideOpen ? (
+                      <aside
+                        className="flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden rounded-xl border border-[#e2e8f0] bg-white shadow-sm"
+                        aria-label="Transcript"
+                      >
+                        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e2e8f0] px-4 py-3">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <FileText className="h-4 w-4 shrink-0 text-[#2e5c8a]" aria-hidden />
+                            <p className="text-[14px] font-bold text-[#0a2540]">Transcript</p>
+                          </div>
+                          <button
+                            type="button"
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
+                            aria-label="Close transcript panel"
+                            onClick={() => setTranscriptPanelOpen(false)}
+                          >
+                            <X className="h-4 w-4" aria-hidden />
+                          </button>
+                        </div>
+                        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4">
+                          <TranscriptViewer
+                            bare
+                            transcripts={transcriptLines}
+                            speakerMapping={transcriptSpeakerMapping}
+                            members={members}
+                          />
+                        </div>
+                      </aside>
+                    ) : guidanceRailEligible ? (
+                      <DraftGuidanceSidebar
+                        publishBlockedForActions={Boolean(canEdit && publishBlockedByActions)}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
             {guidanceRailEligible && !transcriptPanelOpen ? (
-              <div className="mt-10 shrink-0 md:hidden">
+              <div className="mt-8 md:hidden">
                 <DraftGuidanceSidebar publishBlockedForActions={Boolean(canEdit && publishBlockedByActions)} />
               </div>
             ) : null}
           </div>
         </div>
-
-        {showMdDraftRightRail ? (
-          <div className="hidden min-h-0 w-[456px] shrink-0 flex-col overflow-hidden border-l border-[#e2e8f0] bg-[#f8fafc] md:flex">
-            {transcriptSideOpen ? (
-              <aside
-                className="flex min-h-0 flex-1 flex-col border-[#e2e8f0] bg-white"
-                aria-label="Transcript"
-              >
-                <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e2e8f0] px-4 py-3">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <FileText className="h-4 w-4 shrink-0 text-[#2e5c8a]" aria-hidden />
-                    <p className="text-[14px] font-bold text-[#0a2540]">Transcript</p>
-                  </div>
-                  <button
-                    type="button"
-                    className="flex h-8 w-8 items-center justify-center rounded-lg text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]"
-                    aria-label="Close transcript panel"
-                    onClick={() => setTranscriptPanelOpen(false)}
-                  >
-                    <X className="h-4 w-4" aria-hidden />
-                  </button>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4">
-                  <TranscriptViewer
-                    bare
-                    transcripts={transcriptLines}
-                    speakerMapping={transcriptSpeakerMapping}
-                    members={members}
-                  />
-                </div>
-              </aside>
-            ) : guidanceRailEligible ? (
-              <div className="min-h-0 flex-1 overflow-y-auto p-5">
-                <DraftGuidanceSidebar publishBlockedForActions={Boolean(canEdit && publishBlockedByActions)} />
-              </div>
-            ) : null}
-          </div>
-        ) : null}
       </div>
 
       {analyzingFixedChrome ? (
@@ -1675,9 +1683,7 @@ export default function MeetingDetailPage() {
         <div
           role="toolbar"
           aria-label="Draft actions"
-          className={`fixed bottom-0 left-[240px] z-[42] flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] bg-white/95 px-6 py-4 shadow-[0_-4px_24px_rgba(10,37,64,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/90 ${
-            transcriptSideOpen ? "right-0 md:right-[456px]" : "right-0"
-          }`}
+          className="fixed bottom-0 left-[240px] right-0 z-[42] flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] bg-white/95 px-6 py-4 shadow-[0_-4px_24px_rgba(10,37,64,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/90"
         >
           {!editMode ? (
             <button
