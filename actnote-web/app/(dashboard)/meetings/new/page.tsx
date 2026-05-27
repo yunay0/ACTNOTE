@@ -468,6 +468,7 @@ function NewMeetingPageInner() {
 
     try {
       const supabase = createClient();
+      const localDurationSeconds = await readMediaDurationSeconds(file);
       const {
         data: { user },
       } = await supabase.auth.getUser();
@@ -508,24 +509,28 @@ function NewMeetingPageInner() {
         meetingId = useCheckpoint.meetingId;
         audioPath = useCheckpoint.audioPath;
       } else if (ridTrim) {
+        const updatePayload: Record<string, unknown> = {
+          // 탈퇴 사용자 회의 재첨부 시: 현재 수행자를 새 creator로 승계
+          // (storage/meetings 업로드 RLS + creator 권한 정합)
+          created_by: user.id,
+          title: title.trim(),
+          status: "uploaded",
+          meeting_date: new Date(datetime).toISOString(),
+          audio_file_size_bytes: file.size,
+          audio_file_name: file.name,
+          meeting_type: meetingType.trim(),
+          description: description.trim() || null,
+          responsible_user_id: responsibleUserId,
+          participants: participants.map((p) => p.value),
+          error_message: null,
+          ...attributionSnapshots,
+        };
+        if (localDurationSeconds != null) {
+          updatePayload.duration_seconds = localDurationSeconds;
+        }
         const { data: updatedRow, error: updErr } = await (supabase as any)
           .from("meetings")
-          .update({
-            // 탈퇴 사용자 회의 재첨부 시: 현재 수행자를 새 creator로 승계
-            // (storage/meetings 업로드 RLS + creator 권한 정합)
-            created_by: user.id,
-            title: title.trim(),
-            status: "uploaded",
-            meeting_date: new Date(datetime).toISOString(),
-            audio_file_size_bytes: file.size,
-            audio_file_name: file.name,
-            meeting_type: meetingType.trim(),
-            description: description.trim() || null,
-            responsible_user_id: responsibleUserId,
-            participants: participants.map((p) => p.value),
-            error_message: null,
-            ...attributionSnapshots,
-          })
+          .update(updatePayload)
           .eq("id", ridTrim)
           .eq("workspace_id", workspaceId)
           .select("id")
@@ -553,22 +558,26 @@ function NewMeetingPageInner() {
           storageUploadDone: false,
         };
       } else {
+        const insertPayload: Record<string, unknown> = {
+          title: title.trim(),
+          status: "uploaded",
+          workspace_id: workspaceId,
+          created_by: user.id,
+          meeting_date: new Date(datetime).toISOString(),
+          audio_file_size_bytes: file.size,
+          audio_file_name: file.name,
+          meeting_type: meetingType.trim(),
+          description: description.trim() || null,
+          responsible_user_id: responsibleUserId,
+          participants: participants.map((p) => p.value),
+          ...attributionSnapshots,
+        };
+        if (localDurationSeconds != null) {
+          insertPayload.duration_seconds = localDurationSeconds;
+        }
         const { data: meetingRow, error: insertError } = await (supabase as any)
           .from("meetings")
-          .insert({
-            title: title.trim(),
-            status: "uploaded",
-            workspace_id: workspaceId,
-            created_by: user.id,
-            meeting_date: new Date(datetime).toISOString(),
-            audio_file_size_bytes: file.size,
-            audio_file_name: file.name,
-            meeting_type: meetingType.trim(),
-            description: description.trim() || null,
-            responsible_user_id: responsibleUserId,
-            participants: participants.map((p) => p.value),
-            ...attributionSnapshots,
-          })
+          .insert(insertPayload)
           .select("id")
           .single();
 
@@ -1642,6 +1651,49 @@ function Field({ label, required, children }: { label: string; required?: boolea
       {children}
     </div>
   );
+}
+
+/**
+ * Read media duration from local upload (audio/video).
+ * Returns rounded seconds or null when metadata is unavailable.
+ */
+async function readMediaDurationSeconds(file: File): Promise<number | null> {
+  if (!file) return null;
+  const objectUrl = URL.createObjectURL(file);
+  const tryTag = (tag: "audio" | "video"): Promise<number | null> =>
+    new Promise((resolve) => {
+      const el =
+        tag === "audio"
+          ? document.createElement("audio")
+          : document.createElement("video");
+      let settled = false;
+      const cleanup = () => {
+        el.removeAttribute("src");
+        el.load();
+      };
+      const finish = (seconds: number | null) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(seconds);
+      };
+      el.preload = "metadata";
+      el.addEventListener("loadedmetadata", () => {
+        const d = el.duration;
+        if (Number.isFinite(d) && d > 0) finish(Math.round(d));
+        else finish(null);
+      });
+      el.addEventListener("error", () => finish(null));
+      el.src = objectUrl;
+      el.load();
+    });
+  try {
+    const fromVideo = await tryTag("video");
+    if (fromVideo != null) return fromVideo;
+    return await tryTag("audio");
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 export default function NewMeetingPage(): JSX.Element {
