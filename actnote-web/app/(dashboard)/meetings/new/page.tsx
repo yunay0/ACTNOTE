@@ -282,6 +282,9 @@ function NewMeetingPageInner() {
       setReattachLoadErr(null);
 
       const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       const { data: row, error } = await (supabase as any)
         .from("meetings")
         .select(
@@ -322,7 +325,8 @@ function NewMeetingPageInner() {
       setParticipants(partList.map((em) => ({ id: crypto.randomUUID(), value: String(em) })));
 
       const resp = typeof row.responsible_user_id === "string" ? row.responsible_user_id : null;
-      setResponsibleUserId(resp);
+      // Re-attach 진입 시 Created by 는 현재 재첨부를 수행하는 사용자로 즉시 표시.
+      setResponsibleUserId(user?.id ?? resp);
 
       const iso = row.meeting_date as string | null | undefined;
       const dl = isoUtcToDatetimeLocalInput(iso ?? null);
@@ -507,6 +511,9 @@ function NewMeetingPageInner() {
         const { data: updatedRow, error: updErr } = await (supabase as any)
           .from("meetings")
           .update({
+            // 탈퇴 사용자 회의 재첨부 시: 현재 수행자를 새 creator로 승계
+            // (storage/meetings 업로드 RLS + creator 권한 정합)
+            created_by: user.id,
             title: title.trim(),
             status: "uploaded",
             meeting_date: new Date(datetime).toISOString(),
