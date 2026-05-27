@@ -570,7 +570,9 @@ function InvitePageInner() {
         userDisplayName={userDisplayName}
         userEmail={userEmail}
         emailNotice={emailNotice}
-        onReturnHome={() => router.push("/")}
+        onReturnHome={() => {
+          window.location.href = "https://actnote.xyz";
+        }}
         onSignInDifferentAccount={async () => {
           const supabase = createClient();
           clearStoredWorkspaceId();

@@ -73,25 +73,23 @@ export function ProcessingProgress({
       <p className="text-xs text-red-800/85 pt-1">
         {contactNewTab ? (
           <>
-            Opens Gmail in a new tab.{" "}
+            Opens Gmail in a new tab. If you see a blank page, a sign-in screen, or the wrong Google account,{" "}
             <a href={mailtoHref} className="underline font-semibold">
-              Try Mail app instead
+              open your default mail app instead
             </a>
-            {" · or write to "}
-            <a
-              href={contactHref}
-              className="font-semibold underline break-all"
-              {...(contactNewTab ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-            >
-              {supportEmail}
-            </a>
-          </>
-        ) : (
-          <>
-            If your mail app does not open, write to{" "}
+            {" or write directly to "}
             <a href={mailtoHref} className="font-semibold underline break-all">
               {supportEmail}
             </a>
+            .
+          </>
+        ) : (
+          <>
+            If your mail app does not open, write directly to{" "}
+            <a href={mailtoHref} className="font-semibold underline break-all">
+              {supportEmail}
+            </a>
+            .
           </>
         )}
       </p>

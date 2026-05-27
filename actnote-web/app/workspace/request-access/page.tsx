@@ -471,7 +471,9 @@ function RequestAccessInner() {
             {/* Return to Home — orange primary (gradient 94.65deg) */}
             <button
               type="button"
-              onClick={() => router.push("/workspace/select")}
+              onClick={() => {
+                window.location.href = "https://actnote.xyz";
+              }}
               className="flex h-[52px] w-full items-center justify-center gap-2 rounded-[10px] text-base font-bold text-white shadow-[0px_6px_24px_rgba(255,107,53,0.35)]"
               style={{ background: "linear-gradient(94.65deg, #FF6B35 0%, #FF8555 100%)" }}
             >
