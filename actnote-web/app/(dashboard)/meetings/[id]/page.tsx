@@ -283,6 +283,8 @@ export default function MeetingDetailPage() {
   const publishSuccessNavLockRef = useRef(false);
   /** 분석 완료 Draft: 요약 카드 단계 ↔ AI 상세 분석 단계 */
   const [draftSurfaceStep, setDraftSurfaceStep] = useState<"overview" | "detail">("overview");
+  /** 읽기 전용 사용자(owner 제외): 메타 개요 ↔ AI 분석 상세 2단계 */
+  const [readOnlySurfaceStep, setReadOnlySurfaceStep] = useState<"overview" | "detail">("overview");
   /** 분석 중 UX: 파이프라인 타임라인 ↔ AI 미리보기 단계 */
 
   const loadMembers = useCallback(async (wsId: string) => {
@@ -481,6 +483,7 @@ export default function MeetingDetailPage() {
   useEffect(() => {
     setDraftNotesDoc({});
     setDraftSurfaceStep("overview");
+    setReadOnlySurfaceStep("overview");
     setPublishSuccessModal(false);
   }, [id]);
 
@@ -1384,7 +1387,9 @@ export default function MeetingDetailPage() {
                 </h1>
               )}
               <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                <StatusBadge status={meeting.status} />
+                {meeting.approval_status !== "published" ? (
+                  <StatusBadge status={meeting.status} />
+                ) : null}
                 {isReady && transcriptLines.length > 0 ? (
                   <button
                     type="button"
@@ -1594,7 +1599,7 @@ export default function MeetingDetailPage() {
             </div>
           )}
 
-          {isReady && canEdit && draftSurfaceStep === "overview" ? (
+          {isReady && (canEdit ? draftSurfaceStep === "overview" : readOnlySurfaceStep === "overview") ? (
             <DraftOverviewPanel
               meetingTitle={meeting.title}
               meetingTypeRaw={meeting.meeting_type}
@@ -1610,12 +1615,13 @@ export default function MeetingDetailPage() {
               onOpenTranscript={() => setTranscriptPanelOpen(true)}
               onNext={() => {
                 void loadMembers(meeting.workspace_id);
-                setDraftSurfaceStep("detail");
+                if (canEdit) setDraftSurfaceStep("detail");
+                else setReadOnlySurfaceStep("detail");
               }}
             />
           ) : null}
 
-          {isReady && (!canEdit || draftSurfaceStep === "detail") ? (
+          {isReady && (canEdit ? draftSurfaceStep === "detail" : readOnlySurfaceStep === "detail") ? (
             <>
               <div className="flex flex-col gap-[30px]">
                 <MeetingAnalysisResultsBlock
@@ -1711,11 +1717,14 @@ export default function MeetingDetailPage() {
               </div>
 
               {/* Draft detail step: Back 버튼 — Next와 동일 디자인, 글자/화살표 방향만 다름 */}
-              {canEdit && draftSurfaceStep === "detail" ? (
+              {(canEdit ? draftSurfaceStep === "detail" : readOnlySurfaceStep === "detail") ? (
                 <div className="flex flex-wrap justify-end gap-3 border-t border-[#e2e8f0] pt-8">
                   <button
                     type="button"
-                    onClick={() => setDraftSurfaceStep("overview")}
+                    onClick={() => {
+                      if (canEdit) setDraftSurfaceStep("overview");
+                      else setReadOnlySurfaceStep("overview");
+                    }}
                     className="inline-flex h-12 min-w-[10rem] items-center justify-center gap-2 rounded-[10px] bg-[#1e3a5f] px-8 text-[15px] font-bold text-white transition-opacity hover:opacity-90 md:px-14"
                   >
                     <ArrowLeft className="size-4" aria-hidden /> Back
