@@ -1,4 +1,4 @@
--- 049: SEC-009 — integrations.last_error / disconnected_at 컬럼 추가
+-- 055: SEC-009 — integrations.last_error / disconnected_at 컬럼 추가 (Renamed from 049)
 --
 -- 배경:
 --   src/notion_sync.py::_mark_integration_invalid 가 401/unauthorized 응답 시

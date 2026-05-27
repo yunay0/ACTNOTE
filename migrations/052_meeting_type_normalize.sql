@@ -1,4 +1,5 @@
--- 046: MTG-004-002 — 기존 meeting_type 데이터 11종 → 4종 정규화
+-- 052: MTG-004-002 — 기존 meeting_type 데이터 11종 → 4종 정규화
+-- (Renamed from 046; 046 번호는 046_meetings_recording_filename.sql 가 점유)
 --
 -- 0.5.txt 단일 소스. 4종: standup, project_review, one_on_one, other.
 -- _TYPE_ALIAS (src/llm_extractor.py) 와 동일한 매핑을 DB 차원에서도 적용해

@@ -7,8 +7,8 @@
  * 백엔드 정합:
  *   - `prompts/templates/*.md` 가 emit 하는 JSON 키 (`blockers`, `key_topics`,
  *     `key_decisions`, `risks_and_issues`, `follow_up`, `key_points`)
- *   - `meetings` 신규 컬럼 (`migrations/044`)
- *   - `validate_meeting_for_publication` RPC (`migrations/045`) 가 필수 섹션 검증
+ *   - `meetings` 신규 컬럼 (`migrations/050`)
+ *   - `validate_meeting_for_publication` RPC (`migrations/051`) 가 필수 섹션 검증
  *
  * Action Items 는 별도 컴포넌트 (`MeetingDraftActionItemsSection`) 가 렌더링.
  */

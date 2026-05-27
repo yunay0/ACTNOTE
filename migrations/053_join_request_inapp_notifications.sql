@@ -1,4 +1,4 @@
--- 047: NOTI-002 / WS-006-002 / WS-007 — 접근 요청 인앱 알림 INSERT
+-- 053: NOTI-002 / WS-006-002 / WS-007 — 접근 요청 인앱 알림 INSERT (Renamed from 047)
 --
 -- 026_workspace_join_requests.sql 의 create_join_request / review_join_request RPC 를
 -- 갱신해 SECURITY DEFINER 권한으로 notifications 테이블에 인앱 알림을 직접 INSERT 한다.

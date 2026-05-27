@@ -1,4 +1,5 @@
--- 045: DRAFT-008-002 / INTEG-005 — validate_meeting_for_publication 을 meeting_type 별 분기
+-- 051: DRAFT-008-002 / INTEG-005 — validate_meeting_for_publication 을 meeting_type 별 분기
+-- (Renamed from 045; 045 번호는 045_reattach_storage_and_meetings_rls.sql 가 점유)
 --
 -- 0.5.txt 단일 소스. 변경점:
 --
@@ -16,7 +17,7 @@
 --      - 단, 발행을 차단하지는 않음 (missing 배열에 정보만 노출 → 프론트 모달이 Publish anyway 허용)
 --      - 발행 차단은 title/summary/유형별 필수 섹션만으로 한정
 --
--- 044 마이그레이션의 신규 컬럼(blockers, key_topics, key_decisions, risks_and_issues, follow_up, key_points)
+-- 050 마이그레이션의 신규 컬럼(blockers, key_topics, key_decisions, risks_and_issues, follow_up, key_points)
 -- 이 모두 존재한다고 가정.
 
 BEGIN;
