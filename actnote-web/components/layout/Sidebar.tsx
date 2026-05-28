@@ -9,9 +9,6 @@ import { createClient } from "@/lib/supabase/client";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import type { WorkspaceMembership } from "@/components/workspace/WorkspaceProvider";
 
-/** 다음 버전에서 연동 설정 노출 시 true 로 변경 */
-const SHOW_INTEGRATIONS_IN_SIDEBAR = false;
-
 const AVATAR_GRADIENTS = [
   "linear-gradient(135deg, rgb(0,200,179) 0%, rgb(0,195,208) 100%)",
   "linear-gradient(135deg, rgb(46,92,138) 0%, rgb(30,58,95) 100%)",
@@ -179,7 +176,10 @@ export function Sidebar() {
     useWorkspaceContext();
 
   const isHome = pathname.startsWith("/meetings");
-  const isWorkspace = pathname.startsWith("/settings/workspace");
+  const isWorkspace = pathname.startsWith("/settings/workspace") || pathname.startsWith("/settings/integrations");
+  const isWorkspaceGeneral = pathname === "/settings/workspace";
+  const isWorkspaceIntegrations = pathname.startsWith("/settings/integrations");
+  const isWorkspaceMembers = false;
   const isPersonal = pathname.startsWith("/settings/personal");
 
   const currentWsRole = memberships.find((m) => m.workspace_id === workspaceId)?.role;
@@ -222,18 +222,55 @@ export function Sidebar() {
             Settings
           </p>
           {canAccessWorkspaceSettings && (
-            <Link
-              href="/settings/workspace"
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors",
-                isWorkspace
-                  ? "bg-[#fff4f0] font-bold text-[#ff6b35]"
-                  : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]",
-              )}
-            >
-              <span>👥</span>
-              Workspace
-            </Link>
+            <>
+              <Link
+                href="/settings/workspace"
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors",
+                  isWorkspace
+                    ? "font-bold text-[#64748b]"
+                    : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]",
+                )}
+              >
+                <span>👥</span>
+                Workspace
+              </Link>
+              <div className="flex w-full flex-col gap-1 pl-[44px] pr-1">
+                <Link
+                  href="/settings/workspace"
+                  className={cn(
+                    "rounded-lg px-3 py-2 text-[14px] transition-colors",
+                    isWorkspaceGeneral
+                      ? "font-semibold text-[#64748b]"
+                      : "font-medium text-[#6c757d] hover:bg-[#f8fafc] hover:text-[#0a2540]",
+                  )}
+                >
+                  General
+                </Link>
+                <Link
+                  href="/settings/integrations"
+                  className={cn(
+                    "rounded-lg px-3 py-2 text-[14px] transition-colors",
+                    isWorkspaceIntegrations
+                      ? "font-semibold text-[#64748b]"
+                      : "font-medium text-[#6c757d] hover:bg-[#f8fafc] hover:text-[#0a2540]",
+                  )}
+                >
+                  Integrations
+                </Link>
+                <Link
+                  href="/settings/workspace#members"
+                  className={cn(
+                    "rounded-lg px-3 py-2 text-[14px] transition-colors",
+                    isWorkspaceMembers
+                      ? "font-semibold text-[#64748b]"
+                      : "font-medium text-[#6c757d] hover:bg-[#f8fafc] hover:text-[#0a2540]",
+                  )}
+                >
+                  Members
+                </Link>
+              </div>
+            </>
           )}
           <Link
             href="/settings/personal"
@@ -247,20 +284,6 @@ export function Sidebar() {
             <span>⚙️</span>
             Personal
           </Link>
-          {SHOW_INTEGRATIONS_IN_SIDEBAR && (
-            <Link
-              href="/settings/integrations"
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors",
-                pathname.startsWith("/settings/integrations")
-                  ? "bg-[#fff4f0] font-bold text-[#ff6b35]"
-                  : "font-medium text-[#64748b] hover:bg-[#f8fafc] hover:text-[#0a2540]",
-              )}
-            >
-              <span>🔗</span>
-              Integrations
-            </Link>
-          )}
         </div>
       </nav>
 

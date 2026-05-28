@@ -200,16 +200,9 @@ export function MeetingAnalysisResultsBlock(props: MeetingAnalysisResultsBlockPr
               </FieldShell>
             );
           }
-          if (seg.draftKey === "decisions") {
-            return (
-              <div key="decisions">
-                {renderDecisions(seg.title, seg.subtitle)}
-              </div>
-            );
-          }
           return (
             <div key={seg.draftKey}>
-              {renderExtrasField(seg.draftKey as Exclude<MeetingAnalysisDraftKey, "summary" | "decisions">, seg.title, seg.subtitle)}
+              {renderExtrasField(seg.draftKey as Exclude<MeetingAnalysisDraftKey, "summary">, seg.title, seg.subtitle)}
             </div>
           );
         })}
