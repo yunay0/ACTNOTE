@@ -1415,9 +1415,8 @@ export default function MeetingDetailPage() {
             </div>
           </div>
 
-            {/* TC-4: 분석 중일 때(원래 동작) + Draft/Published 상태이지만 owner가 아닌 경우(메타정보 표시).
-                owner는 isReady에서 DraftOverviewPanel을 별도 표시하므로 여기선 제외. */}
-            {(!isReady || !canEdit) && (
+            {/* 분석 중(ready 이전) 메타 섹션. ready/published는 overview/detail 2단계에서 렌더링. */}
+            {!isReady && (
               <>
                 <section className="space-y-5">
                   <DraftSectionHeading step={1} title="Meeting Information" />
@@ -1519,8 +1518,8 @@ export default function MeetingDetailPage() {
                   </dl>
                 </div>
                 </section>
-                {/* Uploaded Recording 카드: 분석 중일 때 + Draft/Published 상태이지만 owner가 아닌 경우. */}
-                {(showWideAnalyzingLayout || (isReady && !canEdit)) ? (
+                {/* Uploaded Recording 카드: 분석 중(ready 이전)만 표시. */}
+                {showWideAnalyzingLayout ? (
                   <section className="space-y-5">
                     <DraftSectionHeading
                       step={2}
