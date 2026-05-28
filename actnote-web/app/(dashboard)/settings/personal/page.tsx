@@ -1,49 +1,12 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { createClient } from "@/lib/supabase/client";
 import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
 import { cn } from "@/lib/utils";
-
-/** Figma S-10-01 스타일 토글 (Meeting analysis emails) */
-function ToggleSwitch({
-  checked,
-  onCheckedChange,
-  disabled,
-  id,
-}: {
-  checked: boolean;
-  onCheckedChange: (next: boolean) => void;
-  disabled?: boolean;
-  id?: string;
-}) {
-  return (
-    <button
-      id={id}
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={() => onCheckedChange(!checked)}
-      className={cn(
-        "relative h-7 w-[58px] shrink-0 rounded-full transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ff6b35]/35 focus-visible:ring-offset-2",
-        disabled && "cursor-not-allowed opacity-50",
-        checked ? "bg-[#ff6b35]" : "bg-[#e1e8ef]"
-      )}
-    >
-      <span
-        className={cn(
-          "pointer-events-none absolute top-1/2 h-[18px] w-[18px] -translate-y-1/2 rounded-full bg-white shadow-sm transition-[left] duration-200 ease-out",
-          checked ? "left-[calc(100%-18px-3px)]" : "left-[3px]"
-        )}
-      />
-    </button>
-  );
-}
 
 interface AccountDeleteContext {
   workspace: {
@@ -114,19 +77,33 @@ type DeleteModalState =
 export default function PersonalSettingsPage() {
   const router = useRouter();
   const { workspaceId, memberships, hydrated, refreshWorkspaces } = useWorkspaceContext();
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
+  const [photoModalOpen, setPhotoModalOpen] = useState(false);
+  const [photoSaveBusy, setPhotoSaveBusy] = useState(false);
+  const [photoSaveError, setPhotoSaveError] = useState<string | null>(null);
+  const [photoValidationError, setPhotoValidationError] = useState<{
+    kind: "format" | "size";
+    fileName: string;
+    fileSizeLabel: string;
+    extensionLabel: string;
+    message: string;
+  } | null>(null);
+  const [photoDraft, setPhotoDraft] = useState<{
+    file: File;
+    previewUrl: string;
+    width: number;
+    height: number;
+  } | null>(null);
   const [baselineFirst, setBaselineFirst] = useState("");
   const [baselineLast, setBaselineLast] = useState("");
-  const [notifyEmailAnalysisComplete, setNotifyEmailAnalysisComplete] = useState(true);
-  const [notifyEmailAnalysisFailed, setNotifyEmailAnalysisFailed] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [emailPrefBusy, setEmailPrefBusy] = useState(false);
-  const [emailPrefError, setEmailPrefError] = useState<string | null>(null);
   const [deleteModal, setDeleteModal] = useState<DeleteModalState>({ open: false });
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -147,7 +124,7 @@ export default function PersonalSettingsPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data } = await (supabase as any)
         .from("users")
-        .select("name, notify_email_analysis_complete, notify_email_analysis_failed")
+        .select("name, avatar_url")
         .eq("id", user.id)
         .single();
 
@@ -159,56 +136,26 @@ export default function PersonalSettingsPage() {
       setLastName(l);
       setBaselineFirst(f);
       setBaselineLast(l);
+      setProfilePhotoUrl(typeof data?.avatar_url === "string" ? data.avatar_url : null);
 
-      if (typeof data?.notify_email_analysis_complete === "boolean") {
-        setNotifyEmailAnalysisComplete(data.notify_email_analysis_complete);
-      }
-      if (typeof data?.notify_email_analysis_failed === "boolean") {
-        setNotifyEmailAnalysisFailed(data.notify_email_analysis_failed);
-      }
       setLoading(false);
     }
     load();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (photoDraft?.previewUrl) {
+        URL.revokeObjectURL(photoDraft.previewUrl);
+      }
+    };
+  }, [photoDraft]);
 
   const profileDirty = useMemo(
     () =>
       firstName.trim() !== baselineFirst.trim() ||
       lastName.trim() !== baselineLast.trim(),
     [firstName, lastName, baselineFirst, baselineLast]
-  );
-
-  const persistEmailPrefs = useCallback(
-    async (complete: boolean, failed: boolean): Promise<boolean> => {
-      setEmailPrefBusy(true);
-      setEmailPrefError(null);
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        setEmailPrefBusy(false);
-        return false;
-      }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: err } = await (supabase as any)
-        .from("users")
-        .update({
-          notify_email_analysis_complete: complete,
-          notify_email_analysis_failed: failed,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", user.id);
-
-      if (err) {
-        setEmailPrefError("Could not update email preferences. Try again.");
-        setEmailPrefBusy(false);
-        return false;
-      }
-      setEmailPrefBusy(false);
-      return true;
-    },
-    []
   );
 
   async function handleSaveProfile() {
@@ -250,6 +197,105 @@ export default function PersonalSettingsPage() {
     setFirstName(baselineFirst);
     setLastName(baselineLast);
     setError(null);
+  }
+
+  async function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
+    return await new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        resolve({ width: img.width, height: img.height });
+        URL.revokeObjectURL(objectUrl);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Could not read image dimensions."));
+      };
+      img.src = objectUrl;
+    });
+  }
+
+  async function handleChoosePhoto(file: File) {
+    try {
+      const mime = (file.type || "").toLowerCase();
+      const allowed = new Set(["image/jpeg", "image/jpg", "image/png", "image/gif"]);
+      const ext = (file.name.split(".").pop() || "").toUpperCase();
+      const extensionLabel = ext ? `${ext} file` : "Unknown file";
+      const fileSizeLabel = `${(file.size / (1024 * 1024)).toFixed(1)}MB`;
+      if (!allowed.has(mime)) {
+        setPhotoDraft(null);
+        setPhotoSaveError(null);
+        setPhotoValidationError({
+          kind: "format",
+          fileName: file.name,
+          fileSizeLabel,
+          extensionLabel,
+          message: "Unsupported file format. Please use JPG, PNG, or GIF",
+        });
+        setPhotoModalOpen(true);
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        setPhotoDraft(null);
+        setPhotoSaveError(null);
+        setPhotoValidationError({
+          kind: "size",
+          fileName: file.name,
+          fileSizeLabel,
+          extensionLabel,
+          message: `File is too large (${fileSizeLabel}). Maximum allowed size is 5MB`,
+        });
+        setPhotoModalOpen(true);
+        return;
+      }
+      const dims = await getImageDimensions(file);
+      if (photoDraft?.previewUrl) URL.revokeObjectURL(photoDraft.previewUrl);
+      const previewUrl = URL.createObjectURL(file);
+      setPhotoDraft({ file, previewUrl, width: dims.width, height: dims.height });
+      setPhotoSaveError(null);
+      setPhotoValidationError(null);
+      setPhotoModalOpen(true);
+    } catch (e) {
+      setPhotoSaveError(e instanceof Error ? e.message : "Could not read selected image.");
+    }
+  }
+
+  async function handleSavePhoto() {
+    if (!photoDraft || photoSaveBusy) return;
+    setPhotoSaveBusy(true);
+    setPhotoSaveError(null);
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("You must be signed in.");
+      const ext = (photoDraft.file.name.split(".").pop() || "jpg").toLowerCase();
+      const path = `profile/${user.id}/avatar-${Date.now()}.${ext}`;
+      const { error: uploadErr } = await supabase.storage
+        .from("meetings")
+        .upload(path, photoDraft.file, {
+          upsert: true,
+          contentType: photoDraft.file.type || "image/jpeg",
+        });
+      if (uploadErr) throw new Error(uploadErr.message || "Failed to upload image.");
+      const { data: urlData } = supabase.storage.from("meetings").getPublicUrl(path);
+      const publicUrl = urlData?.publicUrl ?? null;
+      if (!publicUrl) throw new Error("Could not resolve uploaded image URL.");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: updErr } = await (supabase as any)
+        .from("users")
+        .update({ avatar_url: publicUrl, updated_at: new Date().toISOString() })
+        .eq("id", user.id);
+      if (updErr) throw new Error(updErr.message || "Failed to save profile photo.");
+      setProfilePhotoUrl(publicUrl);
+      setPhotoModalOpen(false);
+      setPhotoValidationError(null);
+    } catch (e) {
+      setPhotoSaveError(e instanceof Error ? e.message : "Could not save photo.");
+    } finally {
+      setPhotoSaveBusy(false);
+    }
   }
 
   function closeDeleteModal() {
@@ -439,9 +485,166 @@ export default function PersonalSettingsPage() {
     );
   }
 
+  const profileInitials = (() => {
+    const f = firstName.trim().slice(0, 1);
+    const l = lastName.trim().slice(0, 1);
+    if (f || l) return `${f}${l}`.toUpperCase();
+    return (email.split("@")[0] ?? "?").slice(0, 2).toUpperCase();
+  })();
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <DashboardHeader title="Settings" backHref="/meetings" />
+      <input
+        ref={photoInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void handleChoosePhoto(f);
+          e.currentTarget.value = "";
+        }}
+      />
+      <DashboardHeader title="Personal Settings" backHref="/meetings" />
+
+      {photoModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1a2b4a]/45 px-4 backdrop-blur-[1px]">
+          <div className="w-full max-w-[680px] overflow-hidden rounded-2xl bg-white shadow-[0_20px_45px_rgba(26,43,74,0.35)]">
+            <div className="flex items-center justify-between border-b border-[#e2e8f0] px-6 py-5">
+              <h3 className="text-[22px] font-bold text-[#212529]">Upload Profile Photo</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setPhotoModalOpen(false);
+                  setPhotoValidationError(null);
+                }}
+                className="rounded-md px-2 py-1 text-[#6c757d] hover:bg-[#f8fafc]"
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-3 px-6 py-5">
+              <div className="flex items-center rounded-[10px] bg-[#f8fafc] px-4 py-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  {profilePhotoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={profilePhotoUrl} alt="" className="size-11 rounded-full object-cover" />
+                  ) : (
+                    <div className="flex size-11 items-center justify-center rounded-full bg-[#1a2b4a] text-[28px] font-bold text-white">
+                      {profileInitials}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-[12px] text-[#94a3b8]">Current photo</p>
+                    <p className="truncate text-[14px] font-semibold text-[#212529]">
+                      {profilePhotoUrl ? "Profile photo" : "Default (initials)"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {photoValidationError ? (
+                <div className="rounded-[10px] border border-[#fca5a5] bg-[#fef2f2] px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-[14px] font-semibold text-[#dc2626]">{photoValidationError.fileName}</p>
+                      <p className="text-[12px] text-[#991b1b]">
+                        {photoValidationError.fileSizeLabel} · {photoValidationError.extensionLabel}
+                      </p>
+                    </div>
+                    <span className="text-[18px] text-[#dc2626]">×</span>
+                  </div>
+                  <p className="mt-2 text-[13px] text-[#dc2626]">✖ {photoValidationError.message}</p>
+                </div>
+              ) : photoDraft ? (
+                <>
+                  <div className="flex items-center justify-between rounded-[10px] border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={photoDraft.previewUrl} alt="" className="size-11 rounded-full object-cover" />
+                      <div className="min-w-0">
+                        <p className="text-[14px] font-semibold text-[#10b981]">New photo preview</p>
+                        <p className="truncate text-[14px] text-[#212529]">{photoDraft.file.name}</p>
+                        <p className="text-[12px] text-[#6c757d]">
+                          {(photoDraft.file.size / (1024 * 1024)).toFixed(1)}MB · {photoDraft.width}×{photoDraft.height}px
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[14px] font-medium text-[#10b981]">✓ Ready</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-[10px] border border-[#bbf7d0] bg-[#f0fdf4] px-4 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="flex size-7 items-center justify-center rounded-full bg-[#10b981] text-sm font-bold text-white">✓</span>
+                      <div className="min-w-0">
+                        <p className="text-[14px] font-semibold text-[#166534]">Photo uploaded successfully</p>
+                        <p className="truncate text-[12px] text-[#6c757d]">
+                          {photoDraft.file.name} · {(photoDraft.file.size / (1024 * 1024)).toFixed(1)}MB · {photoDraft.width}×{photoDraft.height}px
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => photoInputRef.current?.click()}
+                      className="h-8 rounded-md border border-[#dee2e6] bg-white px-3 text-[12px] text-[#495057] hover:bg-[#f8fafc]"
+                    >
+                      Replace
+                    </button>
+                  </div>
+                </>
+              ) : null}
+
+              {photoValidationError ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => photoInputRef.current?.click()}
+                    className="h-8 rounded-md border border-[#dee2e6] bg-white px-3 text-[12px] text-[#495057] hover:bg-[#f8fafc]"
+                  >
+                    Try again
+                  </button>
+                  <p className="text-[12px] text-[#adb5bd]">JPG, PNG, or GIF · Max 5MB</p>
+                </div>
+              ) : null}
+
+              <ul className="space-y-1 text-[12px] text-[#94a3b8]">
+                <li className={photoValidationError?.kind === "format" ? "text-[#dc2626]" : undefined}>
+                  • Accepted formats: JPG, PNG, GIF
+                </li>
+                <li className={photoValidationError?.kind === "size" ? "text-[#dc2626]" : undefined}>
+                  • Maximum file size: 5MB
+                </li>
+                <li>• Recommended size: 256×256px or larger</li>
+                <li>• Square images work best</li>
+              </ul>
+              {photoSaveError ? (
+                <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
+                  {photoSaveError}
+                </p>
+              ) : null}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[#e9ecef] px-6 py-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setPhotoModalOpen(false);
+                  setPhotoValidationError(null);
+                }}
+                className="h-8 rounded-md border border-[#dee2e6] bg-white px-4 text-[13px] text-[#6c757d] hover:bg-[#f8fafc]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSavePhoto()}
+                disabled={photoSaveBusy || !photoDraft || !!photoValidationError}
+                className="h-8 rounded-md bg-[#f26522] px-4 text-[13px] font-bold text-white hover:opacity-90 disabled:bg-[#e9ecef] disabled:text-[#adb5bd]"
+              >
+                {photoSaveBusy ? "Saving..." : "Save Photo"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {deleteModal.open && (
         <div
@@ -874,21 +1077,50 @@ export default function PersonalSettingsPage() {
       )}
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto flex max-w-[720px] flex-col gap-6 px-5 py-10 lg:px-8">
+        <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-6 px-8 py-8">
           {/* Profile Information — Figma S-10-01 */}
-          <section className="rounded-xl border border-[#e2e8f0] bg-white p-8 shadow-sm">
+          <section className="rounded-xl border border-[#e9ecef] bg-white p-[29px] shadow-sm">
             <div className="mb-6 space-y-1">
-              <h2 className="text-[17px] font-bold leading-snug text-[#0a2540]">
+              <h2 className="text-[30px] font-semibold leading-snug text-[#212529]">
                 Profile Information
               </h2>
-              <p className="text-[13px] text-[#64748b]">
-                Update your personal information and profile picture
+              <p className="text-[14px] text-[#6c757d]">
+                Update your personal information and profile photo
               </p>
+            </div>
+
+            <div className="mb-6 flex items-start gap-5">
+              {profilePhotoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={profilePhotoUrl}
+                  alt=""
+                  className="size-[100px] shrink-0 rounded-full border-[3px] border-[#e9ecef] object-cover"
+                />
+              ) : (
+                <div className="flex size-[100px] shrink-0 items-center justify-center rounded-full border-[3px] border-[#e9ecef] bg-[#1a2b4a] text-[36px] font-bold text-white">
+                  {profileInitials}
+                </div>
+              )}
+              <div className="pt-[2px]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPhotoSaveError(null);
+                    setPhotoValidationError(null);
+                    photoInputRef.current?.click();
+                  }}
+                  className="h-[40px] rounded-lg border border-[#dee2e6] bg-white px-5 text-[14px] text-[#495057] hover:bg-[#f8fafc]"
+                >
+                  + Upload Photo
+                </button>
+                <p className="mt-2 text-[12px] text-[#6c757d]">JPG, PNG up to 5MB</p>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 sm:gap-6">
               <div className="flex flex-col gap-2">
-                <label htmlFor="personal-first-name" className="text-[13px] font-bold text-[#0a2540]">
+                <label htmlFor="personal-first-name" className="text-[13px] font-semibold text-[#495057]">
                   First Name
                 </label>
                 <input
@@ -898,11 +1130,11 @@ export default function PersonalSettingsPage() {
                   onChange={(e) => setFirstName(e.target.value)}
                   placeholder="First name"
                   autoComplete="given-name"
-                  className="h-11 rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[13px] text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10"
+                  className="h-11 rounded-lg border border-[#dee2e6] bg-white px-4 text-[14px] text-[#212529] placeholder-[#adb5bd] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10"
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <label htmlFor="personal-last-name" className="text-[13px] font-bold text-[#0a2540]">
+                <label htmlFor="personal-last-name" className="text-[13px] font-semibold text-[#495057]">
                   Last Name
                 </label>
                 <input
@@ -912,13 +1144,13 @@ export default function PersonalSettingsPage() {
                   onChange={(e) => setLastName(e.target.value)}
                   placeholder="Last name"
                   autoComplete="family-name"
-                  className="h-11 rounded-lg border-2 border-[#e2e8f0] bg-white px-4 text-[13px] text-[#0a2540] placeholder-[#94a3b8] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10"
+                  className="h-11 rounded-lg border border-[#dee2e6] bg-white px-4 text-[14px] text-[#212529] placeholder-[#adb5bd] outline-none transition-all focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10"
                 />
               </div>
             </div>
 
-            <div className="mt-6 flex flex-col gap-2">
-              <label htmlFor="personal-email" className="text-[13px] font-bold text-[#0a2540]">
+            <div className="mt-6 flex max-w-[500px] flex-col gap-2">
+              <label htmlFor="personal-email" className="text-[13px] font-semibold text-[#495057]">
                 Email Address
               </label>
               <input
@@ -927,10 +1159,10 @@ export default function PersonalSettingsPage() {
                 value={email}
                 readOnly
                 aria-readonly="true"
-                className="h-11 cursor-default rounded-lg border-2 border-[#e2e8f0] bg-[#f8fafc] px-4 text-[13px] text-[#94a3b8] outline-none"
+                className="h-11 cursor-default rounded-lg border border-[#dee2e6] bg-[#f8f9fa] px-4 text-[14px] text-[#adb5bd] outline-none"
               />
-              <p className="px-0.5 text-[12px] leading-snug text-[#64748b]">
-                Email is tied to your account and cannot be changed here yet. Contact support if you need to update it.
+              <p className="px-0.5 text-[12px] leading-snug text-[#6c757d]">
+                Your email is managed through Google and cannot be changed here
               </p>
             </div>
 
@@ -938,117 +1170,50 @@ export default function PersonalSettingsPage() {
               <p className="mt-4 rounded-lg bg-red-50 px-4 py-2 text-[13px] text-red-600">{error}</p>
             )}
 
-            <div className="mt-8 flex flex-wrap items-center justify-end gap-3 border-t border-transparent pt-2">
-              <button
-                type="button"
-                onClick={handleDiscardProfile}
-                disabled={saving || !profileDirty}
-                className="h-11 rounded-lg border-2 border-[#e2e8f0] px-6 text-[14px] font-bold text-[#64748b] transition-colors hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Discard Changes
-              </button>
+            <div className="mt-6 flex flex-wrap items-center gap-2.5 border-t border-transparent pt-2">
               <button
                 type="button"
                 onClick={handleSaveProfile}
                 disabled={saving || !profileDirty}
                 className={cn(
-                  "h-11 rounded-lg px-6 text-[14px] font-bold text-white shadow-[0px_2px_4px_rgba(255,107,53,0.2)] transition-opacity",
-                  "disabled:cursor-not-allowed disabled:opacity-50",
+                  "h-10 rounded-lg px-[18px] text-[14px] font-bold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50",
                   profileDirty && !saving && "hover:opacity-90"
                 )}
-                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+                style={{ background: "#f26522" }}
               >
-                {saving ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                    Saving...
-                  </span>
-                ) : savedFlash ? (
-                  "Saved ✓"
-                ) : (
-                  "Save Changes"
-                )}
+                {saving ? "Saving..." : savedFlash ? "Saved ✓" : "Save Changes"}
+              </button>
+              <button
+                type="button"
+                onClick={handleDiscardProfile}
+                disabled={saving || !profileDirty}
+                className="h-10 rounded-lg border border-[#dee2e6] px-[19px] text-[14px] text-[#6c757d] transition-colors hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Discard Changes
               </button>
             </div>
           </section>
 
-          {/* Meeting analysis emails */}
-          <section className="rounded-xl border border-[#e7e8ea] bg-white p-8 shadow-sm">
-            <div className="mb-6 space-y-1">
-              <h2 className="text-[17px] font-bold leading-snug text-[#0a2540]">
-                Meeting analysis emails
-              </h2>
-              <p className="text-[13px] text-[#64748b]">
-                Choose whether to receive email when AI finishes or fails on your uploads.
-              </p>
-            </div>
-
-            {emailPrefError && (
-              <p className="mb-4 rounded-lg bg-red-50 px-4 py-2 text-[13px] text-red-600">{emailPrefError}</p>
-            )}
-
-            <div className="flex flex-col gap-5">
-              <div className="flex items-center justify-between gap-4">
-                <span className="max-w-[calc(100%-5rem)] text-[13px] leading-snug text-[#64748b]">
-                  Email me when analysis completes and notes are ready to review
-                </span>
-                <ToggleSwitch
-                  checked={notifyEmailAnalysisComplete}
-                  disabled={emailPrefBusy}
-                  onCheckedChange={(next) => {
-                    const prevComplete = notifyEmailAnalysisComplete;
-                    setNotifyEmailAnalysisComplete(next);
-                    void (async () => {
-                      const ok = await persistEmailPrefs(next, notifyEmailAnalysisFailed);
-                      if (!ok) setNotifyEmailAnalysisComplete(prevComplete);
-                    })();
-                  }}
-                  id="toggle-analysis-complete"
-                />
-              </div>
-              <div className="flex items-center justify-between gap-4">
-                <span className="max-w-[calc(100%-5rem)] text-[13px] leading-snug text-[#64748b]">
-                  Email me when analysis fails (e.g. unusable audio)
-                </span>
-                <ToggleSwitch
-                  checked={notifyEmailAnalysisFailed}
-                  disabled={emailPrefBusy}
-                  onCheckedChange={(next) => {
-                    const prevFailed = notifyEmailAnalysisFailed;
-                    setNotifyEmailAnalysisFailed(next);
-                    void (async () => {
-                      const ok = await persistEmailPrefs(notifyEmailAnalysisComplete, next);
-                      if (!ok) setNotifyEmailAnalysisFailed(prevFailed);
-                    })();
-                  }}
-                  id="toggle-analysis-failed"
-                />
-              </div>
-            </div>
-          </section>
-
           {/* Danger Zone — Figma 106:5505 */}
-          <section
-            className="rounded-xl border-2 border-[#fee2e2] bg-[#fef2f2] p-8 pt-[29px] pb-[30px] pl-[34px] pr-[22px] shadow-sm"
-            aria-labelledby="danger-zone-heading"
-          >
-            <div className="space-y-4">
-              <div>
-                <h2 id="danger-zone-heading" className="text-[17px] font-bold text-[#0a2540]">
+          <section className="rounded-xl border border-[#e9ecef] bg-white p-[29px] shadow-sm" aria-labelledby="danger-zone-heading">
+            <div className="space-y-6">
+              <div className="space-y-1">
+                <h2 id="danger-zone-heading" className="text-[30px] font-semibold text-[#212529]">
                   Delete Account
                 </h2>
-                <div className="mt-1 flex flex-col gap-1 text-[15px] leading-[22px] text-[#64748b]">
-                  <p>Permanently delete your ACTNOTE account and all personal data.</p>
-                  <p>This will remove you from all workspaces and delete your profile information.</p>
-                  <p className="font-bold text-[#0a2540]">This action cannot be undone.</p>
-                </div>
+                <p className="text-[14px] text-[#6c757d]">Permanently remove your account and all associated data</p>
               </div>
+              <div className="rounded-[10px] border border-[#fca5a5] bg-[#fef2f2] px-[21px] py-[21px]">
+                <h3 className="text-[16px] font-semibold text-[#dc2626]">Permanently delete your ACTNOTE account</h3>
+                <p className="mt-2 max-w-[900px] text-[13px] leading-[19.5px] text-[#991b1b]">
+                  Permanently delete your ACTNOTE account and all personal data. This will remove you from all workspaces and delete your profile information. This action cannot be undone.
+                </p>
               {deleteError && !deleteModal.open && (
-                <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-[13px] text-red-700">
+                  <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-[13px] text-red-700">
                   {deleteError}
                 </p>
               )}
-              <div className="flex justify-end pt-2.5">
+                <div className="pt-4">
                 <button
                   type="button"
                   disabled={!hydrated}
@@ -1056,10 +1221,11 @@ export default function PersonalSettingsPage() {
                     setDeleteError(null);
                     void openDeleteAccountFlow();
                   }}
-                  className="h-11 shrink-0 rounded-lg bg-[#ef4444] px-6 text-[14px] font-bold text-white transition-colors hover:bg-[#dc2626] disabled:cursor-not-allowed disabled:opacity-50"
+                    className="h-10 shrink-0 rounded-lg bg-[#dc2626] px-[18px] text-[14px] font-bold text-white transition-colors hover:bg-[#b91c1c] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Delete My Account
                 </button>
+                </div>
               </div>
             </div>
           </section>
