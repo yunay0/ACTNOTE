@@ -1,4 +1,5 @@
 import { Sidebar } from "@/components/layout/Sidebar";
+import { WorkspaceMembershipGuard } from "@/components/workspace/WorkspaceMembershipGuard";
 import { WorkspaceProvider } from "@/components/workspace/WorkspaceProvider";
 
 export default function DashboardLayout({
@@ -8,6 +9,7 @@ export default function DashboardLayout({
 }) {
   return (
     <WorkspaceProvider>
+      <WorkspaceMembershipGuard />
       <div className="flex h-screen w-screen overflow-hidden bg-[#f8fafc]">
         <Sidebar />
         <div className="flex flex-1 flex-col overflow-hidden">

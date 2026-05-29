@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -172,14 +172,15 @@ function WorkspaceSwitcherPopover({
 
 export function Sidebar() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { workspaceName, memberships, workspaceId, setCurrentWorkspace } =
     useWorkspaceContext();
 
   const isHome = pathname.startsWith("/meetings");
   const isWorkspace = pathname.startsWith("/settings/workspace") || pathname.startsWith("/settings/integrations");
-  const isWorkspaceGeneral = pathname === "/settings/workspace";
+  const isWorkspaceGeneral = pathname === "/settings/workspace" && searchParams.get("section") !== "members";
   const isWorkspaceIntegrations = pathname.startsWith("/settings/integrations");
-  const isWorkspaceMembers = false;
+  const isWorkspaceMembers = pathname === "/settings/workspace" && searchParams.get("section") === "members";
   const isPersonal = pathname.startsWith("/settings/personal");
 
   const currentWsRole = memberships.find((m) => m.workspace_id === workspaceId)?.role;
@@ -259,7 +260,7 @@ export function Sidebar() {
                   Integrations
                 </Link>
                 <Link
-                  href="/settings/workspace#members"
+                  href="/settings/workspace?section=members"
                   className={cn(
                     "rounded-lg px-3 py-2 text-[14px] transition-colors",
                     isWorkspaceMembers
