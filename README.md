@@ -33,7 +33,8 @@
 - **Bi-temporal** — `decisions`, `action_items` 의 `valid_until` / `superseded_by` 로 변경 이력 추적
 - **CRAG (Corrective RAG)** — 이전 회의 컨텍스트 자동 주입
 - **Draft → Ready → Published** 거버넌스 (PUB-001) + Notion DB 연동 (INTEG-001/003/005)
-- **회의유형별 system prompt 분기** — sprint / planning / retro / 1on1 (MTG-004)
+- **회의유형별 결과 분기 (0.5v)** — standup / project_review / one_on_one / other 4종, 유형별 필수·선택 섹션 (DRAFT-008-002)
+- **Notion 연동 = Internal Integration Token 방식** — 사용자가 `ntn_` 토큰을 붙여넣고 회의록·액션 DB URL을 등록 (온보딩 5단계 / 설정에서 변경)
 
 ---
 
@@ -90,6 +91,8 @@
 | `NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET` | Storage 버킷명 (워커 `SUPABASE_STORAGE_BUCKET` 과 동일 권장) |
 | `NEXT_PUBLIC_APP_URL` | OAuth 리다이렉트, 초대 링크, 메일 내 링크의 **절대 URL origin** |
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | 분석 실패 등 사용자 안내용 (기획 확정 주소) |
+| `NEXT_PUBLIC_NOTION_TEMPLATE_MEETING_URL` | INTEG-006-001 — "회의록 템플릿 복제" 버튼 대상 (Notion 공개 복제 URL) |
+| `NEXT_PUBLIC_NOTION_TEMPLATE_TICKET_URL` | INTEG-006-002 — "액션 트래커 템플릿 복제" 버튼 대상 |
 
 > Modal 트리거 변수(`MODAL_PIPELINE_TRIGGER_URL`·`MODAL_PUBLISH_TRIGGER_URL`·`MODAL_TRIGGER_SECRET`)는 **브라우저 노출 금지** — 아래 서버 전용 표 참고.
 
@@ -137,7 +140,8 @@ uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_
 # 5) Supabase 마이그레이션
 #    SQL Editor 에서 migrations/*.sql 을 팀이 정한 순서로 실행합니다.
 #    파일명에 동일 번호(예: 014_*) 가 두 개 있을 수 있으므로, 순서는 docs/frontend-handoff.md 및 운영 DB 기준을 따르세요.
-#    현재 레포에는 001 … 022 등이 포함되어 있습니다 (목록은 migrations/ 디렉터리 참고).
+#    현재 레포에는 001 … 059 등이 포함되어 있습니다 (목록은 migrations/ 디렉터리 참고).
+#    0.5v: 050~055 (유형별 섹션·발행검증·정규화·backfill·last_error), 059 (join_request ambiguous 재수정).
 ```
 
 **Storage**: `meetings` 버킷(private) 생성.
@@ -306,9 +310,14 @@ actnote-web/                       # Next.js 앱
 | `POST /api/trigger-pipeline` | 인증 후 Modal `trigger_pipeline` 엔드포인트 호출 (X-Actnote-Secret) |
 | `POST /api/trigger-publish` | 인증 후 Modal `trigger_publish` 엔드포인트 호출 |
 | `POST /api/workspace/send-invite` | 초대 메일 발송 (SMTP/Resend 직접, 폴백 없음) |
-| `GET /api/integrations/notion/start` | Notion OAuth 시작 |
-| `GET /api/integrations/notion/callback` | Notion OAuth 콜백 |
+| `POST /api/integrations/notion/verify-token` | Internal Integration Token(`ntn_`) 유효성 검증 (Notion `/users/me`) |
+| `POST /api/integrations/notion/verify-db` | Notion DB URL → DB ID 추출 + 컬럼 목록 조회 (자동매핑용) |
+| `POST /api/integrations/notion/save` | 토큰 Fernet 암호화 + 회의록·액션 DB ID 저장 (온보딩 최초 연동) |
+| `POST /api/integrations/notion/update-db` | 연동된 DB ID 변경 (설정 Change 버튼) |
+| `GET /api/integrations/notion/start` · `/callback` | (구) Notion OAuth — 현 온보딩/설정 플로우는 Internal Token 사용. 유지만 됨 |
 | `POST /api/onboarding/workspace` | 온보딩 워크스페이스 생성 등 |
+
+> **0.5v Notion 연동 화면 플로우**: 온보딩 `workspace 이름 → /onboarding/notion(안내) → /setup(토큰 가이드) → /apikey(검증) → /db(회의록 DB) → /actiondb(액션 DB) → 멤버초대 → /complete`. 설정에서 변경 시 `/settings/integrations/meeting-db` · `/action-db` (또는 `?from=settings`로 동일 화면 재사용).
 
 ---
 
