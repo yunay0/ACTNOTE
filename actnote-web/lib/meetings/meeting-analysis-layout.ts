@@ -23,6 +23,9 @@ export type MeetingAnalysisCanonical =
   | "one_on_one"
   | "other";
 
+/** UI spec alias */
+export type MeetingType = MeetingAnalysisCanonical;
+
 /** 본문 섹션 키 (Action Items 는 별도) */
 export type MeetingAnalysisDraftKey =
   | "summary"
@@ -41,6 +44,14 @@ export interface MeetingAnalysisSegment {
   /** 카드 회색 부제목 (옵션) */
   subtitle?: string;
   /** 필수 섹션 여부 — publish 차단 기준 (045 RPC) */
+  required: boolean;
+}
+
+export type SectionOrderKey = MeetingAnalysisDraftKey | "action_items";
+
+export interface SectionOrderItem {
+  key: SectionOrderKey;
+  label: string;
   required: boolean;
 }
 
@@ -104,71 +115,87 @@ export function canonicalMeetingAnalysisType(
 //   - Owner 는 선택 섹션이 비어도 [Publish] 가능
 // ---------------------------------------------------------------------------
 
+export const SECTION_ORDER: Record<MeetingType, ReadonlyArray<SectionOrderItem>> = {
+  standup: [
+    { key: "summary", label: "Summary", required: true },
+    { key: "blockers", label: "Blockers", required: true },
+    { key: "action_items", label: "Action Items", required: false },
+  ],
+  project_review: [
+    { key: "key_decisions", label: "Key Decisions", required: false },
+    { key: "summary", label: "Summary", required: true },
+    { key: "risks_and_issues", label: "Risks & Issues", required: false },
+    { key: "action_items", label: "Action Items", required: false },
+  ],
+  one_on_one: [
+    { key: "key_topics", label: "Key Topics", required: true },
+    { key: "summary", label: "Summary", required: true },
+    { key: "follow_up", label: "Follow-up", required: false },
+    { key: "action_items", label: "Action Items", required: false },
+  ],
+  other: [
+    { key: "key_points", label: "Key Points", required: true },
+    { key: "summary", label: "Summary", required: true },
+    { key: "action_items", label: "Action Items", required: false },
+  ],
+};
+
 export function meetingAnalysisSegments(
   mt: MeetingAnalysisCanonical,
 ): MeetingAnalysisSegment[] {
-  switch (mt) {
-    case "standup":
-      // 1. Summary  2. Blockers  (3. Action Items 별도)
-      return [
-        { draftKey: "summary", title: "Summary", required: true },
-        {
-          draftKey: "blockers",
-          title: "Blockers",
+  return SECTION_ORDER[mt]
+    .filter((s): s is SectionOrderItem & { key: MeetingAnalysisDraftKey } => s.key !== "action_items")
+    .map((s) => {
+      if (s.key === "blockers") {
+        return {
+          draftKey: s.key,
+          title: s.label,
           subtitle: "Impediments raised by participants",
-          required: true,
-        },
-      ];
-
-    case "project_review":
-      // 1. Key Decisions  2. Summary  3. Risks & Issues  (4. Action Items 별도)
-      return [
-        {
-          draftKey: "key_decisions",
-          title: "Key Decisions",
-          subtitle: "Confirmed decisions about project direction",
-          required: false,
-        },
-        { draftKey: "summary", title: "Summary", required: true },
-        {
-          draftKey: "risks_and_issues",
-          title: "Risks & Issues",
-          subtitle: "Flagged risks or unresolved problems",
-          required: false,
-        },
-      ];
-
-    case "one_on_one":
-      // 1. Key Topics  2. Summary  3. Follow-up  (4. Action Items 별도)
-      return [
-        {
-          draftKey: "key_topics",
-          title: "Key Topics",
+          required: s.required,
+        };
+      }
+      if (s.key === "key_topics") {
+        return {
+          draftKey: s.key,
+          title: s.label,
           subtitle: "Main themes discussed",
-          required: true,
-        },
-        { draftKey: "summary", title: "Summary", required: true },
-        {
-          draftKey: "follow_up",
-          title: "Follow-up",
+          required: s.required,
+        };
+      }
+      if (s.key === "key_decisions") {
+        return {
+          draftKey: s.key,
+          title: s.label,
+          subtitle: "Confirmed decisions about project direction",
+          required: s.required,
+        };
+      }
+      if (s.key === "risks_and_issues") {
+        return {
+          draftKey: s.key,
+          title: s.label,
+          subtitle: "Flagged risks or unresolved problems",
+          required: s.required,
+        };
+      }
+      if (s.key === "follow_up") {
+        return {
+          draftKey: s.key,
+          title: s.label,
           subtitle: "Items to revisit in the next 1:1",
-          required: false,
-        },
-      ];
-
-    case "other":
-    default:
-      // 1. Key Points  2. Summary  (3. Action Items 별도)
-      return [
-        {
-          draftKey: "key_points",
-          title: "Key Points",
+          required: s.required,
+        };
+      }
+      if (s.key === "key_points") {
+        return {
+          draftKey: s.key,
+          title: s.label,
           subtitle: "Most important takeaways from this meeting",
-          required: true,
-        },
-        { draftKey: "summary", title: "Summary", required: true },
-      ];
-  }
+          required: s.required,
+        };
+      }
+      return { draftKey: s.key, title: s.label, required: s.required };
+    });
 }
 
 export function meetingAnalysisSegmentsForRow(
