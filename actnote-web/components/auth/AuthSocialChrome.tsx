@@ -30,14 +30,16 @@ export function AuthSocialChrome({
     const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
 
     const hint = (loginHintEmail ?? "").trim();
+    // 항상 계정 선택기를 띄운다. (select_account 가 없으면 Google 이 직전 계정으로
+    // 조용히 재로그인 → "다른 계정으로 로그인"이 동작하지 않는다.)
+    const queryParams: Record<string, string> = { prompt: "select_account" };
+    if (hint.length > 0) queryParams.login_hint = hint;
+
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo,
-        queryParams:
-          hint.length > 0
-            ? { login_hint: hint, prompt: "select_account" }
-            : undefined,
+        queryParams,
       },
     });
 

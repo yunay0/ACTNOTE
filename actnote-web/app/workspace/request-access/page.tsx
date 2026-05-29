@@ -154,6 +154,15 @@ function RequestAccessInner() {
     setSubmitting(false);
   }
 
+  async function handleUseAnotherAccount() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const supabase: any = createClient();
+    clearStoredWorkspaceId();
+    await supabase.auth.signOut();
+    const next = `/workspace/request-access?slug=${encodeURIComponent(slug)}`;
+    router.push(`/login?next=${encodeURIComponent(next)}`);
+  }
+
   // ─── 로딩 ────────────────────────────────────────────────────────────────
   if (pageState === "loading") {
     return (
@@ -346,14 +355,28 @@ function RequestAccessInner() {
               </button>
             )}
 
-            {/* Component 1 — Return to Home (border, drop-shadow) */}
+            {/* Component 1 — Return to Home (border, drop-shadow).
+                멤버십이 없는 상태이므로 워크스페이스 선택 화면이 아닌 랜딩(/)으로 보낸다.
+                (select 로 보내면 도메인 매칭으로 이 페이지에 되돌아오는 무한 루프 발생) */}
             <button
               type="button"
-              onClick={() => router.push("/workspace/select")}
+              onClick={() => {
+                window.location.href = "/";
+              }}
               className="flex h-[52px] w-full items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white text-base font-bold text-[#64748b] [filter:drop-shadow(0px_6px_24px_rgba(255,107,53,0.35))]"
             >
               <span aria-hidden>🏠</span>
               Return to Home
+            </button>
+
+            {/* 다른 계정으로 로그인 — 로그아웃 후 로그인 페이지로 (계정 전환 탈출구) */}
+            <button
+              type="button"
+              onClick={() => void handleUseAnotherAccount()}
+              className="flex h-[52px] w-full items-center justify-center gap-2 rounded-[10px] text-base font-bold text-[#64748b] hover:text-[#0a2540]"
+            >
+              <span aria-hidden>👤</span>
+              Sign in with a different account
             </button>
           </div>
         </div>
@@ -472,7 +495,7 @@ function RequestAccessInner() {
             <button
               type="button"
               onClick={() => {
-                window.location.href = "https://actnote.xyz";
+                window.location.href = "/";
               }}
               className="flex h-[52px] w-full items-center justify-center gap-2 rounded-[10px] text-base font-bold text-white shadow-[0px_6px_24px_rgba(255,107,53,0.35)]"
               style={{ background: "linear-gradient(94.65deg, #FF6B35 0%, #FF8555 100%)" }}
@@ -484,13 +507,7 @@ function RequestAccessInner() {
             {/* Sign in with a different account — border secondary */}
             <button
               type="button"
-              onClick={async () => {
-                const supabase = createClient();
-                clearStoredWorkspaceId();
-                await supabase.auth.signOut();
-                const next = `/workspace/request-access?slug=${encodeURIComponent(slug)}`;
-                router.push(`/login?next=${encodeURIComponent(next)}`);
-              }}
+              onClick={() => void handleUseAnotherAccount()}
               className="flex h-[52px] w-full items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white text-base font-bold text-[#64748b] [filter:drop-shadow(0px_6px_24px_rgba(255,107,53,0.35))]"
             >
               <span aria-hidden>👤</span>
