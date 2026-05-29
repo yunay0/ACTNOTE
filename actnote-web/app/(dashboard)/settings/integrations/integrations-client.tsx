@@ -1,227 +1,312 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
-import { ExternalLink } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 
-type Props = {
-  bannerError?: string;
-  bannerMessage?: string;
-  connected?: boolean;
-};
-
-const ERROR_LABELS: Record<string, string> = {
-  missing_code: "Notion did not return an authorization code. Try connecting again.",
-  invalid_state: "Invalid workspace context. Start the connection from Settings again.",
-  forbidden: "You don’t have access to this workspace.",
-  token_exchange:
-    "Could not exchange the Notion code for a token. Check NOTION_CLIENT_SECRET and redirect URI in Notion Developer Portal.",
-  network: "Network error while contacting Notion. Try again.",
-  encrypt_config:
-    "Server missing ACTNOTE_ENCRYPTION_KEY (same key as the Python worker).",
-  save_failed: "Could not save the integration to the database.",
-  service_role:
-    "Server missing SUPABASE_SERVICE_ROLE_KEY or Supabase rejected the save.",
-  notion_denied: "Notion authorization was cancelled.",
-  invalid_workspace: "Pick a valid workspace before connecting.",
-  server_config:
-    "Missing NOTION_CLIENT_ID, NOTION_CLIENT_SECRET, or NEXT_PUBLIC_APP_URL on the server.",
-  no_access_token: "Notion response had no access token.",
-};
-
-function describeError(code?: string, msg?: string): string | undefined {
-  if (!code) return undefined;
-  if (msg && (code === "notion_denied" || code === "token_exchange")) {
-    try {
-      return decodeURIComponent(msg);
-    } catch {
-      return msg;
-    }
-  }
-  return ERROR_LABELS[code] ?? (msg ? `${code}: ${msg}` : code);
+// Notion N-mark icon (simplified lettermark)
+function NotionIcon({ size = 24, color = "#191919" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <rect x="3" y="2" width="18" height="20" rx="2" stroke={color} strokeWidth="1.5" />
+      <path d="M7 6.5V17.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M7 6.5L17 17.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M17 6.5V17.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
 }
 
-export default function IntegrationsSettingsClient({
-  bannerError,
-  bannerMessage,
-  connected: connectedQuery,
-}: Props) {
-  const { workspaceId: activeWorkspaceId, workspaceName: ctxWorkspaceName } =
-    useWorkspaceContext();
+interface Integration {
+  meeting_db_id: string | null;
+  action_db_id: string | null;
+  connected_at: string | null;
+  last_sync_at: string | null;
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatRelative(iso: string | null): string {
+  if (!iso) return "never";
+  const diff = Date.now() - new Date(iso).getTime();
+  const h = Math.floor(diff / 3600000);
+  if (h < 1) return "just now";
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.floor(h / 24);
+  return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
+function shortenDbId(id: string | null): string {
+  if (!id) return "—";
+  return `…${id.slice(-8)}`;
+}
+
+// --- Disconnect confirmation modal (per CSS: 440px, warning list, red confirm) ---
+function DisconnectModal({ onConfirm, onCancel, loading, workspaceName }: {
+  onConfirm: () => void; onCancel: () => void; loading: boolean; workspaceName?: string;
+}) {
+  const warnings = [
+    "Meeting notes can no longer be published to Notion",
+    "Action items won't be auto-created as tickets",
+    "Existing published notes in Notion will not be deleted",
+    "You can reconnect anytime from Workspace Settings",
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4" style={{ background: "rgba(26,43,74,0.45)" }}>
+      <div className="flex w-full max-w-[440px] flex-col overflow-hidden rounded-[16px] bg-white shadow-[0px_20px_60px_rgba(0,0,0,0.2)]">
+        {/* Body */}
+        <div className="flex flex-col items-center gap-[9.2px] px-8 pt-8 pb-12">
+          {/* Icon */}
+          <div className="flex size-16 items-center justify-center rounded-full bg-[#FEF2F2]">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+              <circle cx="14" cy="14" r="12.5" stroke="#DC2626" strokeWidth="2" />
+              <path d="M9 14H19" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </div>
+          {/* Title */}
+          <h2 className="pt-[10.8px] text-center text-[20px] font-bold text-[#212529]">Disconnect Notion?</h2>
+          {/* Desc */}
+          <p className="max-w-[369px] text-center text-[14px] leading-[22px] text-[#6C757D]">
+            You&apos;re about to disconnect Notion from {workspaceName ? `${workspaceName} workspace` : "your workspace"}. This will affect all team members.
+          </p>
+          {/* Warning list */}
+          <div className="flex w-full flex-col gap-2 rounded-[10px] border border-[#FFDBC4] bg-[#FFF4EE] px-4 pt-[24.8px] pb-[14px]">
+            {warnings.map((w) => (
+              <div key={w} className="flex items-center gap-2">
+                <div className="size-[5px] shrink-0 rounded-full bg-[#F26522]" />
+                <p className="text-[13px] leading-[16px] text-[#92400E]">{w}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Footer — stacked buttons */}
+        <div className="flex flex-col gap-[10px] px-8 pb-6">
+          <button
+            onClick={onConfirm} disabled={loading}
+            className="h-[43px] w-full rounded-[10px] bg-[#DC2626] text-[14px] font-semibold text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {loading ? "Disconnecting…" : "Yes, Disconnect Notion"}
+          </button>
+          <button
+            onClick={onCancel} disabled={loading}
+            className="h-[45px] w-full rounded-[10px] border border-[#DEE2E6] bg-white text-[14px] font-medium text-[#6C757D] hover:bg-[#f8f9fa] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export default function IntegrationsSettingsClient({ bannerError }: { bannerError?: string; bannerMessage?: string; connected?: boolean }) {
+  const router = useRouter();
+  const { workspaceId: activeWorkspaceId, workspaceName: ctxWorkspaceName } = useWorkspaceContext();
+
   const [loading, setLoading] = useState(true);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
-  const [notionConnected, setNotionConnected] = useState(false);
+  const [integration, setIntegration] = useState<Integration | null>(null);
+  const [showDisconnectModal, setShowDisconnectModal] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
 
   const load = useCallback(async () => {
-    if (!activeWorkspaceId) {
-      setLoading(false);
-      return;
-    }
-
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      setLoading(false);
-      return;
-    }
-
+    if (!activeWorkspaceId) { setLoading(false); return; }
     setWorkspaceId(activeWorkspaceId);
-    setWorkspaceName(ctxWorkspaceName ?? "Workspace");
-
-    const { data: intRow } = await (supabase as any)
+    setWorkspaceName(ctxWorkspaceName ?? "");
+    const supabase = createClient();
+    const { data } = await (supabase as any)
       .from("integrations")
-      .select("id")
+      .select("meeting_db_id, action_db_id, connected_at, last_sync_at")
       .eq("workspace_id", activeWorkspaceId)
       .eq("platform", "notion")
       .maybeSingle();
-
-    setNotionConnected(!!intRow);
+    setIntegration(data ?? null);
     setLoading(false);
   }, [activeWorkspaceId, ctxWorkspaceName]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   async function handleDisconnect() {
     if (!workspaceId || disconnecting) return;
     setDisconnecting(true);
     const supabase = createClient();
-    await (supabase as any)
-      .from("integrations")
-      .delete()
-      .eq("workspace_id", workspaceId)
-      .eq("platform", "notion");
-    setNotionConnected(false);
+    await (supabase as any).from("integrations").delete().eq("workspace_id", workspaceId).eq("platform", "notion");
+    setIntegration(null);
     setDisconnecting(false);
+    setShowDisconnectModal(false);
   }
 
-  const errorText = describeError(bannerError, bannerMessage);
-
-  const connectHref =
-    workspaceId &&
-    `/api/integrations/notion/start?workspace_id=${encodeURIComponent(workspaceId)}`;
+  const isConnected = !!integration;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <DashboardHeader title="Integrations" backHref="/meetings" />
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[720px] px-5 py-10 flex flex-col gap-6">
-          {connectedQuery && (
-            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-              Notion is connected for this workspace.
+      {showDisconnectModal && (
+        <DisconnectModal
+          onConfirm={handleDisconnect}
+          onCancel={() => setShowDisconnectModal(false)}
+          loading={disconnecting}
+          workspaceName={workspaceName}
+        />
+      )}
+
+      <div className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+        <div className="px-[29px] py-[35px]">
+
+          {bannerError && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
+              {bannerError}
             </div>
           )}
 
-          {errorText && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {errorText}
-            </div>
-          )}
+          {/* Notion Integration card */}
+          <div className="flex flex-col gap-5 rounded-[12px] border border-[#E9ECEF] bg-white p-7">
 
-          <section className="rounded-xl border border-[#e2e8f0] bg-white p-8">
-            <div className="mb-6 flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-[17px] font-bold text-[#0a2540]">Notion</h2>
-                <p className="mt-1 text-[13px] text-[#64748b]">
-                  Connect Notion to publish meeting notes and sync action items (
-                  <span className="font-medium text-[#0a2540]">INTEG-001 / INTEG-003</span>
-                  ).
-                </p>
+            {/* Section header */}
+            <div className="flex items-start justify-between">
+              <div className="flex flex-col gap-[5px]">
+                <p className="text-[18px] font-semibold text-[#212529]">Notion</p>
+                <p className="text-[14px] text-[#6C757D]">Publish meeting notes and auto-create action item tickets</p>
               </div>
-              <span className="rounded-lg bg-[#f8fafc] px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-[#64748b]">
-                Workspace
-              </span>
+
+              {/* Status badge */}
+              {loading ? null : isConnected ? (
+                <div className="flex items-center gap-[6px] rounded-[8px] bg-[#D1FAE5] px-3 py-[6px]">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <circle cx="6" cy="6" r="5.5" fill="#065F46" />
+                    <path d="M3 6L5 8L9 4" stroke="white" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <span className="text-[13px] font-semibold text-[#065F46]">Connected</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-[6px]">
+                  <NotionIcon size={12} color="#000" />
+                  <span className="text-[16px] text-[#000]">Not Connected</span>
+                </div>
+              )}
             </div>
 
             {loading ? (
               <div className="flex justify-center py-8">
-                <span className="h-6 w-6 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#F26522] border-t-transparent" />
               </div>
-            ) : !workspaceId ? (
-              <p className="text-sm text-[#64748b]">
-                No workspace found. Finish onboarding or join a workspace first.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-4 rounded-xl bg-[#f8fafc] p-5 border border-[#e2e8f0]">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#0a2540] text-lg font-bold text-white">
-                    N
+            ) : isConnected ? (
+              <>
+                {/* Integration info card */}
+                <div className="flex items-center gap-4 rounded-[10px] bg-[#F8F9FA] p-5">
+                  <div className="flex size-12 shrink-0 items-center justify-center rounded-[10px] bg-[#F1F3F5]">
+                    <NotionIcon size={24} color="#191919" />
                   </div>
-                  <div className="flex-1">
-                    <p className="text-[14px] font-bold text-[#0a2540]">
-                      {workspaceName}
-                    </p>
-                    <p className="text-[12px] text-[#64748b]">
-                      {notionConnected
-                        ? "Connected — publishing will push to your Notion workspace."
-                        : "Not connected — publishing may be blocked until Notion is linked."}
+                  <div className="flex flex-col gap-1">
+                    <p className="text-[15px] font-semibold text-[#212529]">Notion</p>
+                    <p className="text-[13px] text-[#6C757D]">
+                      Connected on {formatDate(integration.connected_at)} · Last synced {formatRelative(integration.last_sync_at)}
                     </p>
                   </div>
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                      notionConnected
-                        ? "bg-green-100 text-green-700"
-                        : "bg-[#fff4f0] text-[#ff6b35]"
-                    }`}
-                  >
-                    {notionConnected ? "Connected" : "Disconnected"}
-                  </span>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3">
-                  {connectHref && !notionConnected && (
-                    <a
-                      href={connectHref}
-                      className="inline-flex h-11 items-center justify-center rounded-lg px-5 text-[14px] font-bold text-white transition-opacity hover:opacity-90"
-                      style={{
-                        background:
-                          "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)",
-                      }}
-                    >
-                      Connect Notion
-                    </a>
-                  )}
-                  {notionConnected && (
+                {/* DB list */}
+                <div className="flex flex-col gap-3">
+                  {/* Meeting Notes DB */}
+                  <div className="flex items-center gap-3 rounded-[8px] border border-[#E9ECEF] bg-white px-4 py-[14px]">
+                    <div className="flex size-8 shrink-0 items-center justify-center rounded-[6px] bg-[#F1F3F5]">
+                      <NotionIcon size={14} color="#495057" />
+                    </div>
+                    <div className="flex flex-1 flex-col gap-[3px]">
+                      <p className="text-[12px] font-semibold uppercase tracking-[0.36px] text-[#6C757D]">Meeting Notes Database</p>
+                      <p className="text-[14px] font-medium text-[#212529]">
+                        {integration.meeting_db_id ? `Notion DB ${shortenDbId(integration.meeting_db_id)}` : "Not set"}
+                      </p>
+                    </div>
                     <button
-                      type="button"
-                      onClick={handleDisconnect}
-                      disabled={disconnecting}
-                      className="inline-flex h-11 items-center justify-center rounded-lg border-2 border-[#e2e8f0] bg-white px-5 text-[14px] font-bold text-[#64748b] hover:border-red-200 hover:text-red-600 disabled:opacity-50"
+                      onClick={() => router.push("/settings/integrations/meeting-db")}
+                      className="flex h-[33px] w-[80px] items-center justify-center rounded-[6px] border border-[#DEE2E6] bg-white text-[13px] text-[#495057] hover:bg-[#f8f9fa]"
                     >
-                      {disconnecting ? "Disconnecting…" : "Disconnect"}
+                      Change
                     </button>
-                  )}
-                  <Link
-                    href="https://developers.notion.com/docs/create-a-notion-integration"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[13px] font-semibold text-[#2e5c8a] hover:underline"
-                  >
-                    Notion integration docs
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </Link>
+                  </div>
+
+                  {/* Action Items DB */}
+                  <div className="flex items-center gap-3 rounded-[8px] border border-[#E9ECEF] bg-white px-4 py-[14px]">
+                    <div className="flex size-8 shrink-0 items-center justify-center rounded-[6px] bg-[#F1F3F5]">
+                      <NotionIcon size={14} color="#495057" />
+                    </div>
+                    <div className="flex flex-1 flex-col gap-[3px]">
+                      <p className="text-[12px] font-semibold uppercase tracking-[0.36px] text-[#6C757D]">Action Items Database</p>
+                      <p className="text-[14px] font-medium text-[#212529]">
+                        {integration.action_db_id ? `Notion DB ${shortenDbId(integration.action_db_id)}` : "Not set"}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => router.push("/settings/integrations/action-db")}
+                      className="flex h-[33px] w-[80px] items-center justify-center rounded-[6px] border border-[#DEE2E6] bg-white text-[13px] text-[#495057] hover:bg-[#f8f9fa]"
+                    >
+                      Change
+                    </button>
+                  </div>
                 </div>
 
-                <p className="text-[11px] leading-relaxed text-[#94a3b8]">
-                  Register redirect URI in Notion:{" "}
-                  <code className="rounded bg-white px-1 py-0.5 text-[10px] text-[#0a2540]">
-                    {typeof window !== "undefined"
-                      ? `${window.location.origin}/api/integrations/notion/callback`
-                      : "{NEXT_PUBLIC_APP_URL}/api/integrations/notion/callback"}
-                  </code>
-                </p>
-              </div>
+                {/* Disconnect button */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setShowDisconnectModal(true)}
+                    className="flex h-[38px] w-[114px] items-center justify-center rounded-[8px] border border-[#FCA5A5] bg-white text-[14px] font-bold text-[#DC2626] hover:bg-[#FEF2F2]"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Empty state */}
+                <div className="flex flex-col items-center gap-[6px] rounded-[10px] bg-[#F8F9FA] px-6 pb-11 pt-7">
+                  <div className="flex size-14 items-center justify-center rounded-[12px] bg-[#F1F3F5]">
+                    <NotionIcon size={28} color="#ADB5BD" />
+                  </div>
+                  <div className="flex flex-col items-center pt-[10px]">
+                    <p className="text-[15px] font-semibold text-[#212529]">Notion is not connected</p>
+                    <p className="mt-1 max-w-[621px] text-center text-[13px] leading-[21px] text-[#6C757D]">
+                      Connect Notion to publish meeting notes and auto-create action item tickets directly from ACTNOTE.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Warning box */}
+                <div className="flex items-start gap-[10px] rounded-[10px] border border-[#FDE68A] bg-[#FFFBEB] px-4 py-[14px]">
+                  <svg className="mt-[1px] shrink-0" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M8 1.5L14 13.5H2L8 1.5Z" stroke="#F59E0B" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M8 6V9" stroke="#F59E0B" strokeWidth="1.3" strokeLinecap="round" />
+                    <circle cx="8" cy="11" r="0.6" fill="#F59E0B" />
+                  </svg>
+                  <p className="text-[13px] font-bold leading-[21px] text-[#92400E]">
+                    Publishing is disabled. Meeting notes cannot be published to Notion and action items won&apos;t be auto-created until you connect.
+                  </p>
+                </div>
+
+                {/* Connect Notion button */}
+                <div className="flex">
+                  <button
+                    onClick={() => router.push("/onboarding/notion/apikey?from=settings")}
+                    className="flex h-[36px] items-center gap-2 rounded-[8px] bg-[#F26522] px-[18px] text-[14px] font-bold text-white hover:opacity-90"
+                  >
+                    <NotionIcon size={14} color="#fff" />
+                    Connect Notion
+                  </button>
+                </div>
+              </>
             )}
-          </section>
+          </div>
+
         </div>
       </div>
     </div>

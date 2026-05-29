@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
 import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
 import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
@@ -31,8 +32,10 @@ function autoMap(field: string, columns: NotionColumn[]): string {
   return col ? `${col.name} ✓ Auto-mapped` : "— not matched";
 }
 
-export default function NotionMeetingDbPage() {
+function NotionMeetingDbInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromSettings = searchParams.get("from") === "settings";
   const [url, setUrl] = useState("");
   const [urlState, setUrlState] = useState<UrlState>("empty");
   const [dbId, setDbId] = useState("");
@@ -110,10 +113,11 @@ export default function NotionMeetingDbPage() {
       <main className="flex flex-1 items-center justify-center px-6 py-12 sm:px-10">
         <div className="flex w-full max-w-[560px] flex-col">
 
-          {/* Progress */}
-          <div className="mb-[30.8px]">
-            <OnboardingProgress step="notion" notionSubStep={3} />
-          </div>
+          {!fromSettings && (
+            <div className="mb-[30.8px]">
+              <OnboardingProgress step="notion" notionSubStep={3} />
+            </div>
+          )}
 
           {/* Title */}
           <h1 className="mb-1 text-[26px] font-bold leading-[31px] text-[#212529]">
@@ -213,13 +217,13 @@ export default function NotionMeetingDbPage() {
           {/* Buttons */}
           <div className="flex items-center justify-between">
             <button
-              onClick={() => router.push("/onboarding/notion/apikey")}
+              onClick={() => router.push(fromSettings ? "/onboarding/notion/apikey?from=settings" : "/onboarding/notion/apikey")}
               className="h-[45px] w-[123px] rounded-[10px] border border-[#DEE2E6] bg-white text-[14px] font-medium text-[#6C757D] transition-colors hover:bg-[#f8f9fa]"
             >
               ← Go Back
             </button>
             <button
-              onClick={() => router.push("/onboarding/notion/actiondb")}
+              onClick={() => router.push(fromSettings ? "/onboarding/notion/actiondb?from=settings" : "/onboarding/notion/actiondb")}
               disabled={!verified}
               className="h-[43px] w-[224px] rounded-[10px] text-[14px] font-semibold transition-opacity hover:opacity-90 disabled:cursor-not-allowed"
               style={{ background: verified ? "#F26522" : "#E9ECEF", color: verified ? "#fff" : "#ADB5BD" }}
@@ -231,5 +235,13 @@ export default function NotionMeetingDbPage() {
         </div>
       </main>
     </OnboardingLayout>
+  );
+}
+
+export default function NotionMeetingDbPage() {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" /></div>}>
+      <NotionMeetingDbInner />
+    </Suspense>
   );
 }
