@@ -13,6 +13,7 @@ import {
   workspaceMemberDisplayName,
   workspaceMemberInitials,
 } from "@/lib/user/member-display";
+import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
 
 /** Supabase `workspace_members.role` */
 type DbRole = "owner" | "admin" | "member";
@@ -85,7 +86,8 @@ export default function WorkspaceSettingsPage() {
     useWorkspaceContext();
   const [workspaceName, setWorkspaceName] = useState("");
   const [savedName, setSavedName] = useState("");
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [logoDisplayUrl, setLogoDisplayUrl] = useState<string | null>(null);
+  const [logoBroken, setLogoBroken] = useState(false);
   const [savedLogoUrl, setSavedLogoUrl] = useState<string | null>(null);
   const [logoModalOpen, setLogoModalOpen] = useState(false);
   const [logoModalDraft, setLogoModalDraft] = useState<{
@@ -168,6 +170,16 @@ export default function WorkspaceSettingsPage() {
     };
   }, [logoModalDraft?.previewUrl]);
 
+  const syncLogoDisplayFromSaved = useCallback(
+    async (storedUrl: string | null) => {
+      const supabase = createClient();
+      const display = await resolveMeetingsImageDisplayUrl(supabase, storedUrl);
+      setLogoDisplayUrl(display);
+      setLogoBroken(false);
+    },
+    []
+  );
+
   const loadWorkspace = useCallback(async () => {
     if (!activeWorkspaceId) {
       setMeetingCount(0);
@@ -204,8 +216,8 @@ export default function WorkspaceSettingsPage() {
     setSavedName(ws.name ?? "");
     const loadedLogo =
       typeof ws.logo_url === "string" && ws.logo_url.trim() ? ws.logo_url.trim() : null;
-    setLogoUrl(loadedLogo);
     setSavedLogoUrl(loadedLogo);
+    await syncLogoDisplayFromSaved(loadedLogo);
     setWorkspaceSlug(ws.slug ?? "");
     setOptOut(ws.opt_out_training ?? true);
     const myDb = parseDbRole(memRow.role as string);
@@ -278,7 +290,7 @@ export default function WorkspaceSettingsPage() {
     }
 
     setLoading(false);
-  }, [activeWorkspaceId]);
+  }, [activeWorkspaceId, syncLogoDisplayFromSaved]);
 
   useEffect(() => {
     setLoading(true);
@@ -319,6 +331,7 @@ export default function WorkspaceSettingsPage() {
   function handleDiscardGeneral() {
     setWorkspaceName(savedName);
     setNameError(null);
+    void syncLogoDisplayFromSaved(savedLogoUrl);
   }
 
   function closeLogoModal() {
@@ -330,6 +343,7 @@ export default function WorkspaceSettingsPage() {
       if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
       return null;
     });
+    void syncLogoDisplayFromSaved(savedLogoUrl);
   }
 
   function openLogoModal() {
@@ -414,6 +428,8 @@ export default function WorkspaceSettingsPage() {
       });
       setLogoModalValidationError(null);
       setLogoSaveError(null);
+      setLogoDisplayUrl(previewUrl);
+      setLogoBroken(false);
     } catch (e) {
       setLogoSaveError(e instanceof Error ? e.message : "Could not read selected image.");
     }
@@ -447,7 +463,9 @@ export default function WorkspaceSettingsPage() {
       if (updErr) throw new Error(updErr.message || "Failed to save workspace logo.");
 
       setSavedLogoUrl(publicUrl);
-      setLogoUrl(publicUrl);
+      const displayUrl = await resolveMeetingsImageDisplayUrl(supabase, publicUrl);
+      setLogoDisplayUrl(displayUrl);
+      setLogoBroken(false);
       await refreshWorkspaces();
       closeLogoModal();
     } catch (e) {
@@ -874,9 +892,14 @@ export default function WorkspaceSettingsPage() {
               {!logoModalDraft && !logoModalValidationError ? (
                 <div className="flex items-center gap-4 rounded-[10px] bg-[#f8f9fa] p-4">
                   <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-[10px] bg-[#f26522]">
-                    {logoUrl ? (
+                    {logoDisplayUrl && !logoBroken ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={logoUrl} alt="" className="h-full w-full object-cover" />
+                      <img
+                        src={logoDisplayUrl}
+                        alt=""
+                        className="h-full w-full object-cover"
+                        onError={() => setLogoBroken(true)}
+                      />
                     ) : (
                       <span className="text-[24px] font-bold text-white">{workspaceInitial}</span>
                     )}
@@ -1560,9 +1583,14 @@ export default function WorkspaceSettingsPage() {
               <span className="text-[13px] font-semibold text-[#495057]">Workspace Logo</span>
               <div className="flex items-start gap-5">
                 <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[12px] border-2 border-[#e9ecef] bg-[#f26522]">
-                  {logoUrl ? (
+                  {logoDisplayUrl && !logoBroken ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={logoUrl} alt="" className="h-full w-full object-cover" />
+                    <img
+                      src={logoDisplayUrl}
+                      alt=""
+                      className="h-full w-full object-cover"
+                      onError={() => setLogoBroken(true)}
+                    />
                   ) : (
                     <span className="text-[28px] font-bold text-white">{workspaceInitial}</span>
                   )}
@@ -1578,6 +1606,9 @@ export default function WorkspaceSettingsPage() {
                     Upload Logo
                   </button>
                   <p className="text-[12px] text-[#6c757d]">PNG, JPG, or SVG up to 2MB</p>
+                  <p className="text-[11px] text-[#94a3b8]">
+                    Use Save Logo in the dialog to save your image. Save Changes updates the workspace name only.
+                  </p>
                 </div>
               </div>
             </div>
