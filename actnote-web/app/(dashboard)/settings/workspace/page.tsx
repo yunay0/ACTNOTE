@@ -262,32 +262,28 @@ export default function WorkspaceSettingsPage() {
 
     const canSeeJoinRequests = myDb === "owner" || myDb === "admin";
     if (canSeeJoinRequests) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: jrRows, error: jrErr } = await (supabase as any)
-        .from("workspace_join_requests")
-        .select("id, workspace_id, requester_id, message, status, created_at, users ( name, email )")
-        .eq("workspace_id", ws.id)
-        .eq("status", "pending")
-        .order("created_at", { ascending: false });
-      if (jrErr) {
-        console.warn("[workspace settings] join requests:", jrErr.message);
+      // Pending requests are fetched via a service-role API route. A direct
+      // browser-client query fails here: embedding users(...) is ambiguous
+      // (requester_id + reviewed_by both FK to users) and RLS on `users` hides
+      // the requester (not yet a member) from the owner.
+      try {
+        const res = await fetch(
+          `/api/workspace/join-request?workspace_id=${encodeURIComponent(ws.id)}`,
+          { credentials: "include" }
+        );
+        const body = (await res.json().catch(() => ({}))) as {
+          requests?: JoinRequestRow[];
+          error?: string;
+        };
+        if (!res.ok) {
+          console.warn("[workspace settings] join requests:", body.error ?? res.status);
+          setJoinRequests([]);
+        } else {
+          setJoinRequests(body.requests ?? []);
+        }
+      } catch (e) {
+        console.warn("[workspace settings] join requests:", e);
         setJoinRequests([]);
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const mapped: JoinRequestRow[] = (jrRows ?? []).map((row: any) => {
-          const u = Array.isArray(row.users) ? row.users[0] : row.users;
-          return {
-            id: row.id as string,
-            workspace_id: row.workspace_id as string,
-            requester_id: row.requester_id as string,
-            requester_email: (u?.email as string) ?? "",
-            requester_name: (u?.name as string | null) ?? null,
-            message: (row.message as string | null) ?? null,
-            status: row.status as string,
-            created_at: row.created_at as string,
-          };
-        });
-        setJoinRequests(mapped);
       }
     } else {
       setJoinRequests([]);

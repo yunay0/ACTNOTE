@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { ensureRepoRootEnvMerged } from "@/lib/server/repo-env";
 import {
   isSmtpConfigured,
@@ -9,6 +10,92 @@ import {
 import { buildJoinRequestEmailToOwner } from "@/lib/server/join-request-email";
 
 export const runtime = "nodejs";
+
+type JoinRequestListRow = {
+  id: string;
+  workspace_id: string;
+  requester_id: string;
+  message: string | null;
+  status: string;
+  created_at: string;
+};
+
+/**
+ * GET /api/workspace/join-request?workspace_id=<uuid>
+ *
+ * Lists pending join requests for a workspace. The browser client cannot do this
+ * directly: (1) embedding `users(...)` on workspace_join_requests is ambiguous
+ * (two FKs to users — requester_id + reviewed_by), and (2) RLS on `users` hides
+ * the requester's row from the owner because the requester is not yet a member.
+ * So we verify the caller is owner/admin, then resolve requester profiles with
+ * the service-role client (same pattern as the [id] detail route).
+ */
+export async function GET(req: NextRequest) {
+  const workspaceId = req.nextUrl.searchParams.get("workspace_id")?.trim();
+  if (!workspaceId) {
+    return NextResponse.json({ error: "workspace_id is required" }, { status: 400 });
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  // Authorize: caller must be owner/admin of this workspace.
+  const { data: memberRow } = await supabase
+    .from("workspace_members")
+    .select("role")
+    .eq("workspace_id", workspaceId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const role = (memberRow as { role?: string } | null)?.role;
+  if (role !== "owner" && role !== "admin") {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+
+  const admin = createServiceRoleClient();
+  const { data: rows, error } = await admin
+    .from("workspace_join_requests")
+    .select("id, workspace_id, requester_id, message, status, created_at")
+    .eq("workspace_id", workspaceId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  const reqRows = (rows ?? []) as JoinRequestListRow[];
+  const requesterIds = [...new Set(reqRows.map((r) => r.requester_id))];
+
+  const userMap = new Map<string, { name: string | null; email: string }>();
+  if (requesterIds.length > 0) {
+    const { data: userRows } = await admin
+      .from("users")
+      .select("id, name, email")
+      .in("id", requesterIds);
+    for (const u of (userRows ?? []) as Array<{ id: string; name: string | null; email: string | null }>) {
+      userMap.set(u.id, { name: u.name ?? null, email: u.email ?? "" });
+    }
+  }
+
+  const requests = reqRows.map((r) => {
+    const u = userMap.get(r.requester_id);
+    return {
+      id: r.id,
+      workspace_id: r.workspace_id,
+      requester_id: r.requester_id,
+      requester_email: u?.email ?? "",
+      requester_name: u?.name ?? null,
+      message: r.message ?? null,
+      status: r.status,
+      created_at: r.created_at,
+    };
+  });
+
+  return NextResponse.json({ requests });
+}
 
 type CreateRequestBody = {
   workspace_slug: string;
