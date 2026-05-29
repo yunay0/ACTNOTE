@@ -1,16 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
 import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
 import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
 
 // 노션 연동 설정 03 — Step 2: Enter your API Key
 // 3 input states: empty / error / verified
-// Go Back → /onboarding/notion/setup
-// Connect Databases (active only when verified) → /onboarding/invite
-//   TODO: 설정 04 (DB selection) goes here — 유나 담당
+// ?from=settings: Go Back → /settings/integrations, Connect Databases → /settings notion/db?from=settings
 
 type InputState = "empty" | "error" | "verifying" | "verified";
 
@@ -28,8 +27,10 @@ function hintText(state: InputState): { text: string; color: string } {
   return { text: "Paste your token from Notion's integration settings", color: "#ADB5BD" };
 }
 
-export default function NotionApiKeyPage() {
+function NotionApiKeyInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromSettings = searchParams.get("from") === "settings";
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [inputState, setInputState] = useState<InputState>("empty");
@@ -101,10 +102,12 @@ export default function NotionApiKeyPage() {
       <main className="flex flex-1 items-center justify-center px-6 py-12 sm:px-10">
         <div className="flex w-full max-w-[520px] flex-col">
 
-          {/* Progress */}
-          <div className="mb-[28.8px]">
-            <OnboardingProgress step="notion" notionSubStep={2} />
-          </div>
+          {/* Progress — hidden in settings context */}
+          {!fromSettings && (
+            <div className="mb-[28.8px]">
+              <OnboardingProgress step="notion" notionSubStep={2} />
+            </div>
+          )}
 
           {/* Title */}
           <h1 className="mb-1 text-[28px] font-bold leading-[36px] text-[#212529]">
@@ -201,13 +204,13 @@ export default function NotionApiKeyPage() {
           {/* Buttons */}
           <div className="flex items-center justify-between">
             <button
-              onClick={() => router.push("/onboarding/notion/setup")}
+              onClick={() => router.push(fromSettings ? "/settings/integrations" : "/onboarding/notion/setup")}
               className="h-[45px] w-[123px] rounded-[10px] border border-[#DEE2E6] bg-white text-[14px] font-medium text-[#6C757D] transition-colors hover:bg-[#f8f9fa]"
             >
               ← Go Back
             </button>
             <button
-              onClick={() => router.push("/onboarding/notion/db")}
+              onClick={() => router.push(fromSettings ? "/onboarding/notion/db?from=settings" : "/onboarding/notion/db")}
               disabled={!verified}
               className="h-[43px] w-[207px] rounded-[10px] text-[14px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed"
               style={{ background: verified ? "#F26522" : "#E9ECEF", color: verified ? "#fff" : "#ADB5BD" }}
@@ -219,5 +222,13 @@ export default function NotionApiKeyPage() {
         </div>
       </main>
     </OnboardingLayout>
+  );
+}
+
+export default function NotionApiKeyPage() {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" /></div>}>
+      <NotionApiKeyInner />
+    </Suspense>
   );
 }
