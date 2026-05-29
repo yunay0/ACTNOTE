@@ -12,7 +12,8 @@ import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
 
 type UrlState = "empty" | "error" | "verifying" | "verified" | "saving";
 
-const MEETING_FIELDS = ["Meeting Title", "Date", "Summary", "Decisions", "Action Items"];
+// Notion 회의록 템플릿 컬럼: Meeting Type / Date / Name / Participants / ACTNOTE URL
+const MEETING_FIELDS = ["Meeting Title", "Meeting Type", "Date", "Participants", "Meeting Link"];
 interface NotionColumn { name: string; type: string; }
 interface FieldRow { actnoteField: string; notionColumn: string; }
 
@@ -20,11 +21,12 @@ function autoMap(field: string, columns: NotionColumn[]): string {
   const f = field.toLowerCase();
   const col = columns.find((c) => {
     const n = c.name.toLowerCase();
-    if (f.includes("title")) return c.type === "title" || n.includes("title") || n.includes("name");
-    if (f === "date") return c.type === "date" || (n.includes("date") && !n.includes("due"));
-    if (f.includes("summary")) return n.includes("summary") || n.includes("note");
-    if (f.includes("decision")) return n.includes("decision");
-    if (f.includes("action")) return n.includes("action");
+    const t = c.type.toLowerCase();
+    if (f.includes("title")) return t === "title" || n.includes("title") || n === "name";
+    if (f.includes("type")) return (t === "select" && n.includes("type")) || n.includes("meeting type");
+    if (f === "date") return (t === "date" && !n.includes("due")) || (n.includes("date") && !n.includes("due"));
+    if (f.includes("participant")) return t === "people" || t === "person" || n.includes("participant") || n.includes("attendee");
+    if (f.includes("link")) return t === "url" || n.includes("url") || n.includes("link");
     return false;
   });
   return col ? `${col.name} ✓ Auto-mapped` : "— not matched";

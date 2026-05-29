@@ -71,6 +71,8 @@ export function MeetingAiAnalysisPreview(props: MeetingAiAnalysisPreviewProps): 
     risks_and_issues: readDraftAnalysisText(doc, "risks_and_issues"),
     follow_up: readDraftAnalysisText(doc, "follow_up"),
     blockers: readDraftAnalysisText(doc, "blockers"),
+    key_decisions: readDraftAnalysisText(doc, "key_decisions"),
+    key_points: readDraftAnalysisText(doc, "key_points"),
   };
 
   const canon = canonicalMeetingAnalysisType(props.meetingType);
@@ -98,6 +100,8 @@ export function MeetingAiAnalysisPreview(props: MeetingAiAnalysisPreviewProps): 
         risksAndIssuesText={extras.risks_and_issues}
         followUpText={extras.follow_up}
         blockersText={extras.blockers}
+        keyDecisionsText={extras.key_decisions}
+        keyPointsText={extras.key_points}
       />
 
       <PreviewSection icon={<Paperclip className="h-4 w-4 text-[#64748b]" />} label="Reference documents">

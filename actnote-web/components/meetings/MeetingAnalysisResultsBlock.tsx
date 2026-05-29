@@ -28,6 +28,8 @@ interface MeetingAnalysisResultsBlockProps {
   risksAndIssuesText: string;
   followUpText: string;
   blockersText: string;
+  keyDecisionsText: string;
+  keyPointsText: string;
   onExtrasChange?: (key: Exclude<MeetingAnalysisDraftKey, "summary" | "decisions">, val: string) => void;
   /** 순서와 라벨이 정해진 필드 목록 (부모가 `meetingAnalysisSegments` 로 전달) */
   segments: Array<{
@@ -86,7 +88,11 @@ export function MeetingAnalysisResultsBlock(props: MeetingAnalysisResultsBlockPr
           ? props.risksAndIssuesText
           : k === "follow_up"
             ? props.followUpText
-            : props.blockersText;
+            : k === "key_decisions"
+              ? props.keyDecisionsText
+              : k === "key_points"
+                ? props.keyPointsText
+                : props.blockersText;
     const onChange = props.onExtrasChange;
 
     const emptyHint =

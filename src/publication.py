@@ -276,7 +276,10 @@ def push_published_to_notion(
 
     meeting_resp = (
         sb_client.table("meetings")
-        .select("title, summary, decisions, meeting_date, notion_page_id")
+        .select(
+            "title, summary, decisions, meeting_date, notion_page_id, meeting_type, "
+            "key_topics, key_decisions, risks_and_issues, follow_up, blockers, key_points"
+        )
         .eq("id", meeting_id)
         .single()
         .execute()
@@ -313,6 +316,15 @@ def push_published_to_notion(
             meeting_date=meeting_data.get("meeting_date"),
             workspace_id=workspace_id,
             sb_client=sb_client,
+            meeting_type=meeting_data.get("meeting_type"),
+            sections={
+                "key_topics": meeting_data.get("key_topics") or "",
+                "key_decisions": meeting_data.get("key_decisions") or "",
+                "risks_and_issues": meeting_data.get("risks_and_issues") or "",
+                "follow_up": meeting_data.get("follow_up") or "",
+                "blockers": meeting_data.get("blockers") or "",
+                "key_points": meeting_data.get("key_points") or "",
+            },
         )
         if notion_page_id:
             sb_client.table("meetings").update(

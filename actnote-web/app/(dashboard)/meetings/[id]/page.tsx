@@ -65,6 +65,7 @@ interface MeetingRow {
   participants: string[];
   responsible_user_id: string | null;
   creator_display_name?: string | null;
+  notion_page_id?: string | null;
   creator_email?: string | null;
   responsible_display_name?: string | null;
   responsible_display_email?: string | null;
@@ -80,6 +81,7 @@ interface ActionItem {
   due_date: string | null;
   confidence: number | null;
   status: "open" | "done" | "cancelled";
+  notion_page_id?: string | null;
 }
 
 const NEW_ACTION_ITEM_PREFIX = "new:";
@@ -253,6 +255,8 @@ export default function MeetingDetailPage() {
   const [editRisksAndIssues, setEditRisksAndIssues] = useState("");
   const [editFollowUp, setEditFollowUp] = useState("");
   const [editBlockers, setEditBlockers] = useState("");
+  const [editKeyDecisions, setEditKeyDecisions] = useState("");
+  const [editKeyPoints, setEditKeyPoints] = useState("");
   const [editActionItems, setEditActionItems] = useState<ActionItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [saving, setSaving] = useState(false);
@@ -329,7 +333,7 @@ export default function MeetingDetailPage() {
       (supabase as any)
         .from("meetings")
         .select(
-          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, audio_file_name, workspace_id, created_by, error_message, description, meeting_type, participants, responsible_user_id, ai_draft_notes, duration_seconds, audio_file_size_bytes"
+          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, audio_file_name, workspace_id, created_by, error_message, description, meeting_type, participants, responsible_user_id, ai_draft_notes, duration_seconds, audio_file_size_bytes, notion_page_id"
         )
         .eq("id", id)
         .is("deleted_at", null)
@@ -428,8 +432,8 @@ export default function MeetingDetailPage() {
     }
 
     const actionSelectFull =
-      "id, content, assignee, assignee_user_id, due_date, confidence, status";
-    const actionSelectMinimal = "id, content, assignee, assignee_user_id, due_date, status";
+      "id, content, assignee, assignee_user_id, due_date, confidence, status, notion_page_id";
+    const actionSelectMinimal = "id, content, assignee, assignee_user_id, due_date, status, notion_page_id";
 
     let itemsRes = await (supabase as any)
       .from("action_items")
@@ -652,6 +656,8 @@ export default function MeetingDetailPage() {
     setEditRisksAndIssues(readDraftAnalysisText(draftNotesDoc, "risks_and_issues"));
     setEditFollowUp(readDraftAnalysisText(draftNotesDoc, "follow_up"));
     setEditBlockers(readDraftAnalysisText(draftNotesDoc, "blockers"));
+    setEditKeyDecisions(readDraftAnalysisText(draftNotesDoc, "key_decisions"));
+    setEditKeyPoints(readDraftAnalysisText(draftNotesDoc, "key_points"));
     setEditActionItems(actionItems.map((a) => ({ ...a })));
     loadMembers(meeting.workspace_id);
     setEditMode(true);
@@ -679,6 +685,8 @@ export default function MeetingDetailPage() {
       risks_and_issues: editRisksAndIssues,
       follow_up: editFollowUp,
       blockers: editBlockers,
+      key_decisions: editKeyDecisions,
+      key_points: editKeyPoints,
     });
 
     const { error: meetUpErr } = await (supabase as any)
@@ -1407,6 +1415,29 @@ export default function MeetingDetailPage() {
                 {meeting.approval_status === "published" && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-1.5 text-sm font-bold text-green-700">✅ Published</span>
                 )}
+                {/* F7: PUB-003 — Notion 페이지 링크 */}
+                {isPublished && meeting.notion_page_id && (
+                  <a
+                    href={`https://www.notion.so/${meeting.notion_page_id.replace(/-/g, "")}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] bg-white px-3 py-1.5 text-sm font-semibold text-[#0a2540] hover:bg-[#f8fafc]"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="shrink-0">
+                      <rect x="3" y="2" width="18" height="20" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                      <path d="M7 6.5V17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      <path d="M7 6.5L17 17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      <path d="M17 6.5V17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    </svg>
+                    View in Notion
+                  </a>
+                )}
+                {/* F7: PUB-004 — Notion 티켓 수 */}
+                {isPublished && actionItems.filter((a) => a.notion_page_id).length > 0 && (
+                  <span className="flex items-center gap-1.5 rounded-lg bg-[#f0fdf4] px-3 py-1.5 text-sm font-semibold text-[#16a34a]">
+                    🎫 {actionItems.filter((a) => a.notion_page_id).length} ticket{actionItems.filter((a) => a.notion_page_id).length === 1 ? "" : "s"} created
+                  </span>
+                )}
                 {/* 상단 휴지통 아이콘은 제거. 삭제는 하단 Delete 버튼으로 일원화. */}
               </div>
             </div>
@@ -1646,6 +1677,12 @@ export default function MeetingDetailPage() {
                   blockersText={
                     editMode && canEdit ? editBlockers : readDraftAnalysisText(draftNotesDoc, "blockers")
                   }
+                  keyDecisionsText={
+                    editMode && canEdit ? editKeyDecisions : readDraftAnalysisText(draftNotesDoc, "key_decisions")
+                  }
+                  keyPointsText={
+                    editMode && canEdit ? editKeyPoints : readDraftAnalysisText(draftNotesDoc, "key_points")
+                  }
                   onExtrasChange={
                     editMode && canEdit
                       ? (key, val) => {
@@ -1653,6 +1690,8 @@ export default function MeetingDetailPage() {
                           else if (key === "risks_and_issues") setEditRisksAndIssues(val);
                           else if (key === "follow_up") setEditFollowUp(val);
                           else if (key === "blockers") setEditBlockers(val);
+                          else if (key === "key_decisions") setEditKeyDecisions(val);
+                          else if (key === "key_points") setEditKeyPoints(val);
                         }
                       : undefined
                   }

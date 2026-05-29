@@ -75,6 +75,21 @@ def _notion_page_url(page_id: str) -> str:
     return f"https://www.notion.so/{page_id.replace('-', '')}"
 
 
+def _actnote_meeting_url(meeting_id: str) -> str:
+    """ACTNOTE 앱 회의 상세 URL (Notion 'ACTNOTE URL' 컬럼용)."""
+    base = (os.getenv("NEXT_PUBLIC_APP_URL") or "https://actnote-web.vercel.app").rstrip("/")
+    return f"{base}/meetings/{meeting_id}"
+
+
+# 회의 유형 → Notion 'Meeting Type' select 옵션 라벨 (select 는 미존재 옵션 자동 생성)
+_MEETING_TYPE_LABELS = {
+    "standup": "Team Standup",
+    "project_review": "Project Review",
+    "one_on_one": "1:1",
+    "other": "Other",
+}
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -517,8 +532,20 @@ def push_meeting(
     workspace_id: str,
     sb_client,
     document_links: list[dict] | None = None,
+    *,
+    meeting_type: str | None = None,
+    sections: dict[str, str] | None = None,
 ) -> str | None:
     """PUB-003 — 회의록을 INTEG-001 (`meeting_db_id`) 에 Notion 페이지로 생성/업데이트한다.
+
+    ACTNOTE 공식 회의록 템플릿 컬럼: Meeting Type(select) / Date(date) / Name(title) /
+    Participants(people) / ACTNOTE URL(url). Summary·Key Topics·Follow-up 등 유형별
+    섹션은 페이지 본문 블록으로 들어간다.
+
+    Args:
+        meeting_type: standup/project_review/one_on_one/other — Notion 'Meeting Type' 컬럼.
+        sections: 유형별 본문 섹션 텍스트. 키: key_topics, key_decisions,
+            risks_and_issues, follow_up, blockers, key_points.
 
     Returns:
         Notion 페이지 ID (하이픈 포함 UUID 형식).
@@ -538,6 +565,7 @@ def push_meeting(
         return None
 
     notion = _client(token)
+    sections = sections or {}
 
     # --- 날짜 파싱 ---
     date_prop: dict[str, Any] | None = None
@@ -548,25 +576,36 @@ def push_meeting(
         except (ValueError, TypeError):
             pass
 
-    # --- 본문 블록 구성 ---
-    blocks: list[dict[str, Any]] = [
-        {
+    # --- 본문 블록 구성 (영문 heading, 템플릿 섹션 순서) ---
+    blocks: list[dict[str, Any]] = []
+
+    def _add_text_section(heading: str, text: str) -> None:
+        if not text or not text.strip():
+            return
+        blocks.append({
             "object": "block",
             "type": "heading_2",
-            "heading_2": {"rich_text": [{"type": "text", "text": {"content": "요약"}}]},
-        },
-        {
+            "heading_2": {"rich_text": [{"type": "text", "text": {"content": heading}}]},
+        })
+        blocks.append({
             "object": "block",
             "type": "paragraph",
-            "paragraph": {"rich_text": [{"type": "text", "text": {"content": summary or ""}}]},
-        },
-    ]
+            "paragraph": {"rich_text": [{"type": "text", "text": {"content": text.strip()}}]},
+        })
+
+    _add_text_section("Summary", summary or "")
+    _add_text_section("Key Topics", sections.get("key_topics", ""))
+    _add_text_section("Key Decisions", sections.get("key_decisions", ""))
+    _add_text_section("Blockers", sections.get("blockers", ""))
+    _add_text_section("Risks & Issues", sections.get("risks_and_issues", ""))
+    _add_text_section("Follow-up", sections.get("follow_up", ""))
+    _add_text_section("Key Points", sections.get("key_points", ""))
 
     if decisions:
         blocks.append({
             "object": "block",
             "type": "heading_2",
-            "heading_2": {"rich_text": [{"type": "text", "text": {"content": "결정사항"}}]},
+            "heading_2": {"rich_text": [{"type": "text", "text": {"content": "Decisions"}}]},
         })
         for d in decisions:
             blocks.append({
@@ -597,12 +636,17 @@ def push_meeting(
                 "bulleted_list_item": {"rich_text": rich_text},
             })
 
-    # --- Properties ---
+    # --- Properties (템플릿 컬럼: Name / Date / Meeting Type / ACTNOTE URL) ---
+    # Participants 는 people 타입이라 텍스트 이름을 넣을 수 없어 생략 (Notion 에서 수동 지정).
     properties: dict[str, Any] = {
         "Name": {"title": [{"type": "text", "text": {"content": title or "(제목 없음)"}}]},
+        "ACTNOTE URL": {"url": _actnote_meeting_url(meeting_id)},
     }
     if date_prop:
         properties["Date"] = {"date": date_prop}
+    if meeting_type:
+        label = _MEETING_TYPE_LABELS.get(meeting_type.strip().lower(), meeting_type)
+        properties["Meeting Type"] = {"select": {"name": label}}
 
     # --- 기존 페이지 여부 확인 ---
     existing_resp = (
@@ -682,25 +726,23 @@ def push_action_items(
         return []
 
     notion = _client(token)
-    meeting_url = _notion_page_url(meeting_page_id) if meeting_page_id else None
+    # ACTNOTE URL 컬럼: ACTNOTE 앱 회의 상세로 연결 (Notion 회의록 페이지가 아님).
+    actnote_url = _actnote_meeting_url(meeting_id)
     created_ids: list[str] = []
 
     try:
         for item in action_items:
+            # 템플릿 컬럼: Task title(title) / Assignee(people) / Due Date(date) /
+            #            Status(status) / ACTNOTE URL(url)
+            # Assignee 는 people 타입 — 텍스트 이름을 넣을 수 없어 생략 (PUB-004: Notion
+            # 멤버 ID 미확인 시 공란 저장, Notion 에서 수동 지정). Status 는 미설정 시
+            # Notion DB 기본값 사용.
             props: dict[str, Any] = {
-                "Name": {
+                "Task title": {
                     "title": [{"type": "text", "text": {"content": item.get("content") or ""}}]
                 },
-                "Priority": {"select": {"name": item.get("priority") or _PRIORITY_DEFAULT}},
+                "ACTNOTE URL": {"url": actnote_url},
             }
-            if meeting_url:
-                props["Meeting Link"] = {"url": meeting_url}
-
-            if item.get("assignee"):
-                props["Assignee"] = {
-                    "rich_text": [{"type": "text", "text": {"content": item["assignee"]}}]
-                }
-
             if item.get("due_date"):
                 props["Due Date"] = {"date": {"start": str(item["due_date"])}}
 
