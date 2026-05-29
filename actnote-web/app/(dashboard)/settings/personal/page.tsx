@@ -82,6 +82,7 @@ export default function PersonalSettingsPage() {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
+  const [profilePhotoBroken, setProfilePhotoBroken] = useState(false);
   const [photoModalOpen, setPhotoModalOpen] = useState(false);
   const [photoSaveBusy, setPhotoSaveBusy] = useState(false);
   const [photoSaveError, setPhotoSaveError] = useState<string | null>(null);
@@ -136,7 +137,10 @@ export default function PersonalSettingsPage() {
       setLastName(l);
       setBaselineFirst(f);
       setBaselineLast(l);
-      setProfilePhotoUrl(typeof data?.avatar_url === "string" ? data.avatar_url : null);
+      const avatar =
+        typeof data?.avatar_url === "string" && data.avatar_url.trim() ? data.avatar_url.trim() : null;
+      setProfilePhotoUrl(avatar);
+      setProfilePhotoBroken(false);
 
       setLoading(false);
     }
@@ -197,6 +201,17 @@ export default function PersonalSettingsPage() {
     setFirstName(baselineFirst);
     setLastName(baselineLast);
     setError(null);
+  }
+
+  function closePhotoModal() {
+    setPhotoModalOpen(false);
+    setPhotoValidationError(null);
+    setPhotoSaveError(null);
+    setPhotoSaveBusy(false);
+    setPhotoDraft((prev) => {
+      if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
+      return null;
+    });
   }
 
   async function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
@@ -264,31 +279,50 @@ export default function PersonalSettingsPage() {
     if (!photoDraft || photoSaveBusy) return;
     setPhotoSaveBusy(true);
     setPhotoSaveError(null);
+    const draft = photoDraft;
     try {
       const supabase = createClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) throw new Error("You must be signed in.");
-      const ext = (photoDraft.file.name.split(".").pop() || "jpg").toLowerCase();
+      const ext = (draft.file.name.split(".").pop() || "jpg").toLowerCase();
       const path = `profile/${user.id}/avatar-${Date.now()}.${ext}`;
-      const { error: uploadErr } = await supabase.storage
-        .from("meetings")
-        .upload(path, photoDraft.file, {
-          upsert: true,
-          contentType: photoDraft.file.type || "image/jpeg",
-        });
-      if (uploadErr) throw new Error(uploadErr.message || "Failed to upload image.");
+
+      const { data: existing } = await supabase.storage.from("meetings").list(`profile/${user.id}`);
+      if (existing?.length) {
+        const keys = existing
+          .filter((row) => typeof row.name === "string" && row.name.length > 0)
+          .map((row) => `profile/${user.id}/${row.name}`);
+        if (keys.length > 0) {
+          await supabase.storage.from("meetings").remove(keys);
+        }
+      }
+
+      const { error: uploadErr } = await supabase.storage.from("meetings").upload(path, draft.file, {
+        upsert: false,
+        contentType: draft.file.type || "image/jpeg",
+      });
+      if (uploadErr) {
+        throw new Error(uploadErr.message || "Failed to upload image.");
+      }
+
       const { data: urlData } = supabase.storage.from("meetings").getPublicUrl(path);
-      const publicUrl = urlData?.publicUrl ?? null;
-      if (!publicUrl) throw new Error("Could not resolve uploaded image URL.");
+      const baseUrl = urlData?.publicUrl ?? null;
+      if (!baseUrl) throw new Error("Could not resolve uploaded image URL.");
+      const publicUrl = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}v=${Date.now()}`;
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error: updErr } = await (supabase as any)
         .from("users")
-        .update({ avatar_url: publicUrl, updated_at: new Date().toISOString() })
+        .update({ avatar_url: baseUrl, updated_at: new Date().toISOString() })
         .eq("id", user.id);
       if (updErr) throw new Error(updErr.message || "Failed to save profile photo.");
+
       setProfilePhotoUrl(publicUrl);
+      setProfilePhotoBroken(false);
+      if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
+      setPhotoDraft(null);
       setPhotoModalOpen(false);
       setPhotoValidationError(null);
     } catch (e) {
@@ -514,10 +548,7 @@ export default function PersonalSettingsPage() {
               <h3 className="text-[22px] font-bold text-[#212529]">Upload Profile Photo</h3>
               <button
                 type="button"
-                onClick={() => {
-                  setPhotoModalOpen(false);
-                  setPhotoValidationError(null);
-                }}
+                onClick={closePhotoModal}
                 className="rounded-md px-2 py-1 text-[#6c757d] hover:bg-[#f8fafc]"
               >
                 ×
@@ -625,11 +656,9 @@ export default function PersonalSettingsPage() {
             <div className="flex justify-end gap-2 border-t border-[#e9ecef] px-6 py-3">
               <button
                 type="button"
-                onClick={() => {
-                  setPhotoModalOpen(false);
-                  setPhotoValidationError(null);
-                }}
-                className="h-8 rounded-md border border-[#dee2e6] bg-white px-4 text-[13px] text-[#6c757d] hover:bg-[#f8fafc]"
+                onClick={closePhotoModal}
+                disabled={photoSaveBusy}
+                className="h-8 rounded-md border border-[#dee2e6] bg-white px-4 text-[13px] text-[#6c757d] hover:bg-[#f8fafc] disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -1090,12 +1119,13 @@ export default function PersonalSettingsPage() {
             </div>
 
             <div className="mb-6 flex items-start gap-5">
-              {profilePhotoUrl ? (
+              {profilePhotoUrl && !profilePhotoBroken ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={profilePhotoUrl}
                   alt=""
                   className="size-[100px] shrink-0 rounded-full border-[3px] border-[#e9ecef] object-cover"
+                  onError={() => setProfilePhotoBroken(true)}
                 />
               ) : (
                 <div className="flex size-[100px] shrink-0 items-center justify-center rounded-full border-[3px] border-[#e9ecef] bg-[#1a2b4a] text-[36px] font-bold text-white">
@@ -1114,7 +1144,10 @@ export default function PersonalSettingsPage() {
                 >
                   + Upload Photo
                 </button>
-                <p className="mt-2 text-[12px] text-[#6c757d]">JPG, PNG up to 5MB</p>
+                <p className="mt-2 text-[12px] text-[#6c757d]">JPG, PNG, or GIF up to 5MB</p>
+                <p className="mt-1 text-[11px] text-[#94a3b8]">
+                  Use Save Photo in the dialog to save your picture. Save Changes updates your name only.
+                </p>
               </div>
             </div>
 
