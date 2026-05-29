@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { INVITE_EXPIRES_IN_DAYS } from "@/lib/workspace/invite-expiry";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
 import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
+import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -32,6 +33,7 @@ export default function OnboardingInvitePage() {
   const [deliveryWarnings, setDeliveryWarnings] = useState<
     { email: string; link: string; notice_code?: string }[]
   >([]);
+  const [warningSentCount, setWarningSentCount] = useState(0);
 
   useEffect(() => {
     const supabase = createClient();
@@ -164,10 +166,12 @@ export default function OnboardingInvitePage() {
 
       if (warnings.length > 0) {
         setDeliveryWarnings(warnings);
+        setWarningSentCount(valid.length);
         setLoading(false);
         return;
       }
 
+      try { sessionStorage.setItem("invited_emails", JSON.stringify(valid)); } catch {}
       router.push(`/onboarding/invite/success?sent=${valid.length}`);
       setLoading(false);
     } catch {
@@ -177,7 +181,7 @@ export default function OnboardingInvitePage() {
   }
 
   function handleSkip() {
-    router.push("/workspace/select");
+    router.push("/onboarding/complete?invited=0");
   }
 
   if (checkingAuth) {
@@ -194,12 +198,8 @@ export default function OnboardingInvitePage() {
 
       <main className="flex flex-1 justify-center px-6 py-[80px] sm:px-10">
         <div className="flex w-full max-w-[520px] flex-col justify-center">
-          {/* Figma 146:7600 — step 2 / 2 indicator (blue = done, orange = current) */}
           <div className="pb-12">
-            <div className="flex w-full gap-3">
-              <div className="h-1 flex-1 rounded-[2px] bg-[#2e5c8a]" />
-              <div className="h-1 flex-1 rounded-[2px] bg-[#ff6b35]" />
-            </div>
+            <OnboardingProgress step="team" />
           </div>
 
           <div className="pb-[34px]">
@@ -281,7 +281,7 @@ export default function OnboardingInvitePage() {
                 </ul>
                 <button
                   type="button"
-                  onClick={() => router.push("/workspace/select")}
+                  onClick={() => router.push(`/onboarding/complete?invited=${warningSentCount}`)}
                   className="text-sm font-bold text-amber-950 underline hover:no-underline"
                 >
                   Continue to workspace →

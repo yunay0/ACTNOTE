@@ -1,0 +1,235 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
+import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
+import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
+
+// 노션 연동 설정 04 — Step 3: Connect Meeting Notes DB
+// Go Back → /onboarding/notion/apikey
+// Next (active only when verified) → /onboarding/notion/actiondb
+
+type UrlState = "empty" | "error" | "verifying" | "verified";
+
+const MEETING_FIELDS = ["Meeting Title", "Date", "Summary", "Decisions", "Action Items"];
+
+interface NotionColumn { name: string; type: string; }
+interface FieldRow { actnoteField: string; notionColumn: string; }
+
+function autoMap(field: string, columns: NotionColumn[]): string {
+  const f = field.toLowerCase();
+  const col = columns.find((c) => {
+    const n = c.name.toLowerCase();
+    if (f.includes("title") || f.includes("meeting title")) return c.type === "title" || n.includes("title") || n.includes("name");
+    if (f === "date") return c.type === "date" || (n.includes("date") && !n.includes("due"));
+    if (f.includes("summary")) return n.includes("summary") || n.includes("note") || n.includes("description");
+    if (f.includes("decision")) return n.includes("decision");
+    if (f.includes("action")) return n.includes("action");
+    return false;
+  });
+  return col ? `${col.name} ✓ Auto-mapped` : "— not matched";
+}
+
+export default function NotionMeetingDbPage() {
+  const router = useRouter();
+  const [url, setUrl] = useState("");
+  const [urlState, setUrlState] = useState<UrlState>("empty");
+  const [dbId, setDbId] = useState("");
+  const [dbName, setDbName] = useState("");
+  const [fieldRows, setFieldRows] = useState<FieldRow[]>([]);
+  const [verifying, setVerifying] = useState(false);
+
+  function handleUrlChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setUrl(e.target.value);
+    setUrlState("empty");
+    setDbId("");
+    setDbName("");
+    setFieldRows([]);
+  }
+
+  async function handleVerify() {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+
+    // Quick client-side format check
+    if (!trimmed.includes("notion.so") && !trimmed.includes("notion.com")) {
+      setUrlState("error");
+      return;
+    }
+
+    setVerifying(true);
+    setUrlState("verifying");
+
+    const token = (() => { try { return sessionStorage.getItem("notion_pending_token") ?? ""; } catch { return ""; } })();
+
+    try {
+      const res = await fetch("/api/integrations/notion/verify-db", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, url: trimmed }),
+      });
+      const data = (await res.json()) as { ok: boolean; dbId?: string; dbName?: string; columns?: NotionColumn[]; error?: string };
+
+      if (data.ok && data.dbId && data.columns) {
+        setDbId(data.dbId);
+        setDbName(data.dbName ?? "Untitled");
+        setFieldRows(MEETING_FIELDS.map((f) => ({ actnoteField: f, notionColumn: autoMap(f, data.columns!) })));
+        setUrlState("verified");
+        try { sessionStorage.setItem("notion_meeting_db_id", data.dbId); } catch {}
+      } else {
+        setUrlState("error");
+      }
+    } catch {
+      setUrlState("error");
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  const verified = urlState === "verified";
+
+  const inputBorder = urlState === "error" ? "#DC2626" : urlState === "verified" ? "#10B981" : "#DEE2E6";
+  const hintText = urlState === "error"
+    ? "⚠️ This doesn't look like a Notion URL"
+    : urlState === "verified"
+    ? "✓ Notion URL detected"
+    : "Open your database in Notion → copy the URL from the browser address bar";
+  const hintColor = urlState === "error" ? "#DC2626" : urlState === "verified" ? "#10B981" : "#6C757D";
+
+  const verifyBtnBg = verified ? "#10B981" : "#E9ECEF";
+  const verifyBtnColor = verified ? "#fff" : "#ADB5BD";
+  const verifyBtnText = verifying ? "Verifying…" : verified ? "✓ Verified" : "Verify";
+
+  const templateUrl = process.env.NEXT_PUBLIC_NOTION_TEMPLATE_MEETING_URL ?? "#";
+
+  return (
+    <OnboardingLayout>
+      <OnboardingHeader />
+
+      <main className="flex flex-1 items-center justify-center px-6 py-12 sm:px-10">
+        <div className="flex w-full max-w-[560px] flex-col">
+
+          {/* Progress */}
+          <div className="mb-[30.8px]">
+            <OnboardingProgress step="notion" notionSubStep={3} />
+          </div>
+
+          {/* Title */}
+          <h1 className="mb-1 text-[26px] font-bold leading-[31px] text-[#212529]">
+            Step 3 — Connect Meeting Notes DB 📄
+          </h1>
+          <p className="mb-6 text-[14px] leading-[22px] text-[#6C757D]">
+            Paste the URL of your Notion database. ACTNOTE will fetch its columns and map them automatically.
+          </p>
+
+          {/* URL input */}
+          <label className="mb-1 text-[13px] font-semibold text-[#495057]">
+            Notion Database URL
+          </label>
+          <div className="mt-[2px] flex items-start gap-[10px]">
+            <input
+              type="url"
+              value={url}
+              onChange={handleUrlChange}
+              placeholder="https://www.notion.so/your-workspace/xxxxxxxx..."
+              className="h-[43px] flex-1 rounded-[10px] bg-white px-[14px] text-[14px] text-[#212529] placeholder-[#ADB5BD] outline-none transition-colors"
+              style={{ border: `1px solid ${inputBorder}` }}
+            />
+            <button
+              onClick={handleVerify}
+              disabled={verifying || !url.trim()}
+              className="h-[43px] w-[81px] shrink-0 rounded-[10px] text-[14px] font-semibold transition-colors disabled:cursor-not-allowed"
+              style={{ background: verifyBtnBg, color: verifyBtnColor }}
+            >
+              {verifyBtnText}
+            </button>
+          </div>
+          <p className="mb-4 mt-1 text-[12px]" style={{ color: hintColor }}>{hintText}</p>
+
+          {/* Success banner (appears when verified) */}
+          {verified && (
+            <div className="mb-3 flex items-center gap-[10px] rounded-[10px] border border-[#BBF7D0] bg-[#F0FDF4] px-4 py-3">
+              <div className="flex size-4 shrink-0 items-center justify-center rounded-full bg-[#10B981]">
+                <svg width="9" height="9" viewBox="0 0 9 9" fill="none">
+                  <path d="M1.5 4.5L3.5 6.5L7.5 2.5" stroke="white" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <p className="text-[13px] font-bold text-[#166534]">
+                &quot;{dbName}&quot; database found — {fieldRows.length} columns loaded and mapped below
+              </p>
+            </div>
+          )}
+
+          {/* Template box */}
+          <div className="mb-4 flex flex-col gap-[6px] rounded-[10px] border border-[#FDE68A] bg-[#FFFBEB] px-4 pt-6 pb-[14px]">
+            <p className="text-[13px] font-semibold text-[#92400E]">Don&apos;t have a Notion database yet?</p>
+            <p className="text-[12px] leading-[19px] text-[#78350F]">
+              Use our pre-built templates — all required fields are already set up. Duplicate to your Notion workspace, then paste the URL above.
+            </p>
+            <a
+              href={templateUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 flex items-center gap-[6px] text-[13px] font-semibold text-[#F26522] hover:underline"
+            >
+              📄 Meeting Notes Template
+              <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                <path d="M2 9L9 2M9 2H4.5M9 2V6.5" stroke="#F26522" strokeWidth="1.375" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </a>
+          </div>
+
+          {/* Field mapping (shown after verify) */}
+          {verified && fieldRows.length > 0 && (
+            <div className="mb-6 flex flex-col gap-3 pt-[15px]">
+              <div>
+                <p className="text-[14px] font-semibold text-[#212529]">Field Mapping</p>
+                <p className="text-[12px] text-[#6C757D]">ACTNOTE auto-mapped fields based on your database columns. Adjust if needed.</p>
+              </div>
+              <div className="flex flex-col gap-2">
+                {fieldRows.map((row) => (
+                  <div key={row.actnoteField} className="relative flex items-center gap-0">
+                    {/* ACTNOTE field */}
+                    <div className="flex h-[38px] flex-1 items-center rounded-l-[8px] border border-[#E9ECEF] bg-[#F8F9FA] px-[14px] text-[13px] font-medium text-[#495057]">
+                      {row.actnoteField}
+                    </div>
+                    {/* Arrow */}
+                    <div className="flex w-8 items-center justify-center">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path d="M3 7H11M11 7L8 4M11 7L8 10" stroke="#ADB5BD" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    {/* Notion column (auto-mapped dropdown) */}
+                    <div className="flex h-[38px] flex-1 items-center rounded-r-[8px] border border-[#10B981] bg-[#F0FDF4] px-[14px] text-[13px] text-[#166534]">
+                      {row.notionColumn}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Buttons */}
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => router.push("/onboarding/notion/apikey")}
+              className="h-[45px] w-[123px] rounded-[10px] border border-[#DEE2E6] bg-white text-[14px] font-medium text-[#6C757D] transition-colors hover:bg-[#f8f9fa]"
+            >
+              ← Go Back
+            </button>
+            <button
+              onClick={() => router.push("/onboarding/notion/actiondb")}
+              disabled={!verified}
+              className="h-[43px] w-[224px] rounded-[10px] text-[14px] font-semibold transition-opacity hover:opacity-90 disabled:cursor-not-allowed"
+              style={{ background: verified ? "#F26522" : "#E9ECEF", color: verified ? "#fff" : "#ADB5BD" }}
+            >
+              Next: Action Items DB →
+            </button>
+          </div>
+
+        </div>
+      </main>
+    </OnboardingLayout>
+  );
+}

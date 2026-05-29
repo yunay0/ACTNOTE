@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
 import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
+import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
 import { MAX_WORKSPACE_NAME_LENGTH, validateWorkspaceName } from "@/lib/workspace-name";
 
 function OnboardingInner() {
@@ -147,7 +148,7 @@ function OnboardingInner() {
         return;
       }
 
-      router.push("/onboarding/invite");
+      router.push("/onboarding/notion");
     } catch {
       setError("Network error. Please try again.");
       setLoading(false);
@@ -181,10 +182,7 @@ function OnboardingInner() {
       <main className="flex flex-1 justify-center px-6 py-[80px] sm:px-10">
         <div className="flex w-full max-w-[520px] flex-col justify-center">
           <div className="pb-12">
-            <div className="flex w-full gap-3">
-              <div className="h-1 flex-1 rounded-[2px] bg-[#ff6b35]" />
-              <div className="h-1 flex-1 rounded-[2px] bg-[#e2e8f0]" />
-            </div>
+            <OnboardingProgress step="workspace" />
           </div>
 
           <div className="pb-[7px]">
