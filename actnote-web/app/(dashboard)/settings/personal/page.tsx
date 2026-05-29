@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { createClient } from "@/lib/supabase/client";
+import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
 import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
 import { cn } from "@/lib/utils";
 
@@ -82,6 +83,7 @@ export default function PersonalSettingsPage() {
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
+  const [savedAvatarUrl, setSavedAvatarUrl] = useState<string | null>(null);
   const [profilePhotoBroken, setProfilePhotoBroken] = useState(false);
   const [photoModalOpen, setPhotoModalOpen] = useState(false);
   const [photoSaveBusy, setPhotoSaveBusy] = useState(false);
@@ -112,6 +114,13 @@ export default function PersonalSettingsPage() {
   const [transferSelectedUserId, setTransferSelectedUserId] = useState<string | null>(null);
   const [transferBusy, setTransferBusy] = useState(false);
 
+  const syncProfilePhotoDisplayFromSaved = useCallback(async (storedUrl: string | null) => {
+    const supabase = createClient();
+    const display = await resolveMeetingsImageDisplayUrl(supabase, storedUrl);
+    setProfilePhotoUrl(display);
+    setProfilePhotoBroken(false);
+  }, []);
+
   useEffect(() => {
     async function load() {
       const supabase = createClient();
@@ -139,13 +148,13 @@ export default function PersonalSettingsPage() {
       setBaselineLast(l);
       const avatar =
         typeof data?.avatar_url === "string" && data.avatar_url.trim() ? data.avatar_url.trim() : null;
-      setProfilePhotoUrl(avatar);
-      setProfilePhotoBroken(false);
+      setSavedAvatarUrl(avatar);
+      await syncProfilePhotoDisplayFromSaved(avatar);
 
       setLoading(false);
     }
-    load();
-  }, []);
+    void load();
+  }, [syncProfilePhotoDisplayFromSaved]);
 
   useEffect(() => {
     return () => {
@@ -212,6 +221,7 @@ export default function PersonalSettingsPage() {
       if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
       return null;
     });
+    void syncProfilePhotoDisplayFromSaved(savedAvatarUrl);
   }
 
   async function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
@@ -269,6 +279,8 @@ export default function PersonalSettingsPage() {
       setPhotoDraft({ file, previewUrl, width: dims.width, height: dims.height });
       setPhotoSaveError(null);
       setPhotoValidationError(null);
+      setProfilePhotoUrl(previewUrl);
+      setProfilePhotoBroken(false);
       setPhotoModalOpen(true);
     } catch (e) {
       setPhotoSaveError(e instanceof Error ? e.message : "Could not read selected image.");
@@ -310,7 +322,6 @@ export default function PersonalSettingsPage() {
       const { data: urlData } = supabase.storage.from("meetings").getPublicUrl(path);
       const baseUrl = urlData?.publicUrl ?? null;
       if (!baseUrl) throw new Error("Could not resolve uploaded image URL.");
-      const publicUrl = `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}v=${Date.now()}`;
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error: updErr } = await (supabase as any)
@@ -319,7 +330,9 @@ export default function PersonalSettingsPage() {
         .eq("id", user.id);
       if (updErr) throw new Error(updErr.message || "Failed to save profile photo.");
 
-      setProfilePhotoUrl(publicUrl);
+      setSavedAvatarUrl(baseUrl);
+      const displayUrl = await resolveMeetingsImageDisplayUrl(supabase, baseUrl);
+      setProfilePhotoUrl(displayUrl);
       setProfilePhotoBroken(false);
       if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
       setPhotoDraft(null);
@@ -557,9 +570,14 @@ export default function PersonalSettingsPage() {
             <div className="space-y-3 px-6 py-5">
               <div className="flex items-center rounded-[10px] bg-[#f8fafc] px-4 py-3">
                 <div className="flex min-w-0 items-center gap-3">
-                  {profilePhotoUrl ? (
+                  {profilePhotoUrl && !profilePhotoBroken ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={profilePhotoUrl} alt="" className="size-11 rounded-full object-cover" />
+                    <img
+                      src={profilePhotoUrl}
+                      alt=""
+                      className="size-11 rounded-full object-cover"
+                      onError={() => setProfilePhotoBroken(true)}
+                    />
                   ) : (
                     <div className="flex size-11 items-center justify-center rounded-full bg-[#1a2b4a] text-[28px] font-bold text-white">
                       {profileInitials}
@@ -568,7 +586,7 @@ export default function PersonalSettingsPage() {
                   <div className="min-w-0">
                     <p className="text-[12px] text-[#94a3b8]">Current photo</p>
                     <p className="truncate text-[14px] font-semibold text-[#212529]">
-                      {profilePhotoUrl ? "Profile photo" : "Default (initials)"}
+                      {savedAvatarUrl ? "Profile photo" : "Default (initials)"}
                     </p>
                   </div>
                 </div>
