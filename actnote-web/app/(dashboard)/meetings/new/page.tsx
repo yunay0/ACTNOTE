@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { X, AlertTriangle } from "lucide-react";
+import { X, AlertTriangle, Calendar } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { MemberAvatarRound } from "@/components/user/MemberAvatarRound";
 import { useUserProfile } from "@/components/user/UserProfileProvider";
@@ -17,6 +17,7 @@ import {
   type RecordingFileIssue,
 } from "@/lib/meeting/recordingFilename";
 import { workspaceMemberDisplayName } from "@/lib/user/member-display";
+import { MeetingDateTimePickerModal } from "@/components/meetings/MeetingDateTimePickerModal";
 import { RecordingUploadErrorModal } from "@/components/meetings/RecordingUploadErrorModal";
 import { UploadedRecordingPreviewCard } from "@/components/meetings/UploadedRecordingPreviewCard";
 import { MEETING_TYPE_OPTIONS } from "@/lib/meetings/meeting-types";
@@ -74,6 +75,7 @@ function NewMeetingPageInner() {
   const [description, setDescription] = useState("");
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [participantPickerOpen, setParticipantPickerOpen] = useState(false);
+  const [datetimePickerOpen, setDatetimePickerOpen] = useState(false);
   const participantPickerRef = useRef<HTMLDivElement>(null);
 
   const [workspaceMembers, setWorkspaceMembers] = useState<WorkspaceMemberRow[]>([]);
@@ -880,22 +882,27 @@ function NewMeetingPageInner() {
                 </Field>
 
                 <Field label="Date & Time" required>
-                  <div className="relative">
-                    <input
-                      type="datetime-local"
-                      value={datetime}
-                      onChange={(e) => setDatetime(e.target.value)}
-                      required
-                      aria-label="Meeting date and time"
-                      lang="en-US"
-                      className="peer absolute inset-0 z-10 min-h-[52px] w-full cursor-pointer opacity-0"
-                    />
-                    <div
-                      className={`${inputCls} flex min-h-[52px] items-center peer-focus:border-[#2e5c8a] peer-focus:ring-2 peer-focus:ring-[#2e5c8a]/10`}
-                    >
+                  <button
+                    type="button"
+                    onClick={() => setDatetimePickerOpen(true)}
+                    className={`${inputCls} flex min-h-[52px] w-full cursor-pointer items-center justify-between gap-2 text-left`}
+                    aria-haspopup="dialog"
+                    aria-expanded={datetimePickerOpen}
+                  >
+                    <span className={datetime ? "text-[#0a2540]" : "text-[#64748b]"}>
                       {formatDatetimeLocalEn(datetime) || "Select date and time"}
-                    </div>
-                  </div>
+                    </span>
+                    <Calendar className="size-5 shrink-0 text-[#64748b]" aria-hidden />
+                  </button>
+                  <MeetingDateTimePickerModal
+                    open={datetimePickerOpen}
+                    initialDatetimeLocal={datetime}
+                    onClose={() => setDatetimePickerOpen(false)}
+                    onConfirm={(value) => {
+                      setDatetime(value);
+                      setDatetimePickerOpen(false);
+                    }}
+                  />
                 </Field>
 
                 <Field label="Participants" required>
