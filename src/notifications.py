@@ -931,7 +931,10 @@ def notify_join_request_received(
     requester_name = requester.get("name") or (requester.get("email") or "").split("@")[0] or "Unknown"
     requester_email = requester.get("email") or ""
 
-    review_url = f"{_app_url()}/settings/workspace#join-requests"
+    review_url = (
+        f"{_app_url()}/settings/workspace"
+        f"?workspace={workspace_id}&join=requests"
+    )
 
     create_notification(
         user_id=owner_id,

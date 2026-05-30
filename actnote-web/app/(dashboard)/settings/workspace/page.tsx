@@ -417,11 +417,12 @@ export default function WorkspaceSettingsPage() {
         mime === "image/svg+xml"
           ? { width: 256, height: 256 }
           : await getLogoImageDimensions(file);
+      const previewUrl = URL.createObjectURL(file);
       setLogoModalDraft((prev) => {
         if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
         return {
           file,
-          previewUrl: URL.createObjectURL(file),
+          previewUrl,
           width: dims.width,
           height: dims.height,
         };

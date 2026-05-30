@@ -41,7 +41,7 @@ function normalizeParticipants(raw: unknown): string[] {
 }
 
 /** View error: 회의 메타(읽기 전용) + Figma 180:9060 모달. Re-attach → `/meetings/new?reattach=`. */
-export function AnalysisErrorFlow({ meetingId }: { meetingId: string }): ReactElement {
+export function AnalysisErrorFlow({ meetingId }: { meetingId: string }): ReactElement | null {
   const router = useRouter();
   const searchParams = useSearchParams();
   const thanks = searchParams.get("thanks") === "1";
