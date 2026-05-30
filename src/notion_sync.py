@@ -60,7 +60,11 @@ def _client(token: str) -> _NotionClient:
 
 # 토큰 기준 모듈 캐시 (회의마다 /v1/users 반복 호출 방지).
 _USER_EMAIL_MAP_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+# db_id 기준 people 컬럼 캐시 (databases.retrieve 반복 호출 방지).
+_DB_PEOPLE_COLS_CACHE: dict[str, tuple[float, set[str]]] = {}
 _USER_EMAIL_MAP_TTL_SECONDS = 300
+# 장수명 컨테이너에서 캐시 무한 증가 방지용 상한 (초과 시 전체 비움).
+_CACHE_MAX_ENTRIES = 256
 
 
 def _notion_user_email_map(notion: _NotionClient, token: str) -> dict[str, str]:
@@ -107,8 +111,40 @@ def _notion_user_email_map(notion: _NotionClient, token: str) -> dict[str, str]:
             "notion users.list: 매칭 가능한 이메일 0건 "
             "(통합 토큰의 '이메일 포함 사용자 정보 읽기' 권한 확인 필요) — people 컬럼 공란",
         )
+    if len(_USER_EMAIL_MAP_CACHE) > _CACHE_MAX_ENTRIES:
+        _USER_EMAIL_MAP_CACHE.clear()
     _USER_EMAIL_MAP_CACHE[token] = (now, email_map)
     return email_map
+
+
+def _notion_db_people_columns(notion: _NotionClient, db_id: str) -> set[str]:
+    """DB 의 ``people`` 타입 컬럼명 집합을 반환한다 (db_id 기준 캐시).
+
+    공식 템플릿이 아닌 DB(해당 컬럼이 없거나 people 타입이 아님)에 people 값을 쓰면
+    Notion 이 ``validation_error`` 로 페이지 생성을 통째로 거부한다. 발행 전에 실제
+    스키마를 확인해, 컬럼이 존재하고 people 타입일 때만 채우기 위함.
+
+    조회 실패 시 빈 집합 → 사람 컬럼을 건드리지 않음(기존 공란 동작 유지, 발행 비차단).
+    """
+    now = time.time()
+    cached = _DB_PEOPLE_COLS_CACHE.get(db_id)
+    if cached and (now - cached[0]) < _USER_EMAIL_MAP_TTL_SECONDS:
+        return cached[1]
+
+    cols: set[str] = set()
+    try:
+        db = notion.databases.retrieve(database_id=db_id)
+        for name, meta in (db.get("properties") or {}).items():
+            if (meta or {}).get("type") == "people":
+                cols.add(name)
+    except Exception as e:  # noqa: BLE001 — 확인 실패는 발행 비차단(사람 컬럼 생략)
+        _log.warning("notion databases.retrieve 실패 — people 컬럼 확인 생략: %s", e)
+        return set()
+
+    if len(_DB_PEOPLE_COLS_CACHE) > _CACHE_MAX_ENTRIES:
+        _DB_PEOPLE_COLS_CACHE.clear()
+    _DB_PEOPLE_COLS_CACHE[db_id] = (now, cols)
+    return cols
 
 
 def _people_prop_from_emails(
@@ -116,12 +152,14 @@ def _people_prop_from_emails(
 ) -> dict[str, Any] | None:
     """이메일 리스트 → Notion people property dict. 매칭 0건이면 ``None``(공란).
 
-    이메일이 아닌 항목(이름 등)·미매칭·중복은 건너뛴다.
+    문자열이 아닌 항목·이메일이 아닌 항목(이름 등)·미매칭·중복은 건너뛴다.
     """
     seen: set[str] = set()
     people: list[dict[str, str]] = []
     for raw in emails:
-        key = (raw or "").strip().lower()
+        if not isinstance(raw, str):
+            continue
+        key = raw.strip().lower()
         if "@" not in key:
             continue
         uid = email_map.get(key)
@@ -729,7 +767,8 @@ def push_meeting(
     if meeting_type:
         label = _MEETING_TYPE_LABELS.get(meeting_type.strip().lower(), meeting_type)
         properties["Meeting Type"] = {"select": {"name": label}}
-    if participants:
+    # 'Participants' people 컬럼이 실제 스키마에 있을 때만 채운다 (없으면 400 방지·공란).
+    if participants and "Participants" in _notion_db_people_columns(notion, meeting_db_id):
         people = _people_prop_from_emails(
             participants, _notion_user_email_map(notion, token)
         )
@@ -816,8 +855,10 @@ def push_action_items(
     notion = _client(token)
     # ACTNOTE URL 컬럼: ACTNOTE 앱 회의 상세로 연결 (Notion 회의록 페이지가 아님).
     actnote_url = _actnote_meeting_url(meeting_id)
-    # PUB-004 자동화: 담당자 이메일 → Notion user id 매칭용 맵 (캐시).
-    email_map = _notion_user_email_map(notion, token)
+    # PUB-004 자동화: 'Assignee' people 컬럼이 실제 스키마에 있을 때만 매칭한다.
+    # (없거나 people 타입이 아니면 값을 넣지 않음 → 400 방지, 기존 공란 동작 유지.)
+    assignee_supported = "Assignee" in _notion_db_people_columns(notion, action_db_id)
+    email_map = _notion_user_email_map(notion, token) if assignee_supported else {}
     created_ids: list[str] = []
 
     try:
@@ -836,7 +877,7 @@ def push_action_items(
             if item.get("due_date"):
                 props["Due Date"] = {"date": {"start": str(item["due_date"])}}
             assignee_email = item.get("assignee_email")
-            if assignee_email:
+            if assignee_supported and assignee_email:
                 people = _people_prop_from_emails([assignee_email], email_map)
                 if people:
                     props["Assignee"] = people
