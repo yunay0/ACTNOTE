@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -51,6 +52,85 @@ _STATUS_OPTIONS = [
 
 def _client(token: str) -> _NotionClient:
     return _NotionClient(auth=token)
+
+
+# ---------------------------------------------------------------------------
+# PUB-004 자동화: people 타입(Assignee/Participants) 이메일 → Notion user id 매칭
+# ---------------------------------------------------------------------------
+
+# 토큰 기준 모듈 캐시 (회의마다 /v1/users 반복 호출 방지).
+_USER_EMAIL_MAP_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+_USER_EMAIL_MAP_TTL_SECONDS = 300
+
+
+def _notion_user_email_map(notion: _NotionClient, token: str) -> dict[str, str]:
+    """Notion 워크스페이스 멤버의 ``{email(소문자): user_id}`` 맵을 반환한다.
+
+    ``GET /v1/users`` 를 페이지네이션으로 순회한다. ``person.email`` 은 통합 토큰에
+    **'Read user information including email addresses'** capability 가 켜져 있을 때만
+    돌아온다 — 꺼져 있으면 빈 맵이 되어 매칭 불가(공란 발행, PUB-004 폴백).
+
+    어떤 사유로든 조회에 실패하면 빈 맵을 반환해 발행 자체는 막지 않는다.
+    동일 토큰은 ``_USER_EMAIL_MAP_TTL_SECONDS`` 동안 캐시한다.
+    """
+    now = time.time()
+    cached = _USER_EMAIL_MAP_CACHE.get(token)
+    if cached and (now - cached[0]) < _USER_EMAIL_MAP_TTL_SECONDS:
+        return cached[1]
+
+    email_map: dict[str, str] = {}
+    cursor: str | None = None
+    try:
+        while True:
+            kwargs: dict[str, Any] = {"page_size": 100}
+            if cursor:
+                kwargs["start_cursor"] = cursor
+            resp = notion.users.list(**kwargs)
+            for u in resp.get("results") or []:
+                if u.get("type") != "person":
+                    continue
+                email = ((u.get("person") or {}).get("email") or "").strip().lower()
+                uid = u.get("id")
+                if email and uid:
+                    email_map[email] = uid
+            if not resp.get("has_more"):
+                break
+            cursor = resp.get("next_cursor")
+            if not cursor:
+                break
+    except Exception as e:  # noqa: BLE001 — 매칭 실패는 발행 비차단(공란 폴백)
+        _log.warning("notion users.list 실패 — assignee/participants 매칭 생략(공란): %s", e)
+        return {}
+
+    if not email_map:
+        _log.info(
+            "notion users.list: 매칭 가능한 이메일 0건 "
+            "(통합 토큰의 '이메일 포함 사용자 정보 읽기' 권한 확인 필요) — people 컬럼 공란",
+        )
+    _USER_EMAIL_MAP_CACHE[token] = (now, email_map)
+    return email_map
+
+
+def _people_prop_from_emails(
+    emails: list[str], email_map: dict[str, str]
+) -> dict[str, Any] | None:
+    """이메일 리스트 → Notion people property dict. 매칭 0건이면 ``None``(공란).
+
+    이메일이 아닌 항목(이름 등)·미매칭·중복은 건너뛴다.
+    """
+    seen: set[str] = set()
+    people: list[dict[str, str]] = []
+    for raw in emails:
+        key = (raw or "").strip().lower()
+        if "@" not in key:
+            continue
+        uid = email_map.get(key)
+        if uid and uid not in seen:
+            seen.add(uid)
+            people.append({"object": "user", "id": uid})
+    if not people:
+        return None
+    return {"people": people}
 
 
 def _get_integration_row(workspace_id: str, sb_client) -> dict:
@@ -535,6 +615,7 @@ def push_meeting(
     *,
     meeting_type: str | None = None,
     sections: dict[str, str] | None = None,
+    participants: list[str] | None = None,
 ) -> str | None:
     """PUB-003 — 회의록을 INTEG-001 (`meeting_db_id`) 에 Notion 페이지로 생성/업데이트한다.
 
@@ -636,8 +717,9 @@ def push_meeting(
                 "bulleted_list_item": {"rich_text": rich_text},
             })
 
-    # --- Properties (템플릿 컬럼: Name / Date / Meeting Type / ACTNOTE URL) ---
-    # Participants 는 people 타입이라 텍스트 이름을 넣을 수 없어 생략 (Notion 에서 수동 지정).
+    # --- Properties (템플릿 컬럼: Name / Date / Meeting Type / Participants / ACTNOTE URL) ---
+    # Participants 는 people 타입 — participants 항목 중 이메일이 Notion 멤버와 일치하면
+    # 자동으로 채운다. 이름만 있거나 미매칭이면 공란 (Notion 에서 수동 지정).
     properties: dict[str, Any] = {
         "Name": {"title": [{"type": "text", "text": {"content": title or "(제목 없음)"}}]},
         "ACTNOTE URL": {"url": _actnote_meeting_url(meeting_id)},
@@ -647,6 +729,12 @@ def push_meeting(
     if meeting_type:
         label = _MEETING_TYPE_LABELS.get(meeting_type.strip().lower(), meeting_type)
         properties["Meeting Type"] = {"select": {"name": label}}
+    if participants:
+        people = _people_prop_from_emails(
+            participants, _notion_user_email_map(notion, token)
+        )
+        if people:
+            properties["Participants"] = people
 
     # --- 기존 페이지 여부 확인 ---
     existing_resp = (
@@ -728,15 +816,17 @@ def push_action_items(
     notion = _client(token)
     # ACTNOTE URL 컬럼: ACTNOTE 앱 회의 상세로 연결 (Notion 회의록 페이지가 아님).
     actnote_url = _actnote_meeting_url(meeting_id)
+    # PUB-004 자동화: 담당자 이메일 → Notion user id 매칭용 맵 (캐시).
+    email_map = _notion_user_email_map(notion, token)
     created_ids: list[str] = []
 
     try:
         for item in action_items:
             # 템플릿 컬럼: Task title(title) / Assignee(people) / Due Date(date) /
             #            Status(status) / ACTNOTE URL(url)
-            # Assignee 는 people 타입 — 텍스트 이름을 넣을 수 없어 생략 (PUB-004: Notion
-            # 멤버 ID 미확인 시 공란 저장, Notion 에서 수동 지정). Status 는 미설정 시
-            # Notion DB 기본값 사용.
+            # Assignee 는 people 타입 — DRAFT-005 로 매칭된 ACTNOTE 유저의 이메일이
+            # Notion 멤버 이메일과 일치하면 자동으로 people 컬럼을 채운다. 매칭 실패 시
+            # 공란 (PUB-004 폴백, Notion 에서 수동 지정). Status 는 미설정 시 DB 기본값.
             props: dict[str, Any] = {
                 "Task title": {
                     "title": [{"type": "text", "text": {"content": item.get("content") or ""}}]
@@ -745,6 +835,11 @@ def push_action_items(
             }
             if item.get("due_date"):
                 props["Due Date"] = {"date": {"start": str(item["due_date"])}}
+            assignee_email = item.get("assignee_email")
+            if assignee_email:
+                people = _people_prop_from_emails([assignee_email], email_map)
+                if people:
+                    props["Assignee"] = people
 
             page = notion.pages.create(
                 **{"parent": {"database_id": action_db_id}, "properties": props}

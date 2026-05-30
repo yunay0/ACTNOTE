@@ -278,6 +278,7 @@ def push_published_to_notion(
         sb_client.table("meetings")
         .select(
             "title, summary, decisions, meeting_date, notion_page_id, meeting_type, "
+            "participants, "
             "key_topics, key_decisions, risks_and_issues, follow_up, blockers, key_points"
         )
         .eq("id", meeting_id)
@@ -294,12 +295,34 @@ def push_published_to_notion(
 
     actions_resp = (
         sb_client.table("action_items")
-        .select("id, content, assignee, due_date")
+        .select("id, content, assignee, assignee_user_id, due_date")
         .eq("meeting_id", meeting_id)
         .in_("status", ["open", "in_progress"])
         .execute()
     )
     action_items_data = actions_resp.data or []
+
+    # PUB-004 자동화: DRAFT-005 로 매칭된 담당자(assignee_user_id) → users.email 해석.
+    # notion_sync 가 이 이메일을 Notion 멤버 이메일과 매칭해 Assignee(people) 컬럼을 채운다.
+    assignee_uids = list(
+        {a["assignee_user_id"] for a in action_items_data if a.get("assignee_user_id")}
+    )
+    if assignee_uids:
+        users_resp = (
+            sb_client.table("users")
+            .select("id, email")
+            .in_("id", assignee_uids)
+            .execute()
+        )
+        email_by_uid = {
+            u["id"]: u["email"]
+            for u in (users_resp.data or [])
+            if u.get("email")
+        }
+        for a in action_items_data:
+            uid = a.get("assignee_user_id")
+            if uid and email_by_uid.get(uid):
+                a["assignee_email"] = email_by_uid[uid]
 
     notion_page_id: str | None = None
     ticket_ids: list[str] = []
@@ -317,6 +340,7 @@ def push_published_to_notion(
             workspace_id=workspace_id,
             sb_client=sb_client,
             meeting_type=meeting_data.get("meeting_type"),
+            participants=meeting_data.get("participants"),
             sections={
                 "key_topics": meeting_data.get("key_topics") or "",
                 "key_decisions": meeting_data.get("key_decisions") or "",
