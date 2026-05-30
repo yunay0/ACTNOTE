@@ -13,6 +13,7 @@ import {
   dueDateYmdToDatetimeLocalStart,
   fromDatetimeLocalToDueFields,
 } from "@/lib/meetings/deadline-local";
+import { deriveActionItemTaskTitle } from "@/lib/meetings/action-item-task-title";
 import { workspaceMemberInitials } from "@/lib/user/member-display";
 
 /** Figma 157:11934 — 필수 Assignee / Due Date 외곽 (항상 주황, 클릭 가능) */
@@ -294,14 +295,17 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
   return (
     <>
       <div className="overflow-x-auto rounded-lg border border-[#ffdbc4] bg-[#f8fafc]">
-        <table className="w-full min-w-[680px] border-collapse text-left text-[13px]">
+        <table className="w-full min-w-[860px] border-collapse text-left text-[13px]">
           <thead>
             <tr className="border-b border-[#e8ecf1] bg-[#f8fafc]">
-              <th className="w-[26%] px-4 py-3 font-bold text-[#0a2540]">
+              <th className="w-[18%] px-4 py-3 font-bold text-[#0a2540]">
                 Assignee <span className="text-[#ff6b35]">*</span>
               </th>
-              <th className="w-[18%] px-4 py-3 font-bold text-[#0a2540]">
+              <th className="w-[14%] px-4 py-3 font-bold text-[#0a2540]">
                 Due Date <span className="text-[#ff6b35]">*</span>
+              </th>
+              <th className="w-[24%] px-4 py-3 font-bold text-[#0a2540]">
+                Task Title <span className="text-[#ff6b35]">*</span>
               </th>
               <th className="px-4 py-3 font-bold text-[#0a2540]">
                 Task Description <span className="text-[#ff6b35]">*</span>
@@ -315,7 +319,7 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
             {activeRows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={props.editMode && props.onDeleteRow ? 4 : 3}
+                  colSpan={props.editMode && props.onDeleteRow ? 5 : 4}
                   className="px-4 py-8 text-center text-[#94a3b8]"
                 >
                   No action items yet. Run analysis again or add a row below.
@@ -344,18 +348,23 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
                     />
                   </td>
                   <td className="px-4 py-3">
+                    <p className="text-[13px] font-bold leading-snug text-[#0a2540]">
+                      {deriveActionItemTaskTitle(row.content)}
+                    </p>
+                  </td>
+                  <td className="px-4 py-3">
                     {props.editMode ? (
                       <textarea
                         value={row.content}
                         onChange={(e) => props.onContentDraftChange?.(row.id, e.target.value)}
                         rows={Math.min(8, Math.max(2, row.content.split("\n").length + 1))}
                         placeholder="Describe the action..."
-                        className="w-full resize-y rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#ff6b35]"
+                        className="w-full resize-y rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-[13px] leading-relaxed text-[#64748b] outline-none focus:border-[#ff6b35]"
                       />
                     ) : (
-                      <ul className="list-disc space-y-1 pl-5 text-[13px] leading-relaxed text-[#64748b]">
-                        <li>{row.content || "—"}</li>
-                      </ul>
+                      <p className="text-[13px] leading-relaxed text-[#64748b]">
+                        {row.content || "—"}
+                      </p>
                     )}
                   </td>
                   {props.editMode && props.onDeleteRow ? (
