@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
 import {
   clearStoredWorkspaceId,
@@ -20,7 +21,13 @@ import {
 export type WorkspaceMembership = {
   workspace_id: string;
   role: string;
-  workspace: { id: string; name: string; slug: string | null };
+  workspace: {
+    id: string;
+    name: string;
+    slug: string | null;
+    logo_url: string | null;
+    logo_display_url: string | null;
+  };
 };
 
 type WorkspaceContextValue = {
@@ -28,8 +35,15 @@ type WorkspaceContextValue = {
   memberships: WorkspaceMembership[];
   workspaceId: string | null;
   workspaceName: string;
+  /** Signed URL for active workspace logo (null → initials in UI). */
+  workspaceLogoDisplayUrl: string | null;
   setCurrentWorkspace: (id: string) => void;
   refreshWorkspaces: () => Promise<void>;
+  applyWorkspaceLogoUpdate: (
+    workspaceId: string,
+    storedUrl: string | null,
+    displayUrl: string | null,
+  ) => void;
 };
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -63,7 +77,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: rows, error } = await (supabase as any)
       .from("workspace_members")
-      .select("workspace_id, role, workspaces(id, name, slug)")
+      .select("workspace_id, role, workspaces(id, name, slug, logo_url)")
       .eq("user_id", user.id);
 
     if (error) {
@@ -80,6 +94,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const ws: any = Array.isArray(rawWs) ? rawWs[0] : rawWs;
       if (!ws?.id) continue;
+      const logoUrl =
+        typeof ws.logo_url === "string" && ws.logo_url.trim() ? ws.logo_url.trim() : null;
+      const logoDisplayUrl = await resolveMeetingsImageDisplayUrl(supabase, logoUrl);
       list.push({
         workspace_id: wid,
         role: (row.role as string) ?? "member",
@@ -87,6 +104,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
           id: ws.id as string,
           name: (ws.name as string) ?? "",
           slug: (ws.slug as string | null) ?? null,
+          logo_url: logoUrl,
+          logo_display_url: logoDisplayUrl,
         },
       });
     }
@@ -151,16 +170,53 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     return m?.workspace.name ?? "";
   }, [memberships, workspaceId]);
 
+  const workspaceLogoDisplayUrl = useMemo(() => {
+    if (!workspaceId) return null;
+    const m = memberships.find((x) => x.workspace_id === workspaceId);
+    return m?.workspace.logo_display_url ?? null;
+  }, [memberships, workspaceId]);
+
+  const applyWorkspaceLogoUpdate = useCallback(
+    (id: string, storedUrl: string | null, displayUrl: string | null) => {
+      setMemberships((prev) =>
+        prev.map((m) =>
+          m.workspace_id === id
+            ? {
+                ...m,
+                workspace: {
+                  ...m.workspace,
+                  logo_url: storedUrl,
+                  logo_display_url: displayUrl,
+                },
+              }
+            : m,
+        ),
+      );
+    },
+    [],
+  );
+
   const value = useMemo(
     () => ({
       hydrated,
       memberships,
       workspaceId,
       workspaceName,
+      workspaceLogoDisplayUrl,
       setCurrentWorkspace,
       refreshWorkspaces: load,
+      applyWorkspaceLogoUpdate,
     }),
-    [hydrated, memberships, workspaceId, workspaceName, setCurrentWorkspace, load],
+    [
+      hydrated,
+      memberships,
+      workspaceId,
+      workspaceName,
+      workspaceLogoDisplayUrl,
+      setCurrentWorkspace,
+      load,
+      applyWorkspaceLogoUpdate,
+    ],
   );
 
   if (!hydrated) {

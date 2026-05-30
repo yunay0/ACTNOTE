@@ -45,13 +45,13 @@ export async function GET() {
   // 여러 개일 경우 가장 먼저 만든 워크스페이스(주 워크스페이스)로 고정
   const { data: workspaces } = await admin
     .from("workspaces")
-    .select("id, name, slug")
+    .select("id, name, slug, logo_url")
     .in("owner_id", ownerIds)
     .not("name", "ilike", `%'s workspace`)
     .order("created_at", { ascending: true })
     .limit(1);
 
-  const ws = (workspaces as { id: string; name: string; slug: string }[] | null)?.[0];
+  const ws = (workspaces as { id: string; name: string; slug: string; logo_url?: string | null }[] | null)?.[0];
   if (!ws?.slug) {
     return NextResponse.json({ workspace: null });
   }
@@ -68,5 +68,10 @@ export async function GET() {
     return NextResponse.json({ workspace: null });
   }
 
-  return NextResponse.json({ workspace: { slug: ws.slug, name: ws.name } });
+  const logoUrl =
+    typeof ws.logo_url === "string" && ws.logo_url.trim() ? ws.logo_url.trim() : null;
+
+  return NextResponse.json({
+    workspace: { slug: ws.slug, name: ws.name, logo_url: logoUrl },
+  });
 }

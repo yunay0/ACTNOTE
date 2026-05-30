@@ -4,7 +4,10 @@ import { useState, useRef, useCallback, useEffect, useMemo, Suspense } from "rea
 import { useRouter, useSearchParams } from "next/navigation";
 import { X, AlertTriangle } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
+import { MemberAvatarRound } from "@/components/user/MemberAvatarRound";
+import { useUserProfile } from "@/components/user/UserProfileProvider";
 import { createClient } from "@/lib/supabase/client";
+import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import {
   allowedRecordingExtensionsLabel,
@@ -37,56 +40,6 @@ interface WorkspaceMemberRow {
   sort_key: string;
 }
 
-function initialsForMember(name: string, email: string): string {
-  const base = workspaceMemberDisplayName(name, email).trim() || email;
-  if (!base) return "??";
-  const parts = base.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    const a = parts[0][0];
-    const b = parts[parts.length - 1]?.[0];
-    if (a && b) return `${a}${b}`.toUpperCase();
-  }
-  return base.slice(0, 2).toUpperCase();
-}
-
-function MemberAvatarRound(props: {
-  avatarUrl: string | null;
-  name: string;
-  email: string;
-  size: number;
-  className?: string;
-}) {
-  const { avatarUrl, name, email, size, className = "" } = props;
-  const dim = `${size}px`;
-  if (avatarUrl?.trim()) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={avatarUrl}
-        alt=""
-        width={size}
-        height={size}
-        className={`shrink-0 rounded-full object-cover ${className}`}
-        referrerPolicy="no-referrer"
-      />
-    );
-  }
-  const initials = initialsForMember(name, email);
-  return (
-    <div
-      aria-hidden
-      className={`flex shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white sm:text-[11px] ${className}`}
-      style={{
-        width: dim,
-        height: dim,
-        background: "linear-gradient(135deg, #2e5c8a 0%, #ff6b35 50%)",
-      }}
-    >
-      {initials}
-    </div>
-  );
-}
-
 function sortMembersByDisplayName(rows: WorkspaceMemberRow[]): WorkspaceMemberRow[] {
   return [...rows].sort((a, b) =>
     a.sort_key.localeCompare(b.sort_key, "en", { sensitivity: "base" }),
@@ -108,6 +61,7 @@ function NewMeetingPageInner() {
     [searchParams],
   );
   const { workspaceId } = useWorkspaceContext();
+  const { userId: currentUserId, avatarDisplayUrl, profileRevision } = useUserProfile();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [title, setTitle] = useState("");
@@ -231,8 +185,8 @@ function NewMeetingPageInner() {
         const name = typeof u?.name === "string" ? u.name : "";
         const email = typeof u?.email === "string" ? u.email : "";
         const ar = u?.avatar_url;
-        const avatar_url =
-          typeof ar === "string" && ar.trim() ? ar.trim() : null;
+        const storedAvatar = typeof ar === "string" && ar.trim() ? ar.trim() : null;
+        const avatar_url = await resolveMeetingsImageDisplayUrl(supabase, storedAvatar);
         if (!email) continue;
         const shown = workspaceMemberDisplayName(name, email);
         const label = `${shown} (${email})`;
@@ -257,6 +211,16 @@ function NewMeetingPageInner() {
       cancelled = true;
     };
   }, [workspaceId]);
+
+  /** 프로필 사진 변경 시 참가자 목록의 내 아바타 즉시 반영 */
+  useEffect(() => {
+    if (!currentUserId) return;
+    setWorkspaceMembers((prev) =>
+      prev.map((m) =>
+        m.user_id === currentUserId ? { ...m, avatar_url: avatarDisplayUrl } : m,
+      ),
+    );
+  }, [currentUserId, avatarDisplayUrl, profileRevision]);
 
   useEffect(() => {
     if (!participantPickerOpen) return;

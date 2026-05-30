@@ -293,7 +293,7 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
 
   return (
     <>
-      <div className="overflow-x-auto rounded-xl border border-[#e2e8f0] bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-lg border border-[#ffdbc4] bg-[#f8fafc]">
         <table className="w-full min-w-[680px] border-collapse text-left text-[13px]">
           <thead>
             <tr className="border-b border-[#e8ecf1] bg-[#f8fafc]">

@@ -4,13 +4,16 @@ import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
 import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
+import { WorkspaceLogoAvatar } from "@/components/workspace/WorkspaceLogoAvatar";
 
 interface WorkspaceInfo {
   id: string;
   name: string;
   slug: string;
+  logoDisplayUrl: string | null;
 }
 
 type PageState = "loading" | "ready" | "request_pending" | "request_sent" | "not_found" | "error";
@@ -24,11 +27,6 @@ function userInitials(displayName: string, email: string): string {
   }
   const local = email.split("@")[0] ?? "";
   return local.slice(0, 2).toUpperCase() || "?";
-}
-
-function workspaceInitial(name: string): string {
-  const t = name.trim();
-  return t ? t[0]!.toUpperCase() : "?";
 }
 
 export default function RequestAccessPage() {
@@ -94,8 +92,21 @@ function RequestAccessInner() {
         return;
       }
 
-      const row = previewRows[0] as { id: string; name: string; slug: string };
-      setWorkspace({ id: row.id, name: row.name, slug: row.slug });
+      const row = previewRows[0] as {
+        id: string;
+        name: string;
+        slug: string;
+        logo_url?: string | null;
+      };
+      const storedLogo =
+        typeof row.logo_url === "string" && row.logo_url.trim() ? row.logo_url.trim() : null;
+      const logoDisplayUrl = await resolveMeetingsImageDisplayUrl(supabase, storedLogo);
+      setWorkspace({
+        id: row.id,
+        name: row.name,
+        slug: row.slug,
+        logoDisplayUrl,
+      });
 
       const { data: existing } = await supabase
         .from("workspace_members")
@@ -209,7 +220,6 @@ function RequestAccessInner() {
   }
 
   const initials = userInitials(userDisplayName, userEmail);
-  const wsInitial = workspace ? workspaceInitial(workspace.name) : "?";
 
   // ─── S-04-04-01: Workspace Access Required / Request Pending ─────────────
   if ((pageState === "ready" || pageState === "request_pending") && workspace) {
@@ -269,12 +279,13 @@ function RequestAccessInner() {
               {/* div.workspace-header */}
               <div className="flex min-w-0 flex-1 items-center gap-4">
                 {/* div.workspace-avatar — 48×49px, orange gradient, border-radius 12px */}
-                <div
-                  className="flex h-[49px] w-12 shrink-0 items-center justify-center rounded-xl text-xl font-bold text-white"
-                  style={{ background: "linear-gradient(135deg, #FF6B35 0%, #FF8555 100%)" }}
-                >
-                  {wsInitial}
-                </div>
+                <WorkspaceLogoAvatar
+                  name={workspace.name}
+                  logoDisplayUrl={workspace.logoDisplayUrl}
+                  size={49}
+                  roundedClass="rounded-xl"
+                  textClass="text-xl font-bold text-white"
+                />
                 {/* div.workspace-name — 20px bold, #0A2540 */}
                 <p className="truncate text-left text-xl font-bold text-[#0a2540]">{workspace.name}</p>
               </div>
@@ -433,12 +444,13 @@ function RequestAccessInner() {
             {/* div.workspace-info — "Request Sent" 뱃지 */}
             <div className="flex h-[80px] w-full items-center gap-[15px] rounded-2xl border-2 border-[#e2e8f0] bg-white pl-[13px] pr-[26px]">
               <div className="flex min-w-0 flex-1 items-center gap-4">
-                <div
-                  className="flex h-[49px] w-12 shrink-0 items-center justify-center rounded-xl text-xl font-bold text-white"
-                  style={{ background: "linear-gradient(135deg, #FF6B35 0%, #FF8555 100%)" }}
-                >
-                  {wsInitial}
-                </div>
+                <WorkspaceLogoAvatar
+                  name={workspace.name}
+                  logoDisplayUrl={workspace.logoDisplayUrl}
+                  size={49}
+                  roundedClass="rounded-xl"
+                  textClass="text-xl font-bold text-white"
+                />
                 <p className="truncate text-left text-xl font-bold text-[#0a2540]">{workspace.name}</p>
               </div>
               {/* Request Sent badge */}

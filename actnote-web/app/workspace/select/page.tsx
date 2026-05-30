@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
 import {
   clearStoredWorkspaceId,
   getStoredWorkspaceId,
@@ -126,7 +127,7 @@ function WorkspaceSelectInner() {
 
     const { data: memberRowsData, error: memErr } = await supabase
       .from("workspace_members")
-      .select("workspace_id, role, workspaces(id, name, slug)")
+      .select("workspace_id, role, workspaces(id, name, slug, logo_url)")
       .eq("user_id", user.id);
 
     if (memErr) {
@@ -142,8 +143,16 @@ function WorkspaceSelectInner() {
       const rawWs = row.workspaces;
       const wsRaw = rawWs as unknown;
       const ws = Array.isArray(wsRaw) ? wsRaw[0] : wsRaw;
-      const w = ws as { id?: string; name?: string; slug?: string | null } | null;
+      const w = ws as {
+        id?: string;
+        name?: string;
+        slug?: string | null;
+        logo_url?: string | null;
+      } | null;
       if (!w?.id) continue;
+      const logoUrl =
+        typeof w.logo_url === "string" && w.logo_url.trim() ? w.logo_url.trim() : null;
+      const logoDisplayUrl = await resolveMeetingsImageDisplayUrl(supabase, logoUrl);
       list.push({
         workspace_id: wid,
         role: (row.role as string) ?? "member",
@@ -151,6 +160,8 @@ function WorkspaceSelectInner() {
           id: w.id as string,
           name: (w.name as string) ?? "",
           slug: (w.slug as string | null) ?? null,
+          logo_url: logoUrl,
+          logo_display_url: logoDisplayUrl,
         },
       });
     }
@@ -215,15 +226,18 @@ function WorkspaceSelectInner() {
     if (list.length > 0) {
       const ids = list.map((m) => m.workspace_id);
       const statsMap = await fetchWorkspaceStats(supabase, ids);
-      workspaces = list.map((m) => {
-        const s = statsMap.get(m.workspace_id);
-        return {
-          id: m.workspace_id,
-          name: (m.workspace.name || "Workspace").trim() || "Workspace",
-          memberCount: s?.memberCount ?? 0,
-          meetingCount: s?.meetingCount ?? 0,
-        };
-      });
+      workspaces = await Promise.all(
+        list.map(async (m) => {
+          const s = statsMap.get(m.workspace_id);
+          return {
+            id: m.workspace_id,
+            name: (m.workspace.name || "Workspace").trim() || "Workspace",
+            memberCount: s?.memberCount ?? 0,
+            meetingCount: s?.meetingCount ?? 0,
+            logoDisplayUrl: m.workspace.logo_display_url,
+          };
+        }),
+      );
     }
 
     const stored = searchParams.get("switch") === "1" ? null : getStoredWorkspaceId();

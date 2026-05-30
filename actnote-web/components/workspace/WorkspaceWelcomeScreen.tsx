@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { WorkspaceLogoAvatar } from "@/components/workspace/WorkspaceLogoAvatar";
 
 export type WorkspaceWelcomeTile = {
   id: string;
   name: string;
   memberCount: number;
   meetingCount: number;
+  logoDisplayUrl?: string | null;
 };
 
 const CARD_BACKGROUNDS = [
@@ -15,12 +17,6 @@ const CARD_BACKGROUNDS = [
   "linear-gradient(135deg,rgb(242,239,246) 0%,#ffffff 53%,rgb(228,239,246) 100%)",
   "linear-gradient(135deg,rgb(246,239,239) 0%,#ffffff 51%,rgb(252,239,239) 100%)",
 ] as const;
-
-function initialsWorkspace(name: string): string {
-  const t = name.trim();
-  if (!t) return "WS";
-  return t.slice(0, 2).toUpperCase();
-}
 
 function userInitials(displayName: string): string {
   const t = displayName.trim();
@@ -153,9 +149,13 @@ export function WorkspaceWelcomeScreen({
                       }}
                     >
                       <div className="flex flex-col rounded-[calc(1rem-1px)] bg-white px-6 pb-6 pt-5">
-                        <span
-                          className="mb-10 flex size-16 items-center justify-center rounded-full border-4 border-white text-xl font-bold text-[#2e5c8a] shadow-inner sm:size-[72px] sm:text-[22px]"
-                          style={{
+                        <WorkspaceLogoAvatar
+                          name={w.name}
+                          logoDisplayUrl={w.logoDisplayUrl}
+                          size={72}
+                          roundedClass="rounded-full border-4 border-white shadow-inner mb-10"
+                          textClass="text-xl font-bold text-[#2e5c8a] sm:text-[22px]"
+                          fallbackStyle={{
                             background:
                               idx % 4 === 0
                                 ? "linear-gradient(180deg,#ffffff 0%,#ecf6fb 100%)"
@@ -165,10 +165,7 @@ export function WorkspaceWelcomeScreen({
                                     ? "linear-gradient(180deg,#fcf9ff 0%,#ebfbfb 100%)"
                                     : "linear-gradient(180deg,#f5fbfb 0%,#eaf6ff 100%)",
                           }}
-                          aria-hidden
-                        >
-                          {initialsWorkspace(w.name)}
-                        </span>
+                        />
 
                         <p className="mb-1 truncate text-[17px] font-bold leading-tight text-[#0a2540]">
                           {(w.name || "Workspace").trim() || "Workspace"}

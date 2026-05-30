@@ -8,34 +8,25 @@ import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import type { WorkspaceMembership } from "@/components/workspace/WorkspaceProvider";
+import { WorkspaceLogoAvatar } from "@/components/workspace/WorkspaceLogoAvatar";
 
 const AVATAR_GRADIENTS = [
   "linear-gradient(135deg, rgb(0,200,179) 0%, rgb(0,195,208) 100%)",
   "linear-gradient(135deg, rgb(46,92,138) 0%, rgb(30,58,95) 100%)",
 ] as const;
 
-function initialsFromName(name: string): string {
-  const t = name.trim();
-  if (!t) return "??";
-  const parts = t.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    const a = parts[0][0];
-    const b = parts[parts.length - 1][0];
-    if (a && b) return `${a}${b}`.toUpperCase();
-  }
-  return t.slice(0, 2).toUpperCase();
-}
-
 /** 멀티 워크스페이스: ▼ 로 위쪽 패널 열어 바로 선택 (전체 페이지 picker 제거 목적) */
 function WorkspaceSwitcherPopover({
   memberships,
   workspaceId,
   workspaceName,
+  workspaceLogoDisplayUrl,
   setCurrentWorkspace,
 }: {
   memberships: WorkspaceMembership[];
   workspaceId: string | null;
   workspaceName: string;
+  workspaceLogoDisplayUrl: string | null;
   setCurrentWorkspace: (id: string) => void;
 }) {
   const router = useRouter();
@@ -85,13 +76,12 @@ function WorkspaceSwitcherPopover({
           title={workspaceName || undefined}
           aria-current="page"
         >
-          <div
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-[14px] font-bold text-white"
-            style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-            aria-hidden
-          >
-            {(workspaceName || "?")[0]?.toUpperCase() ?? "?"}
-          </div>
+          <WorkspaceLogoAvatar
+            name={workspaceName || "Workspace"}
+            logoDisplayUrl={workspaceLogoDisplayUrl}
+            size={32}
+            roundedClass="rounded-[6px]"
+          />
           <span className="min-w-0 flex-1 truncate text-[12.7px] font-bold leading-tight text-[#0a2540]">
             {workspaceName || "Workspace"}
           </span>
@@ -119,7 +109,6 @@ function WorkspaceSwitcherPopover({
         >
           <ul className="flex flex-col gap-0 px-1.5 pb-1">
             {memberships.map((m, idx) => {
-              const initials = initialsFromName(m.workspace.name || "Workspace");
               const gradient = AVATAR_GRADIENTS[idx % AVATAR_GRADIENTS.length];
               const title = (m.workspace.name || "Workspace").trim() || "Workspace";
               const active = workspaceId === m.workspace_id;
@@ -138,13 +127,14 @@ function WorkspaceSwitcherPopover({
                         : "font-medium text-[#0a2540] hover:bg-[#f8fafc]",
                     )}
                   >
-                    <div
-                      className="flex size-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
-                      style={{ backgroundImage: gradient }}
-                      aria-hidden
-                    >
-                      {initials.slice(0, 2)}
-                    </div>
+                    <WorkspaceLogoAvatar
+                      name={title}
+                      logoDisplayUrl={m.workspace.logo_display_url}
+                      size={32}
+                      roundedClass="rounded-full"
+                      textClass="text-[11px] font-bold text-white"
+                      fallbackStyle={{ backgroundImage: gradient }}
+                    />
                     <span className="min-w-0 flex-1 truncate">{title}</span>
                     {active && (
                       <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-[#ff6b35]">
@@ -173,7 +163,7 @@ function WorkspaceSwitcherPopover({
 export function Sidebar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { workspaceName, memberships, workspaceId, setCurrentWorkspace } =
+  const { workspaceName, workspaceLogoDisplayUrl, memberships, workspaceId, setCurrentWorkspace } =
     useWorkspaceContext();
 
   const isHome = pathname.startsWith("/meetings");
@@ -186,6 +176,14 @@ export function Sidebar() {
   const currentWsRole = memberships.find((m) => m.workspace_id === workspaceId)?.role;
   /** 오너·admin만 Workspace Settings 접근 가능 (docs/permissions.md §2) */
   const canAccessWorkspaceSettings = currentWsRole === "owner" || currentWsRole === "admin";
+
+  const workspaceSubNavLinkClass = (active: boolean) =>
+    cn(
+      "rounded-lg px-3 py-2 text-[14px] transition-colors",
+      active
+        ? "bg-[#e9ecef] font-semibold text-[#212529]"
+        : "font-medium text-[#6c757d] hover:bg-[#f8fafc] hover:text-[#0a2540]",
+    );
 
   return (
     <aside className="flex h-screen w-[240px] shrink-0 flex-col border-r border-[#e2e8f0] bg-white">
@@ -239,34 +237,19 @@ export function Sidebar() {
               <div className="flex w-full flex-col gap-1 pl-[44px] pr-1">
                 <Link
                   href="/settings/workspace"
-                  className={cn(
-                    "rounded-lg px-3 py-2 text-[14px] transition-colors",
-                    isWorkspaceGeneral
-                      ? "font-semibold text-[#64748b]"
-                      : "font-medium text-[#6c757d] hover:bg-[#f8fafc] hover:text-[#0a2540]",
-                  )}
+                  className={workspaceSubNavLinkClass(isWorkspaceGeneral)}
                 >
                   General
                 </Link>
                 <Link
                   href="/settings/integrations"
-                  className={cn(
-                    "rounded-lg px-3 py-2 text-[14px] transition-colors",
-                    isWorkspaceIntegrations
-                      ? "font-semibold text-[#64748b]"
-                      : "font-medium text-[#6c757d] hover:bg-[#f8fafc] hover:text-[#0a2540]",
-                  )}
+                  className={workspaceSubNavLinkClass(isWorkspaceIntegrations)}
                 >
                   Integrations
                 </Link>
                 <Link
                   href="/settings/workspace?section=members"
-                  className={cn(
-                    "rounded-lg px-3 py-2 text-[14px] transition-colors",
-                    isWorkspaceMembers
-                      ? "font-semibold text-[#64748b]"
-                      : "font-medium text-[#6c757d] hover:bg-[#f8fafc] hover:text-[#0a2540]",
-                  )}
+                  className={workspaceSubNavLinkClass(isWorkspaceMembers)}
                 >
                   Members
                 </Link>
@@ -296,6 +279,7 @@ export function Sidebar() {
               memberships={memberships}
               workspaceId={workspaceId}
               workspaceName={workspaceName}
+              workspaceLogoDisplayUrl={workspaceLogoDisplayUrl}
               setCurrentWorkspace={setCurrentWorkspace}
             />
           ) : canAccessWorkspaceSettings ? (
@@ -303,12 +287,12 @@ export function Sidebar() {
               href="/settings/workspace"
               className="flex items-center gap-2.5 rounded-lg bg-[#f8fafc] px-3 py-2.5 transition-colors hover:bg-[#f1f5f9]"
             >
-              <div
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-[14px] font-bold text-white"
-                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-              >
-                {(workspaceName || "?")[0]?.toUpperCase() ?? "?"}
-              </div>
+              <WorkspaceLogoAvatar
+                name={workspaceName || "Workspace"}
+                logoDisplayUrl={workspaceLogoDisplayUrl}
+                size={32}
+                roundedClass="rounded-[6px]"
+              />
               <span
                 className="min-w-0 flex-1 truncate text-[12.7px] font-bold leading-tight text-[#0a2540]"
                 title={workspaceName || undefined}
@@ -321,12 +305,12 @@ export function Sidebar() {
             </Link>
           ) : (
             <div className="flex items-center gap-2.5 rounded-lg bg-[#f8fafc] px-3 py-2.5">
-              <div
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-[14px] font-bold text-white"
-                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-              >
-                {(workspaceName || "?")[0]?.toUpperCase() ?? "?"}
-              </div>
+              <WorkspaceLogoAvatar
+                name={workspaceName || "Workspace"}
+                logoDisplayUrl={workspaceLogoDisplayUrl}
+                size={32}
+                roundedClass="rounded-[6px]"
+              />
               <span
                 className="min-w-0 flex-1 truncate text-[12.7px] font-bold leading-tight text-[#0a2540]"
                 title={workspaceName || undefined}
