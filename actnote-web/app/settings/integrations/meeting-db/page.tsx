@@ -151,18 +151,20 @@ export default function SettingsMeetingDbPage() {
             </div>
           )}
 
-          {/* Template box */}
-          <div className="mt-4 flex flex-col gap-[6px] rounded-[10px] border border-[#FDE68A] bg-[#FFFBEB] px-4 pt-6 pb-[14px]">
-            <p className="text-[13px] font-semibold text-[#92400E]">Don&apos;t have a Notion database yet?</p>
-            <p className="text-[12px] leading-[19px] text-[#78350F]">
-              Use our pre-built templates — all required fields are already set up. Duplicate to your Notion workspace, then paste the URL above.
-            </p>
-            <a href={templateUrl} target="_blank" rel="noopener noreferrer"
-              className="mt-1 flex items-center gap-[6px] text-[13px] font-semibold text-[#F26522] hover:underline w-fit">
-              📄 Meeting Notes Template
-              <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M2 9L9 2M9 2H4.5M9 2V6.5" stroke="#F26522" strokeWidth="1.375" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </a>
-          </div>
+          {/* Template box — DB 미선택(미검증)일 때만 노출 (F4) */}
+          {!verified && (
+            <div className="mt-4 flex flex-col gap-[6px] rounded-[10px] border border-[#FDE68A] bg-[#FFFBEB] px-4 pt-6 pb-[14px]">
+              <p className="text-[13px] font-semibold text-[#92400E]">Don&apos;t have a Notion database yet?</p>
+              <p className="text-[12px] leading-[19px] text-[#78350F]">
+                Use our pre-built templates — all required fields are already set up. Duplicate to your Notion workspace, then paste the URL above.
+              </p>
+              <a href={templateUrl} target="_blank" rel="noopener noreferrer"
+                className="mt-1 flex items-center gap-[6px] text-[13px] font-semibold text-[#F26522] hover:underline w-fit">
+                📄 Meeting Notes Template
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M2 9L9 2M9 2H4.5M9 2V6.5" stroke="#F26522" strokeWidth="1.375" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </a>
+            </div>
+          )}
 
           {/* Field mapping */}
           {verified && fieldRows.length > 0 && (

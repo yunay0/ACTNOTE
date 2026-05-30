@@ -8,10 +8,18 @@ import { createClient } from "@/lib/supabase/client";
 
 interface Notification {
   id: string;
-  type: "analysis_complete" | "analysis_failed" | "action_assigned";
+  type:
+    | "analysis_complete"
+    | "analysis_failed"
+    | "action_assigned"
+    | "integration_reauth_required"
+    | "join_request_received"
+    | "join_request_approved"
+    | "join_request_declined";
   title: string;
   message: string | null;
   meeting_id: string | null;
+  workspace_id: string | null;
   is_read: boolean;
   created_at: string;
 }
@@ -58,7 +66,7 @@ export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardH
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (supabase as any)
       .from("notifications")
-      .select("id, type, title, message, meeting_id, is_read, created_at")
+      .select("id, type, title, message, meeting_id, workspace_id, is_read, created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .limit(20);
@@ -158,8 +166,28 @@ export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardH
 
   function handleNotifClick(n: Notification) {
     if (!n.is_read) markRead(n.id);
+    setBellOpen(false);
+
+    // F10: Notion 재연동 알림 → 통합 설정 페이지
+    if (n.type === "integration_reauth_required") {
+      router.push("/settings/integrations");
+      return;
+    }
+    // F9: 접근 요청 알림 → 워크스페이스 설정의 요청 섹션
+    // (settings/workspace 의 deep-link 핸들러 `?workspace=<uuid>&join=requests` 와 정합)
+    if (n.type === "join_request_received") {
+      const qs = n.workspace_id
+        ? `?workspace=${encodeURIComponent(n.workspace_id)}&join=requests`
+        : "?join=requests";
+      router.push(`/settings/workspace${qs}`);
+      return;
+    }
+    // 요청자 측 승인/거절 알림 → 워크스페이스 선택 화면
+    if (n.type === "join_request_approved" || n.type === "join_request_declined") {
+      router.push("/workspace/select");
+      return;
+    }
     if (n.meeting_id) {
-      setBellOpen(false);
       if (n.type === "analysis_failed") {
         router.push(`/meetings/${n.meeting_id}/analysis-error`);
       } else {
@@ -171,6 +199,10 @@ export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardH
   function notifIcon(type: Notification["type"]) {
     if (type === "analysis_complete") return "✅";
     if (type === "analysis_failed") return "❌";
+    if (type === "integration_reauth_required") return "🔌";
+    if (type === "join_request_received") return "👥";
+    if (type === "join_request_approved") return "🎉";
+    if (type === "join_request_declined") return "🚫";
     return "📌";
   }
 
