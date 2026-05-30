@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
+import { NotionTemplateDuplicateBox } from "@/components/integrations/NotionTemplateDuplicateBox";
 
 // Notion N-mark icon (simplified lettermark)
 function NotionIcon({ size = 24, color = "#191919" }: { size?: number; color?: string }) {
@@ -227,6 +228,9 @@ export default function IntegrationsSettingsClient({ bannerError }: { bannerErro
                       <p className="text-[14px] font-medium text-[#212529]">
                         {integration.meeting_db_id ? `Notion DB ${shortenDbId(integration.meeting_db_id)}` : "Not set"}
                       </p>
+                      {!integration.meeting_db_id ? (
+                        <NotionTemplateDuplicateBox variant="meeting" compact />
+                      ) : null}
                     </div>
                     <button
                       onClick={() => router.push("/settings/integrations/meeting-db")}
@@ -246,6 +250,9 @@ export default function IntegrationsSettingsClient({ bannerError }: { bannerErro
                       <p className="text-[14px] font-medium text-[#212529]">
                         {integration.action_db_id ? `Notion DB ${shortenDbId(integration.action_db_id)}` : "Not set"}
                       </p>
+                      {!integration.action_db_id ? (
+                        <NotionTemplateDuplicateBox variant="ticket" compact />
+                      ) : null}
                     </div>
                     <button
                       onClick={() => router.push("/settings/integrations/action-db")}
@@ -255,6 +262,12 @@ export default function IntegrationsSettingsClient({ bannerError }: { bannerErro
                     </button>
                   </div>
                 </div>
+
+                {(!integration.meeting_db_id || !integration.action_db_id) && (
+                  <NotionTemplateDuplicateBox
+                    variant={!integration.meeting_db_id && !integration.action_db_id ? "both" : integration.meeting_db_id ? "ticket" : "meeting"}
+                  />
+                )}
 
                 {/* Disconnect button */}
                 <div className="flex justify-end">
@@ -292,6 +305,8 @@ export default function IntegrationsSettingsClient({ bannerError }: { bannerErro
                     Publishing is disabled. Meeting notes cannot be published to Notion and action items won&apos;t be auto-created until you connect.
                   </p>
                 </div>
+
+                <NotionTemplateDuplicateBox variant="both" />
 
                 {/* Connect Notion button */}
                 <div className="flex">

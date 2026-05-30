@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
+import { useUserProfile } from "@/components/user/UserProfileProvider";
 import { createClient } from "@/lib/supabase/client";
 import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
 import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
@@ -78,6 +79,7 @@ type DeleteModalState =
 export default function PersonalSettingsPage() {
   const router = useRouter();
   const { workspaceId, memberships, hydrated, refreshWorkspaces } = useWorkspaceContext();
+  const { applyAvatarUpdate, applyNameUpdate } = useUserProfile();
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -200,6 +202,7 @@ export default function PersonalSettingsPage() {
     } else {
       setBaselineFirst(firstName.trim());
       setBaselineLast(lastName.trim());
+      applyNameUpdate(fullName);
       setSavedFlash(true);
       setTimeout(() => setSavedFlash(false), 2000);
     }
@@ -334,6 +337,7 @@ export default function PersonalSettingsPage() {
       const displayUrl = await resolveMeetingsImageDisplayUrl(supabase, baseUrl);
       setProfilePhotoUrl(displayUrl);
       setProfilePhotoBroken(false);
+      applyAvatarUpdate(baseUrl, displayUrl);
       if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
       setPhotoDraft(null);
       setPhotoModalOpen(false);

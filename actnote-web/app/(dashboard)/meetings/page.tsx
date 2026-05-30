@@ -1,14 +1,22 @@
 "use client";
 
-import { Suspense, useState, useMemo, useEffect } from "react";
-import Link from "next/link";
+import { Suspense, useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, ArrowUpDown } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { MeetingCard } from "@/components/meetings/MeetingCard";
+import { ConnectNotionModal } from "@/components/meetings/ConnectNotionModal";
+import { LimitedFeaturesWithoutNotionModal } from "@/components/meetings/LimitedFeaturesWithoutNotionModal";
 import { useMeetings } from "@/lib/hooks/useMeetings";
+import { useNotionIntegrationStatus } from "@/lib/hooks/useNotionIntegrationStatus";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { createClient } from "@/lib/supabase/client";
+import {
+  isNotionConnectPromptSnoozed,
+  isNotionWarningPromptSnoozed,
+  snoozeNotionConnectPrompt,
+  snoozeNotionWarningPrompt,
+} from "@/lib/integrations/notion-connect-prompt";
 import { isProcessing } from "@/lib/types/meeting";
 import type { Meeting } from "@/lib/types/meeting";
 import {
@@ -29,6 +37,13 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 const PAGE_SIZE = 10;
+
+const NEW_MEETING_BUTTON_CLASS =
+  "flex h-10 items-center gap-2 rounded-[10px] px-5 text-[14px] font-bold text-white shadow-[0px_4px_6px_rgba(255,107,53,0.2)] hover:opacity-90 transition-opacity disabled:cursor-wait disabled:opacity-70";
+
+const NEW_MEETING_BUTTON_STYLE = {
+  background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)",
+} as const;
 
 /** 선택된 필터 탭 색을 MeetingCard 상태 배지와 맞춤 (Analyzing=초록, Draft=노랑, Published=파랑) */
 function tabActiveShellClasses(tabId: Tab): string {
@@ -128,10 +143,68 @@ function MeetingsPageContent() {
       setCurrentUserEmail(user?.email ?? null);
     })();
   }, []);
-  const isElevatedWsRole = useMemo(() => {
-    const r = memberships.find((m) => m.workspace_id === workspaceId)?.role;
-    return r === "owner" || r === "admin";
-  }, [memberships, workspaceId]);
+  const currentWsRole = useMemo(
+    () => memberships.find((m) => m.workspace_id === workspaceId)?.role ?? null,
+    [memberships, workspaceId],
+  );
+  const isWsOwner = currentWsRole === "owner";
+  const isElevatedWsRole = currentWsRole === "owner" || currentWsRole === "admin";
+  const { notionConnected } = useNotionIntegrationStatus(workspaceId);
+  const [showConnectNotionModal, setShowConnectNotionModal] = useState(false);
+  const [showLimitedFeaturesModal, setShowLimitedFeaturesModal] = useState(false);
+
+  const goToNewMeeting = useCallback(() => {
+    router.push("/meetings/new");
+  }, [router]);
+
+  const handleNewMeetingClick = useCallback(() => {
+    if (!isWsOwner) {
+      goToNewMeeting();
+      return;
+    }
+    if (notionConnected === null) return;
+    if (notionConnected) {
+      goToNewMeeting();
+      return;
+    }
+    if (workspaceId && isNotionConnectPromptSnoozed(workspaceId)) {
+      goToNewMeeting();
+      return;
+    }
+    setShowConnectNotionModal(true);
+  }, [goToNewMeeting, isWsOwner, notionConnected, workspaceId]);
+
+  const handleConnectNotionFromModal = useCallback(() => {
+    setShowConnectNotionModal(false);
+    setShowLimitedFeaturesModal(false);
+    router.push("/settings/integrations");
+  }, [router]);
+
+  const handleContinueWithoutNotion = useCallback(
+    (dontShowConnectPrompt: boolean) => {
+      if (dontShowConnectPrompt && workspaceId) {
+        snoozeNotionConnectPrompt(workspaceId);
+      }
+      setShowConnectNotionModal(false);
+      if (workspaceId && isNotionWarningPromptSnoozed(workspaceId)) {
+        goToNewMeeting();
+        return;
+      }
+      setShowLimitedFeaturesModal(true);
+    },
+    [goToNewMeeting, workspaceId],
+  );
+
+  const handleContinueAnywayFromWarning = useCallback(
+    (dontShowWarning: boolean) => {
+      if (dontShowWarning && workspaceId) {
+        snoozeNotionWarningPrompt(workspaceId);
+      }
+      setShowLimitedFeaturesModal(false);
+      goToNewMeeting();
+    },
+    [goToNewMeeting, workspaceId],
+  );
 
   const tabFromUrl = parseMeetingsHomeTab(searchParams.get(MEETINGS_HOME_TAB_PARAM));
   const highlightId = searchParams.get(MEETINGS_HOME_HIGHLIGHT_PARAM);
@@ -227,6 +300,20 @@ function MeetingsPageContent() {
     <div className="flex flex-1 flex-col overflow-hidden">
       <DashboardHeader title="Home" />
 
+      {showConnectNotionModal ? (
+        <ConnectNotionModal
+          onConnectNotion={handleConnectNotionFromModal}
+          onContinueWithoutNotion={handleContinueWithoutNotion}
+        />
+      ) : null}
+
+      {showLimitedFeaturesModal ? (
+        <LimitedFeaturesWithoutNotionModal
+          onGoBackConnectNotion={handleConnectNotionFromModal}
+          onContinueAnyway={handleContinueAnywayFromWarning}
+        />
+      ) : null}
+
       <div className="flex-1 overflow-auto p-10">
         {deleteBanner && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex justify-between gap-4 items-start">
@@ -278,13 +365,15 @@ function MeetingsPageContent() {
             </button>
 
             {/* New Meeting */}
-            <Link
-              href="/meetings/new"
-              className="flex h-10 items-center gap-2 rounded-[10px] px-5 text-[14px] font-bold text-white shadow-[0px_4px_6px_rgba(255,107,53,0.2)] hover:opacity-90 transition-opacity"
-              style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+            <button
+              type="button"
+              onClick={handleNewMeetingClick}
+              disabled={isWsOwner && notionConnected === null}
+              className={NEW_MEETING_BUTTON_CLASS}
+              style={NEW_MEETING_BUTTON_STYLE}
             >
               + New Meeting
-            </Link>
+            </button>
           </div>
         </div>
 
@@ -304,13 +393,15 @@ function MeetingsPageContent() {
               {activeTab === "all" ? "Create your first meeting to get started." : "Try a different filter."}
             </p>
             {activeTab === "all" && (
-              <Link
-                href="/meetings/new"
-                className="mt-6 flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-bold text-white hover:opacity-90"
-                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+              <button
+                type="button"
+                onClick={handleNewMeetingClick}
+                disabled={isWsOwner && notionConnected === null}
+                className={`mt-6 ${NEW_MEETING_BUTTON_CLASS} rounded-xl px-6 py-2.5 text-sm`}
+                style={NEW_MEETING_BUTTON_STYLE}
               >
                 + New Meeting
-              </Link>
+              </button>
             )}
           </div>
         ) : (

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { formatRecordingSizeMbDecimal } from "@/lib/meeting/recordingFilename";
 import { createClient } from "@/lib/supabase/client";
+import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
 import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
 import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
@@ -26,7 +27,8 @@ import {
   mergeAnalysisExtrasIntoDraftDoc,
   readDraftAnalysisText,
 } from "@/lib/meetings/meeting-analysis-layout";
-import { DraftGuidanceSidebar } from "@/components/meetings/DraftGuidanceSidebar";
+import { DraftNotionStatusBanner, resolveDraftNotionBannerVariant } from "@/components/meetings/DraftNotionStatusBanner";
+import { useNotionIntegrationStatus } from "@/lib/hooks/useNotionIntegrationStatus";
 import { DraftOverviewPanel } from "@/components/meetings/DraftOverviewPanel";
 import { MeetingDraftActionItemsSection } from "@/components/meetings/MeetingDraftActionItemsSection";
 import { MeetingAnalysisResultsBlock } from "@/components/meetings/MeetingAnalysisResultsBlock";
@@ -234,7 +236,7 @@ function formatMmSsShort(seconds: number | null | undefined): string {
 export default function MeetingDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { memberships, workspaceId, setCurrentWorkspace } = useWorkspaceContext();
+  const { memberships, workspaceId, workspaceName, setCurrentWorkspace } = useWorkspaceContext();
 
   const [meeting, setMeeting] = useState<MeetingRow | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -279,7 +281,8 @@ export default function MeetingDetailPage() {
 
   // Notion 미연동 경고 (INTEG-005)
   const [notionWarningModal, setNotionWarningModal] = useState(false);
-  const [notionConnected, setNotionConnected] = useState<boolean | null>(null);
+  const integrationWorkspaceId = meeting?.workspace_id ?? workspaceId;
+  const { notionConnected, refreshNotionStatus } = useNotionIntegrationStatus(integrationWorkspaceId);
   const [retryAnalysisLoading, setRetryAnalysisLoading] = useState(false);
   /** 발행 성공 후 Figma S-20 모달 + 홈 이동 카운트다운 (157:8809) */
   const [publishSuccessModal, setPublishSuccessModal] = useState(false);
@@ -309,21 +312,25 @@ export default function MeetingDetailPage() {
     }
 
     setMembers(
-      (data as { user_id: string; users: unknown }[]).map((row) => {
-        const u = Array.isArray(row.users) ? row.users[0] : row.users;
-        const uo = u && typeof u === "object" ? (u as Record<string, unknown>) : null;
-        const name = typeof uo?.name === "string" ? uo.name : null;
-        const email = typeof uo?.email === "string" ? uo.email : "";
-        const ar = uo?.avatar_url;
-        const avatar_url = typeof ar === "string" && ar.trim() ? ar.trim() : null;
-        return {
-          user_id: row.user_id,
-          name,
-          email,
-          avatar_url,
-          displayName: workspaceMemberDisplayName(name, email),
-        };
-      })
+      await Promise.all(
+        (data as { user_id: string; users: unknown }[]).map(async (row) => {
+          const u = Array.isArray(row.users) ? row.users[0] : row.users;
+          const uo = u && typeof u === "object" ? (u as Record<string, unknown>) : null;
+          const name = typeof uo?.name === "string" ? uo.name : null;
+          const email = typeof uo?.email === "string" ? uo.email : "";
+          const ar = uo?.avatar_url;
+          const stored =
+            typeof ar === "string" && ar.trim() ? ar.trim() : null;
+          const avatar_url = await resolveMeetingsImageDisplayUrl(supabase, stored);
+          return {
+            user_id: row.user_id,
+            name,
+            email,
+            avatar_url,
+            displayName: workspaceMemberDisplayName(name, email),
+          };
+        }),
+      ),
     );
   }, []);
 
@@ -536,6 +543,14 @@ export default function MeetingDetailPage() {
       memberships
     );
   }, [meeting, currentUserId, currentUserEmail, memberships]);
+
+  /** INTEG-005 / F6 — workspace_members.role (owner | admin | member) */
+  const wsDbRole = useMemo(() => {
+    const wid = meeting?.workspace_id ?? workspaceId;
+    if (!wid) return null;
+    const role = memberships.find((m) => m.workspace_id === wid)?.role;
+    return role === "owner" || role === "admin" || role === "member" ? role : null;
+  }, [meeting?.workspace_id, workspaceId, memberships]);
 
   /** Error 회의는 View error 플로우(메타 + 모달)로 통일 */
   useEffect(() => {
@@ -980,8 +995,7 @@ export default function MeetingDetailPage() {
           return "Each action item needs text, an assignee, and a due date (YYYY-MM-DD).";
         }
         if (key === "notion_integration") {
-          // INTEG-005: Notion 미연동 경고
-          setNotionConnected(false);
+          void refreshNotionStatus();
           setNotionWarningModal(true);
           return null;
         }
@@ -1266,6 +1280,20 @@ export default function MeetingDetailPage() {
       ? meeting.duration_seconds
       : derivedDurationSec;
 
+  const draftWorkspaceName = (() => {
+    const wid = meeting.workspace_id ?? workspaceId;
+    const membership = memberships.find((m) => m.workspace_id === wid);
+    return (membership?.workspace.name ?? workspaceName).trim() || "your";
+  })();
+
+  const showDraftNotionBanner = isReady && !isPublished && notionConnected !== null;
+  const showPublishedNotionBanner =
+    isPublished && wsDbRole === "owner" && notionConnected === false;
+  const draftNotionBannerVariant = resolveDraftNotionBannerVariant(
+    wsDbRole === "owner",
+    notionConnected === true,
+  );
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <DraftDeleteMeetingModal
@@ -1310,7 +1338,7 @@ export default function MeetingDetailPage() {
         </div>
       )}
 
-      {/* INTEG-005 — Notion 미연동 경고 모달 */}
+      {/* INTEG-005 / F6 — Notion 미연동 역할별 안내 */}
       {notionWarningModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl bg-white p-7 shadow-xl mx-4">
@@ -1323,9 +1351,19 @@ export default function MeetingDetailPage() {
                 <p className="text-[13px] text-[#64748b]">Action items won&apos;t sync to Notion.</p>
               </div>
             </div>
-            <p className="mb-5 text-sm text-[#64748b]">
-              Connect Notion in workspace settings to automatically create tickets for each action item when you publish.
-            </p>
+            {wsDbRole === "member" ? (
+              <p className="mb-5 text-sm text-[#64748b]">
+                Contact your workspace administrator to connect Notion before publishing with ticket sync.
+              </p>
+            ) : wsDbRole === "admin" ? (
+              <p className="mb-5 text-sm text-[#64748b]">
+                Go to integration settings to connect Notion. You can still publish without Notion sync.
+              </p>
+            ) : (
+              <p className="mb-5 text-sm text-[#64748b]">
+                Connect Notion in workspace settings to auto-create tickets, or publish without Notion sync.
+              </p>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={() => setNotionWarningModal(false)}
@@ -1333,19 +1371,34 @@ export default function MeetingDetailPage() {
               >
                 Cancel
               </button>
-              <button
-                onClick={() => { setNotionWarningModal(false); window.open("/settings/workspace", "_blank"); }}
-                className="flex items-center justify-center gap-1.5 h-11 px-4 rounded-xl border-2 border-[#e2e8f0] text-sm font-bold text-[#0a2540] hover:bg-[#f8fafc]"
-              >
-                <ExternalLink className="h-3.5 w-3.5" /> Connect
-              </button>
-              <button
-                onClick={doPublish}
-                className="flex-1 h-11 rounded-xl text-sm font-bold text-white hover:opacity-90"
-                style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
-              >
-                Publish anyway
-              </button>
+              {wsDbRole !== "member" ? (
+                <button
+                  onClick={() => {
+                    setNotionWarningModal(false);
+                    router.push("/settings/integrations");
+                  }}
+                  className="flex items-center justify-center gap-1.5 h-11 px-4 rounded-xl border-2 border-[#e2e8f0] text-sm font-bold text-[#0a2540] hover:bg-[#f8fafc]"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" /> Connect
+                </button>
+              ) : null}
+              {wsDbRole !== "member" ? (
+                <button
+                  onClick={doPublish}
+                  className="flex-1 h-11 rounded-xl text-sm font-bold text-white hover:opacity-90"
+                  style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+                >
+                  Publish anyway
+                </button>
+              ) : (
+                <button
+                  onClick={() => setNotionWarningModal(false)}
+                  className="flex-1 h-11 rounded-xl text-sm font-bold text-white hover:opacity-90"
+                  style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
+                >
+                  Got it
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1445,6 +1498,15 @@ export default function MeetingDetailPage() {
               <CalendarDays className="h-4 w-4" />{dateStr}
             </div>
           </div>
+
+          {showDraftNotionBanner ? (
+            <DraftNotionStatusBanner
+              variant={draftNotionBannerVariant}
+              workspaceName={draftWorkspaceName}
+            />
+          ) : showPublishedNotionBanner ? (
+            <DraftNotionStatusBanner variant="owner_published_not_synced" workspaceName={draftWorkspaceName} />
+          ) : null}
 
             {/* 분석 중(ready 이전) 메타 섹션. ready/published는 overview/detail 2단계에서 렌더링. */}
             {!isReady && (
@@ -1697,8 +1759,8 @@ export default function MeetingDetailPage() {
                   }
                 />
 
-                {/* 액션 아이템 (DRAFT-001 + DRAFT-005) — Figma S-18-02 섹션 4 */}
-                <div className="space-y-4 rounded-xl border border-[#e2e8f0] bg-white p-6 shadow-sm">
+                {/* 액션 아이템 (DRAFT-001 + DRAFT-005) — Figma S-18-02: orange bordered section 4 */}
+                <div className="space-y-4 rounded-xl border-2 border-[#ff6b35] bg-[#fff4f0] p-5 md:p-6">
                   <DraftSectionHeading step={4} title="Action Items" />
                   <MeetingDraftActionItemsSection
                     items={editMode && canEdit ? editActionItems : actionItems}

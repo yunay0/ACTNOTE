@@ -82,7 +82,7 @@ const ROLE_STYLE: Record<UiRole, { label: string; bg: string; text: string }> = 
 export default function WorkspaceSettingsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { workspaceId: activeWorkspaceId, refreshWorkspaces, setCurrentWorkspace, memberships } =
+  const { workspaceId: activeWorkspaceId, refreshWorkspaces, applyWorkspaceLogoUpdate, setCurrentWorkspace, memberships } =
     useWorkspaceContext();
   const [workspaceName, setWorkspaceName] = useState("");
   const [savedName, setSavedName] = useState("");
@@ -304,29 +304,43 @@ export default function WorkspaceSettingsPage() {
     }
   }, [loading, currentDbRole, router]);
 
-  /** Owner email deep link: /settings/workspace?workspace=<uuid>&join=requests */
+  /** Deep link: /settings/workspace?section=members&join=requests[&workspace=<uuid>] */
   useEffect(() => {
-    const wsParam = searchParams.get("workspace");
+    const wsParam = searchParams.get("workspace")?.trim() ?? "";
     const joinFocus = searchParams.get("join") === "requests";
-    if (!wsParam?.trim()) return;
-    const targetId = wsParam.trim();
-    if (!memberships.some((m) => m.workspace_id === targetId)) return;
+    const section = searchParams.get("section");
 
-    if (targetId !== activeWorkspaceId) {
-      setCurrentWorkspace(targetId);
+    if (joinFocus && section !== "members") {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("section", "members");
+      params.set("join", "requests");
+      router.replace(`/settings/workspace?${params.toString()}`, { scroll: false });
       return;
     }
 
-    if (joinFocus) {
-      requestAnimationFrame(() =>
-        document.getElementById("join-requests-section")?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        })
-      );
-      router.replace("/settings/workspace", { scroll: false });
+    if (wsParam) {
+      if (memberships.length > 0 && !memberships.some((m) => m.workspace_id === wsParam)) return;
+      if (wsParam !== activeWorkspaceId) {
+        setCurrentWorkspace(wsParam);
+        return;
+      }
     }
-  }, [activeWorkspaceId, memberships, searchParams, setCurrentWorkspace, router]);
+
+    if (!joinFocus || section !== "members") return;
+    if (loading) return;
+
+    const joinSection = document.getElementById("join-requests-section");
+    if (!joinSection) return;
+
+    joinSection.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("join");
+    const qs = params.toString();
+    router.replace(qs ? `/settings/workspace?${qs}` : "/settings/workspace?section=members", {
+      scroll: false,
+    });
+  }, [activeWorkspaceId, loading, memberships, searchParams, setCurrentWorkspace, router]);
 
   function handleDiscardGeneral() {
     setWorkspaceName(savedName);
@@ -467,6 +481,7 @@ export default function WorkspaceSettingsPage() {
       const displayUrl = await resolveMeetingsImageDisplayUrl(supabase, publicUrl);
       setLogoDisplayUrl(displayUrl);
       setLogoBroken(false);
+      applyWorkspaceLogoUpdate(workspaceId, publicUrl, displayUrl);
       await refreshWorkspaces();
       closeLogoModal();
     } catch (e) {
