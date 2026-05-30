@@ -33,6 +33,7 @@ import { DraftOverviewPanel } from "@/components/meetings/DraftOverviewPanel";
 import { MeetingDraftActionItemsSection } from "@/components/meetings/MeetingDraftActionItemsSection";
 import { MeetingAnalysisResultsBlock } from "@/components/meetings/MeetingAnalysisResultsBlock";
 import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
+import { DraftGuidanceSidebar } from "@/components/meetings/DraftGuidanceSidebar";
 import { DraftDeleteMeetingModal } from "@/components/meetings/DraftDeleteMeetingModal";
 import { DraftPublishSuccessModal } from "@/components/meetings/DraftPublishSuccessModal";
 import { draftHasActionPublishBlockers } from "@/lib/meetings/draft-action-gaps";
