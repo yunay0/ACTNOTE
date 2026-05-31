@@ -13,8 +13,8 @@ import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
 
 type UrlState = "empty" | "error" | "verifying" | "verified";
 
-// Notion 회의록 템플릿 컬럼: Meeting Type / Date / Name / Participants / ACTNOTE URL
-const MEETING_FIELDS = ["Meeting Title", "Meeting Type", "Date", "Participants", "Meeting Link"];
+// Notion 회의록 템플릿 컬럼: Name / Date / Meeting Type / Participants / ACTNOTE URL
+const MEETING_FIELDS = ["Meeting Title", "Date & Time", "Meeting Type", "Participants", "ACTNOTE URL"];
 
 interface NotionColumn { name: string; type: string; }
 interface FieldRow { actnoteField: string; notionColumn: string; }
@@ -26,9 +26,9 @@ function autoMap(field: string, columns: NotionColumn[]): string {
     const t = c.type.toLowerCase();
     if (f.includes("title")) return t === "title" || n.includes("title") || n === "name";
     if (f.includes("type")) return (t === "select" && n.includes("type")) || n.includes("meeting type");
-    if (f === "date") return (t === "date" && !n.includes("due")) || (n.includes("date") && !n.includes("due"));
+    if (f.includes("date")) return (t === "date" && !n.includes("due")) || (n.includes("date") && !n.includes("due"));
     if (f.includes("participant")) return t === "people" || t === "person" || n.includes("participant") || n.includes("attendee");
-    if (f.includes("link")) return t === "url" || n.includes("url") || n.includes("link");
+    if (f.includes("url") || f.includes("link")) return t === "url" || n.includes("url") || n.includes("link");
     return false;
   });
   return col ? `${col.name} ✓ Auto-mapped` : "— not matched";
@@ -102,8 +102,8 @@ function NotionMeetingDbInner() {
     : "Open your database in Notion → copy the URL from the browser address bar";
   const hintColor = urlState === "error" ? "#DC2626" : urlState === "verified" ? "#10B981" : "#6C757D";
 
-  const verifyBtnBg = verified ? "#10B981" : "#E9ECEF";
-  const verifyBtnColor = verified ? "#fff" : "#ADB5BD";
+  const verifyBtnBg = verified ? "#10B981" : url.trim() ? "#F26522" : "#E9ECEF";
+  const verifyBtnColor = verified || url.trim() ? "#fff" : "#ADB5BD";
   const verifyBtnText = verifying ? "Verifying…" : verified ? "✓ Verified" : "Verify";
 
   const templateUrl = process.env.NEXT_PUBLIC_NOTION_TEMPLATE_MEETING_URL ?? "#";
@@ -179,7 +179,7 @@ function NotionMeetingDbInner() {
               rel="noopener noreferrer"
               className="mt-1 flex items-center gap-[6px] text-[13px] font-semibold text-[#F26522] hover:underline"
             >
-              📄 Meeting Notes Template
+              📄 ACTNOTE Notion Template
               <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
                 <path d="M2 9L9 2M9 2H4.5M9 2V6.5" stroke="#F26522" strokeWidth="1.375" strokeLinecap="round" strokeLinejoin="round" />
               </svg>

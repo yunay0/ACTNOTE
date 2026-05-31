@@ -1929,7 +1929,7 @@ export default function MeetingDetailPage() {
           <button
             type="button"
             onClick={() => void handlePublishClick()}
-            disabled={publishing || saving || publishBlockedByActions}
+            disabled={publishing || saving}
             className="inline-flex h-11 min-w-[8rem] items-center justify-center gap-2 rounded-[10px] px-8 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:opacity-50"
             style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
           >
