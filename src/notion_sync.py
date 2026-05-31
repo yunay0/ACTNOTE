@@ -203,6 +203,27 @@ def _rich_text_prop(text: str) -> dict[str, Any]:
     return {"rich_text": [{"type": "text", "text": {"content": text[:2000]}}]}
 
 
+def _paragraph_blocks_from_text(text: str, *, max_chunk: int = 2000) -> list[dict[str, Any]]:
+    """긴 Task Description 을 Notion 페이지 본문 paragraph 블록으로 분할한다."""
+    body = (text or "").strip()
+    if not body:
+        return []
+    blocks: list[dict[str, Any]] = []
+    while body:
+        chunk = body[:max_chunk]
+        body = body[max_chunk:]
+        blocks.append(
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{"type": "text", "text": {"content": chunk}}],
+                },
+            }
+        )
+    return blocks
+
+
 def _people_prop_from_identifiers(
     emails: list[str],
     names: list[str],
@@ -991,11 +1012,15 @@ def push_action_items(
     created_ids: list[str] = []
 
     try:
+        from src.action_item_task_title import derive_action_item_task_title
+
         for item in action_items:
             props: dict[str, Any] = {}
+            content = (item.get("content") or "").strip()
+            task_title = derive_action_item_task_title(content)
             title_key = title_col or "Task title"
             props[title_key] = {
-                "title": [{"type": "text", "text": {"content": item.get("content") or ""}}]
+                "title": [{"type": "text", "text": {"content": task_title}}]
             }
             url_key = actnote_url_col or "ACTNOTE URL"
             if url_key in action_col_types or not action_col_types:
@@ -1023,9 +1048,15 @@ def push_action_items(
                     name_map=name_map,
                 )
 
-            page = notion.pages.create(
-                **{"parent": {"database_id": action_db_id}, "properties": props}
-            )
+            create_kwargs: dict[str, Any] = {
+                "parent": {"database_id": action_db_id},
+                "properties": props,
+            }
+            description_blocks = _paragraph_blocks_from_text(content)
+            if description_blocks:
+                create_kwargs["children"] = description_blocks
+
+            page = notion.pages.create(**create_kwargs)
             page_id: str = page["id"]
             created_ids.append(page_id)
 
