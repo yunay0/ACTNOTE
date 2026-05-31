@@ -124,7 +124,7 @@ def validate_for_publication(meeting_id: str, sb_client) -> tuple[bool, list[str
         missing.append("key_points")
     # project_review 는 summary 외 필수 섹션 없음
 
-    # action_items 가 있으면 필드 완전성만 체크 (수량 자체는 선택)
+    # action_items 가 있으면 필드 완전성은 정보용으로만 기록 (063: 발행 차단 아님)
     actions_resp = (
         sb_client.table("action_items")
         .select("id, content, assignee_user_id, due_date, valid_until, status")
@@ -134,17 +134,10 @@ def validate_for_publication(meeting_id: str, sb_client) -> tuple[bool, list[str
         .execute()
     )
     actions = actions_resp.data or []
-    if actions:
-        has_incomplete = any(
-            (a.get("assignee_user_id") is None)
-            or (a.get("due_date") is None)
-            or (not (a.get("content") or "").strip())
-            for a in actions
-        )
-        if has_incomplete:
-            missing.append("action_item_fields")
+    # action_item_fields 는 RPC 063 과 동일하게 ok 판정에서 제외 (선택 섹션)
 
-    return len(missing) == 0, missing
+    blocking = [k for k in missing if k in ("title", "summary", "blockers", "key_topics", "key_points")]
+    return len(blocking) == 0, missing
 
 
 # ---------------------------------------------------------------------------

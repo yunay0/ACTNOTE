@@ -23,8 +23,13 @@ import { MeetingAiAnalysisPreview } from "@/components/meetings/MeetingAiAnalysi
 import { retryMeetingPipeline } from "@/lib/meetings/retry-pipeline";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 import {
+  analysisSectionToDbJson,
+  isPublishBlockingMissingKey,
   meetingAnalysisSegmentsForRow,
+  meetingTypeIncludesActionItems,
   mergeAnalysisExtrasIntoDraftDoc,
+  publishMissingFieldMessage,
+  readAnalysisSectionText,
   readDraftAnalysisText,
 } from "@/lib/meetings/meeting-analysis-layout";
 import { DraftNotionStatusBanner, resolveDraftNotionBannerVariant } from "@/components/meetings/DraftNotionStatusBanner";
@@ -76,6 +81,12 @@ interface MeetingRow {
   responsible_display_email?: string | null;
   duration_seconds?: number | null;
   audio_file_size_bytes?: number | null;
+  blockers?: unknown;
+  key_topics?: unknown;
+  key_decisions?: unknown;
+  risks_and_issues?: unknown;
+  follow_up?: unknown;
+  key_points?: unknown;
 }
 
 interface ActionItem {
@@ -343,7 +354,7 @@ export default function MeetingDetailPage() {
       (supabase as any)
         .from("meetings")
         .select(
-          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, audio_file_name, workspace_id, created_by, creator_display_name, creator_email, error_message, description, meeting_type, participants, responsible_user_id, responsible_display_name, responsible_display_email, ai_draft_notes, duration_seconds, audio_file_size_bytes, notion_page_id"
+          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, audio_file_name, workspace_id, created_by, creator_display_name, creator_email, error_message, description, meeting_type, participants, responsible_user_id, responsible_display_name, responsible_display_email, ai_draft_notes, blockers, key_topics, key_decisions, risks_and_issues, follow_up, key_points, duration_seconds, audio_file_size_bytes, notion_page_id"
         )
         .eq("id", id)
         .is("deleted_at", null)
@@ -402,6 +413,12 @@ export default function MeetingDetailPage() {
         typeof row.responsible_display_name === "string" ? row.responsible_display_name : null,
       responsible_display_email:
         typeof row.responsible_display_email === "string" ? row.responsible_display_email : null,
+      blockers: row.blockers ?? null,
+      key_topics: row.key_topics ?? null,
+      key_decisions: row.key_decisions ?? null,
+      risks_and_issues: row.risks_and_issues ?? null,
+      follow_up: row.follow_up ?? null,
+      key_points: row.key_points ?? null,
     });
 
     const draftRaw = row.ai_draft_notes;
@@ -670,12 +687,16 @@ export default function MeetingDetailPage() {
     setEditTitle(meeting.title ?? "");
     setEditSummary(meeting.summary ?? "");
     setEditDecisions((meeting.decisions ?? []).map((d) => d.content));
-    setEditKeyTopics(readDraftAnalysisText(draftNotesDoc, "key_topics"));
-    setEditRisksAndIssues(readDraftAnalysisText(draftNotesDoc, "risks_and_issues"));
-    setEditFollowUp(readDraftAnalysisText(draftNotesDoc, "follow_up"));
-    setEditBlockers(readDraftAnalysisText(draftNotesDoc, "blockers"));
-    setEditKeyDecisions(readDraftAnalysisText(draftNotesDoc, "key_decisions"));
-    setEditKeyPoints(readDraftAnalysisText(draftNotesDoc, "key_points"));
+    setEditKeyTopics(readAnalysisSectionText(meeting.key_topics, draftNotesDoc, "key_topics"));
+    setEditRisksAndIssues(
+      readAnalysisSectionText(meeting.risks_and_issues, draftNotesDoc, "risks_and_issues"),
+    );
+    setEditFollowUp(readAnalysisSectionText(meeting.follow_up, draftNotesDoc, "follow_up"));
+    setEditBlockers(readAnalysisSectionText(meeting.blockers, draftNotesDoc, "blockers"));
+    setEditKeyDecisions(
+      readAnalysisSectionText(meeting.key_decisions, draftNotesDoc, "key_decisions"),
+    );
+    setEditKeyPoints(readAnalysisSectionText(meeting.key_points, draftNotesDoc, "key_points"));
     setEditActionItems(actionItems.map((a) => ({ ...a })));
     loadMembers(meeting.workspace_id);
     setEditMode(true);
@@ -719,6 +740,12 @@ export default function MeetingDetailPage() {
         summary: editSummary || null,
         decisions: trimmedDecisions.map((d) => ({ content: d })),
         ai_draft_notes: JSON.stringify(mergedDraft),
+        blockers: analysisSectionToDbJson(editBlockers),
+        key_topics: analysisSectionToDbJson(editKeyTopics),
+        key_decisions: analysisSectionToDbJson(editKeyDecisions),
+        risks_and_issues: analysisSectionToDbJson(editRisksAndIssues),
+        follow_up: analysisSectionToDbJson(editFollowUp),
+        key_points: analysisSectionToDbJson(editKeyPoints),
       })
       .eq("id", meeting.id);
 
@@ -995,26 +1022,21 @@ export default function MeetingDetailPage() {
 
     if (!validation?.ok) {
       const missing: string[] = validation?.missing ?? [];
-      const msgs = missing.map((key: string) => {
-        if (key === "title") return "Meeting title is required.";
-        if (key === "summary") return "AI summary must be added before publishing.";
-        if (key === "action_items") return "At least 1 active action item is required.";
-        if (key === "decisions") return "Add at least one decision before publishing.";
-        if (key === "action_item_fields") {
-          return "Each action item needs text, an assignee, and a due date (YYYY-MM-DD).";
-        }
-        if (key === "notion_integration") {
-          void refreshNotionStatus();
-          setNotionWarningModal(true);
-          return null;
-        }
-        return `Missing: ${key}`;
-      }).filter(Boolean) as string[];
+      const blocking = missing.filter(isPublishBlockingMissingKey);
 
-      if (!missing.includes("notion_integration") && msgs.length > 0) {
-        setPubValidErrors(msgs);
-        setPubValidModal(true);
+      if (missing.includes("notion_integration")) {
+        void refreshNotionStatus();
+        setNotionWarningModal(true);
       }
+
+      if (blocking.length > 0) {
+        setPubValidErrors(blocking.map(publishMissingFieldMessage));
+        setPubValidModal(true);
+        return;
+      }
+
+      // RPC ok=false 이지만 차단 키만 없음 (구버전 action_item_fields 등) → 발행 허용
+      await doPublish();
       return;
     }
 
@@ -1751,24 +1773,38 @@ export default function MeetingDetailPage() {
                   decisionsEdit={editDecisions}
                   onDecisionsChange={editMode && canEdit ? setEditDecisions : undefined}
                   keyTopicsText={
-                    editMode && canEdit ? editKeyTopics : readDraftAnalysisText(draftNotesDoc, "key_topics")
+                    editMode && canEdit
+                      ? editKeyTopics
+                      : readAnalysisSectionText(meeting.key_topics, draftNotesDoc, "key_topics")
                   }
                   risksAndIssuesText={
                     editMode && canEdit
                       ? editRisksAndIssues
-                      : readDraftAnalysisText(draftNotesDoc, "risks_and_issues")
+                      : readAnalysisSectionText(
+                          meeting.risks_and_issues,
+                          draftNotesDoc,
+                          "risks_and_issues",
+                        )
                   }
                   followUpText={
-                    editMode && canEdit ? editFollowUp : readDraftAnalysisText(draftNotesDoc, "follow_up")
+                    editMode && canEdit
+                      ? editFollowUp
+                      : readAnalysisSectionText(meeting.follow_up, draftNotesDoc, "follow_up")
                   }
                   blockersText={
-                    editMode && canEdit ? editBlockers : readDraftAnalysisText(draftNotesDoc, "blockers")
+                    editMode && canEdit
+                      ? editBlockers
+                      : readAnalysisSectionText(meeting.blockers, draftNotesDoc, "blockers")
                   }
                   keyDecisionsText={
-                    editMode && canEdit ? editKeyDecisions : readDraftAnalysisText(draftNotesDoc, "key_decisions")
+                    editMode && canEdit
+                      ? editKeyDecisions
+                      : readAnalysisSectionText(meeting.key_decisions, draftNotesDoc, "key_decisions")
                   }
                   keyPointsText={
-                    editMode && canEdit ? editKeyPoints : readDraftAnalysisText(draftNotesDoc, "key_points")
+                    editMode && canEdit
+                      ? editKeyPoints
+                      : readAnalysisSectionText(meeting.key_points, draftNotesDoc, "key_points")
                   }
                   onExtrasChange={
                     editMode && canEdit
@@ -1784,9 +1820,13 @@ export default function MeetingDetailPage() {
                   }
                 />
 
-                {/* 액션 아이템 (DRAFT-001 + DRAFT-005) — Figma S-18-02: orange bordered section 4 */}
+                {/* Action Items — optional section for all meeting types (DRAFT-008-002) */}
+                {meetingTypeIncludesActionItems(meeting.meeting_type) ? (
                 <div className="space-y-4 rounded-xl border-2 border-[#ff6b35] bg-[#fff4f0] p-5 md:p-6">
-                  <DraftSectionHeading step={4} title="Action Items" />
+                  <div>
+                    <DraftSectionHeading step={4} title="Action Items" />
+                    <p className="mt-1 text-[12px] text-[#94a3b8]">(Optional) Add or leave empty to publish.</p>
+                  </div>
                   <MeetingDraftActionItemsSection
                     items={editMode && canEdit ? editActionItems : actionItems}
                     participantNames={meeting.participants}
@@ -1839,6 +1879,7 @@ export default function MeetingDetailPage() {
                     </div>
                   ) : null}
                 </div>
+                ) : null}
               </div>
 
               {/* Draft detail step: Back 버튼 — Next와 동일 디자인, 글자/화살표 방향만 다름 */}

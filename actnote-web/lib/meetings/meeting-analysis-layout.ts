@@ -122,20 +122,20 @@ export const SECTION_ORDER: Record<MeetingType, ReadonlyArray<SectionOrderItem>>
     { key: "action_items", label: "Action Items", required: false },
   ],
   project_review: [
-    { key: "key_decisions", label: "Key Decisions", required: false },
     { key: "summary", label: "Summary", required: true },
+    { key: "key_decisions", label: "Key Decisions", required: false },
     { key: "risks_and_issues", label: "Risks & Issues", required: false },
     { key: "action_items", label: "Action Items", required: false },
   ],
   one_on_one: [
-    { key: "key_topics", label: "Key Topics", required: true },
     { key: "summary", label: "Summary", required: true },
+    { key: "key_topics", label: "Key Topics", required: true },
     { key: "follow_up", label: "Follow-up", required: false },
     { key: "action_items", label: "Action Items", required: false },
   ],
   other: [
-    { key: "key_points", label: "Key Points", required: true },
     { key: "summary", label: "Summary", required: true },
+    { key: "key_points", label: "Key Points", required: true },
     { key: "action_items", label: "Action Items", required: false },
   ],
 };
@@ -289,4 +289,64 @@ export function getMissingRequiredSegments(
     const val = readDraftAnalysisText(doc, s.draftKey).trim();
     return val.length === 0;
   });
+}
+
+/** `validate_meeting_for_publication` RPC ok 판정과 동일 — 이 키만 발행 차단 */
+export const PUBLISH_BLOCKING_MISSING_KEYS = new Set([
+  "title",
+  "summary",
+  "blockers",
+  "key_topics",
+  "key_points",
+]);
+
+export function isPublishBlockingMissingKey(key: string): boolean {
+  return PUBLISH_BLOCKING_MISSING_KEYS.has(key);
+}
+
+const PUBLISH_MISSING_MESSAGES: Record<string, string> = {
+  title: "Meeting title is required.",
+  summary: "Summary is required before publishing.",
+  blockers: "Blockers is required for Team Standup meetings.",
+  key_topics: "Key Topics is required for 1:1 meetings.",
+  key_points: "Key Points is required for Other meetings.",
+};
+
+export function publishMissingFieldMessage(key: string): string {
+  return PUBLISH_MISSING_MESSAGES[key] ?? `Missing required field: ${key}`;
+}
+
+/** meetings.{section} JSONB 컬럼 저장값 — pipeline `_update_meeting` 과 동일 (문자열 또는 NULL) */
+export function analysisSectionToDbJson(text: string | null | undefined): string | null {
+  const trimmed = (text ?? "").trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** DB JSONB 컬럼 → 표시 텍스트 (없으면 ai_draft_notes 폴백) */
+export function readAnalysisSectionText(
+  dbValue: unknown,
+  doc: Record<string, unknown>,
+  field: MeetingAnalysisDraftKey,
+): string {
+  if (typeof dbValue === "string" && dbValue.trim()) {
+    return dbValue.trim();
+  }
+  if (Array.isArray(dbValue)) {
+    const joined = dbValue
+      .filter((x): x is string => typeof x === "string" && Boolean(x.trim()))
+      .map((x) => x.trim())
+      .join("\n");
+    if (joined) return joined;
+  }
+  return readDraftAnalysisText(doc, field);
+}
+
+export function sectionOrderForMeetingType(
+  raw: string | null | undefined,
+): ReadonlyArray<SectionOrderItem> {
+  return SECTION_ORDER[canonicalMeetingAnalysisType(raw)];
+}
+
+export function meetingTypeIncludesActionItems(raw: string | null | undefined): boolean {
+  return sectionOrderForMeetingType(raw).some((s) => s.key === "action_items");
 }

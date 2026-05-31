@@ -14,6 +14,12 @@ function RequiredMark(): ReactElement {
   );
 }
 
+function OptionalMark(): ReactElement {
+  return (
+    <span className="ml-2 text-[12px] font-normal text-[#94a3b8]">(Optional)</span>
+  );
+}
+
 interface MeetingAnalysisResultsBlockProps {
   meetingTypeRaw: string | null;
   mode: "read" | "edit";
@@ -36,16 +42,19 @@ interface MeetingAnalysisResultsBlockProps {
     draftKey: MeetingAnalysisDraftKey;
     title: string;
     subtitle?: string;
+    required: boolean;
   }>;
 }
 
 function FieldShell({
   label,
   subtitle,
+  required,
   children,
 }: {
   label: string;
   subtitle?: string;
+  required: boolean;
   children: React.ReactNode;
 }): ReactElement {
   return (
@@ -53,7 +62,7 @@ function FieldShell({
       <div>
         <p className="text-[14px] font-bold text-[#0a2540]">
           {label}
-          <RequiredMark />
+          {required ? <RequiredMark /> : <OptionalMark />}
         </p>
         {subtitle ? <p className="mt-0.5 text-[12px] text-[#94a3b8]">{subtitle}</p> : null}
       </div>
@@ -79,7 +88,8 @@ export function MeetingAnalysisResultsBlock(props: MeetingAnalysisResultsBlockPr
   function renderExtrasField(
     k: Exclude<MeetingAnalysisDraftKey, "summary" | "decisions">,
     label: string,
-    subtitle?: string,
+    subtitle: string | undefined,
+    required: boolean,
   ): ReactElement {
     const val =
       k === "key_topics"
@@ -101,7 +111,7 @@ export function MeetingAnalysisResultsBlock(props: MeetingAnalysisResultsBlockPr
         : "Waiting for AI to populate this section — or edit in Edit mode.";
 
     return (
-      <FieldShell label={label} subtitle={subtitle}>
+      <FieldShell label={label} subtitle={subtitle} required={required}>
         {props.mode === "edit" && onChange ? (
             <textarea
                 value={val}
@@ -120,7 +130,7 @@ export function MeetingAnalysisResultsBlock(props: MeetingAnalysisResultsBlockPr
   function renderDecisions(label: string, subtitle?: string): ReactElement {
     const emptyHint = "No decisions recorded. They will be extracted automatically after AI processing.";
     return (
-      <FieldShell label={label} subtitle={subtitle}>
+      <FieldShell label={label} subtitle={subtitle} required={false}>
         {props.mode === "edit" && props.onDecisionsChange && props.decisionsEdit ? (
           <div className="space-y-2">
             {props.decisionsEdit.map((d, i) => (
@@ -188,7 +198,7 @@ export function MeetingAnalysisResultsBlock(props: MeetingAnalysisResultsBlockPr
         {props.segments.map((seg) => {
           if (seg.draftKey === "summary") {
             return (
-              <FieldShell key="summary" label={seg.title} subtitle={seg.subtitle}>
+              <FieldShell key="summary" label={seg.title} subtitle={seg.subtitle} required={seg.required}>
                 {props.mode === "edit" && props.onSummaryChange ? (
                   <textarea
                     value={props.summary}
@@ -208,7 +218,12 @@ export function MeetingAnalysisResultsBlock(props: MeetingAnalysisResultsBlockPr
           }
           return (
             <div key={seg.draftKey}>
-              {renderExtrasField(seg.draftKey as Exclude<MeetingAnalysisDraftKey, "summary">, seg.title, seg.subtitle)}
+              {renderExtrasField(
+                seg.draftKey as Exclude<MeetingAnalysisDraftKey, "summary">,
+                seg.title,
+                seg.subtitle,
+                seg.required,
+              )}
             </div>
           );
         })}
