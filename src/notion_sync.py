@@ -198,6 +198,54 @@ def _resolve_db_column(col_types: dict[str, str], *candidates: str) -> str | Non
     return None
 
 
+def _resolve_due_date_column(col_types: dict[str, str]) -> str | None:
+    """Notion 액션 DB 의 마감일 컬럼 — 반드시 ``date`` 타입이어야 한다.
+
+    설정 UI autoMap 은 이름만 보지만, 발행 시에는 타입까지 확인한다.
+    ``Due Date`` 외 ``Due`` / ``Deadline`` 등 ACTNOTE 템플릿 변형도 허용한다.
+    """
+    named = _resolve_db_column(
+        col_types,
+        "Due Date",
+        "Due date",
+        "Deadline",
+        "Due",
+    )
+    if named and col_types.get(named) == "date":
+        return named
+
+    for name, ptype in col_types.items():
+        if ptype != "date":
+            continue
+        low = name.lower()
+        if "due" in low or "deadline" in low:
+            return name
+    return None
+
+
+def _notion_date_start_from_action(item: dict[str, Any]) -> str | None:
+    """action_items 의 due_date / due_at → Notion date property ``start`` 문자열."""
+    raw = item.get("due_date") or item.get("due_at")
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    # Postgres DATE → "2026-05-29"
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        date_part = s[:10]
+        if len(s) == 10:
+            return date_part
+        # TIMESTAMPTZ → Notion 은 ISO8601 datetime 허용
+        try:
+            if "T" in s:
+                return s.replace("Z", "+00:00") if s.endswith("Z") else s
+        except Exception:  # noqa: BLE001
+            pass
+        return date_part
+    return None
+
+
 def _rich_text_prop(text: str) -> dict[str, Any]:
     """Notion rich_text property."""
     return {"rich_text": [{"type": "text", "text": {"content": text[:2000]}}]}
@@ -1006,7 +1054,12 @@ def push_action_items(
     action_col_types = _notion_db_column_types(notion, action_db_id)
     title_col = _resolve_db_column(action_col_types, "Task title", "Task Title", "Name")
     assignee_col = _resolve_db_column(action_col_types, "Assignee")
-    due_col = _resolve_db_column(action_col_types, "Due Date")
+    due_col = _resolve_due_date_column(action_col_types)
+    if not due_col and action_col_types:
+        _log.info(
+            "push_action_items: Due Date(date) 컬럼 없음 — 마감일 미기록 (db properties=%s)",
+            list(action_col_types.keys()),
+        )
     actnote_url_col = _resolve_db_column(action_col_types, "ACTNOTE URL")
     email_map, name_map = _notion_user_lookup_maps(notion, token)
     created_ids: list[str] = []
@@ -1025,8 +1078,15 @@ def push_action_items(
             url_key = actnote_url_col or "ACTNOTE URL"
             if url_key in action_col_types or not action_col_types:
                 props[url_key] = {"url": actnote_url}
-            if item.get("due_date") and due_col:
-                props[due_col] = {"date": {"start": str(item["due_date"])}}
+            due_start = _notion_date_start_from_action(item)
+            if due_start and due_col:
+                props[due_col] = {"date": {"start": due_start}}
+            elif due_start and not due_col:
+                _log.warning(
+                    "push_action_items: 마감일 %r 있으나 Notion date 컬럼 없음 (action_id=%s)",
+                    due_start,
+                    item.get("id"),
+                )
 
             if assignee_col:
                 assignee_display = (item.get("assignee_display") or item.get("assignee") or "").strip()
