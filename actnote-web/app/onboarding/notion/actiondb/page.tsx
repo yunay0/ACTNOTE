@@ -13,7 +13,9 @@ import { OnboardingProgress } from "@/components/onboarding/OnboardingProgress";
 
 type UrlState = "empty" | "error" | "verifying" | "verified";
 
-const ACTION_FIELDS = ["Task Title", "Assignee", "Due Date", "Status"];
+// Notion 액션 템플릿 컬럼: Task title / Assignee / Due Date / ACTNOTE URL
+// (Status 는 'Not Started' 기본값으로 Notion 팀이 직접 관리 — 매핑 표 비노출)
+const ACTION_FIELDS = ["Task Title", "Assignee", "Due Date", "ACTNOTE URL"];
 
 interface NotionColumn { name: string; type: string; }
 interface FieldRow { actnoteField: string; notionColumn: string; }
@@ -27,6 +29,7 @@ function autoMap(field: string, columns: NotionColumn[]): string {
     if (f.includes("assignee")) return t === "people" || t === "person" || n.includes("assign") || n.includes("owner");
     if (f.includes("due date")) return n.includes("due") || n.includes("deadline") || (t === "date" && n.includes("date"));
     if (f.includes("status")) return t === "status" || t === "select" || n.includes("status") || n.includes("state");
+    if (f.includes("url") || f.includes("link")) return t === "url" || n.includes("url") || n.includes("link");
     return false;
   });
   return col ? `${col.name} ✓ Auto-mapped` : "— not matched";
@@ -141,8 +144,8 @@ function NotionActionDbInner() {
     : "Open your database in Notion → copy the URL from the browser address bar";
   const hintColor = urlState === "error" ? "#DC2626" : urlState === "verified" ? "#10B981" : "#6C757D";
 
-  const verifyBtnBg = verified ? "#10B981" : "#E9ECEF";
-  const verifyBtnColor = verified ? "#fff" : "#ADB5BD";
+  const verifyBtnBg = verified ? "#10B981" : url.trim() ? "#F26522" : "#E9ECEF";
+  const verifyBtnColor = verified || url.trim() ? "#fff" : "#ADB5BD";
   const verifyBtnText = verifying ? "Verifying…" : verified ? "✓ Verified" : "Verify";
 
   const templateUrl = process.env.NEXT_PUBLIC_NOTION_TEMPLATE_TICKET_URL ?? "#";
@@ -218,7 +221,7 @@ function NotionActionDbInner() {
               rel="noopener noreferrer"
               className="mt-1 flex items-center gap-[6px] text-[13px] font-semibold text-[#F26522] hover:underline"
             >
-              🎫 Issue Tracker Template
+              📄 ACTNOTE Notion Template
               <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
                 <path d="M2 9L9 2M9 2H4.5M9 2V6.5" stroke="#F26522" strokeWidth="1.375" strokeLinecap="round" strokeLinejoin="round" />
               </svg>

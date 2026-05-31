@@ -12,8 +12,8 @@ import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
 
 type UrlState = "empty" | "error" | "verifying" | "verified" | "saving";
 
-// Notion 회의록 템플릿 컬럼: Meeting Type / Date / Name / Participants / ACTNOTE URL
-const MEETING_FIELDS = ["Meeting Title", "Meeting Type", "Date", "Participants", "Meeting Link"];
+// Notion 회의록 템플릿 컬럼: Name / Date / Meeting Type / Participants / ACTNOTE URL
+const MEETING_FIELDS = ["Meeting Title", "Date & Time", "Meeting Type", "Participants", "ACTNOTE URL"];
 interface NotionColumn { name: string; type: string; }
 interface FieldRow { actnoteField: string; notionColumn: string; }
 
@@ -24,9 +24,9 @@ function autoMap(field: string, columns: NotionColumn[]): string {
     const t = c.type.toLowerCase();
     if (f.includes("title")) return t === "title" || n.includes("title") || n === "name";
     if (f.includes("type")) return (t === "select" && n.includes("type")) || n.includes("meeting type");
-    if (f === "date") return (t === "date" && !n.includes("due")) || (n.includes("date") && !n.includes("due"));
+    if (f.includes("date")) return (t === "date" && !n.includes("due")) || (n.includes("date") && !n.includes("due"));
     if (f.includes("participant")) return t === "people" || t === "person" || n.includes("participant") || n.includes("attendee");
-    if (f.includes("link")) return t === "url" || n.includes("url") || n.includes("link");
+    if (f.includes("url") || f.includes("link")) return t === "url" || n.includes("url") || n.includes("link");
     return false;
   });
   return col ? `${col.name} ✓ Auto-mapped` : "— not matched";
@@ -130,8 +130,8 @@ export default function SettingsMeetingDbPage() {
               />
               <button
                 onClick={handleVerify} disabled={urlState === "verifying" || !url.trim()}
-                className="h-[43px] w-[81px] shrink-0 rounded-[10px] text-[14px] font-semibold disabled:cursor-not-allowed"
-                style={{ background: verified ? "#10B981" : "#E9ECEF", color: verified ? "#fff" : "#ADB5BD" }}
+                className="h-[43px] w-[81px] shrink-0 rounded-[10px] text-[14px] font-semibold transition-colors disabled:cursor-not-allowed"
+                style={{ background: verified ? "#10B981" : url.trim() ? "#F26522" : "#E9ECEF", color: verified || url.trim() ? "#fff" : "#ADB5BD" }}
               >
                 {urlState === "verifying" ? "…" : verified ? "✓" : "Verify"}
               </button>
@@ -160,7 +160,7 @@ export default function SettingsMeetingDbPage() {
               </p>
               <a href={templateUrl} target="_blank" rel="noopener noreferrer"
                 className="mt-1 flex items-center gap-[6px] text-[13px] font-semibold text-[#F26522] hover:underline w-fit">
-                📄 Meeting Notes Template
+                📄 ACTNOTE Notion Template
                 <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M2 9L9 2M9 2H4.5M9 2V6.5" stroke="#F26522" strokeWidth="1.375" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </a>
             </div>
