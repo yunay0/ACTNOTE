@@ -53,22 +53,21 @@ export default function SettingsMeetingDbPage() {
       setUrlState("error"); return;
     }
     setUrlState("verifying");
+    // settings 변경 경로: sessionStorage 토큰이 없으면 서버가 저장된 토큰으로 verify.
     const token = (() => { try { return sessionStorage.getItem("notion_pending_token") ?? ""; } catch { return ""; } })();
 
-    if (token) {
-      try {
-        const res = await fetch("/api/integrations/notion/verify-db", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token, url: trimmed }),
-        });
-        const data = (await res.json()) as { ok: boolean; dbId?: string; dbName?: string; columns?: NotionColumn[] };
-        if (data.ok && data.dbId) {
-          setDbId(data.dbId); setDbName(data.dbName ?? "Untitled");
-          setFieldRows(MEETING_FIELDS.map((f) => ({ actnoteField: f, notionColumn: autoMap(f, data.columns ?? []) })));
-          setUrlState("verified"); return;
-        }
-      } catch {}
-    }
+    try {
+      const res = await fetch("/api/integrations/notion/verify-db", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, url: trimmed }),
+      });
+      const data = (await res.json()) as { ok: boolean; dbId?: string; dbName?: string; columns?: NotionColumn[] };
+      if (data.ok && data.dbId) {
+        setDbId(data.dbId); setDbName(data.dbName ?? "Untitled");
+        setFieldRows(MEETING_FIELDS.map((f) => ({ actnoteField: f, notionColumn: autoMap(f, data.columns ?? []) })));
+        setUrlState("verified"); return;
+      }
+    } catch {}
 
     // Client-side fallback: extract DB ID from URL
     const match = trimmed.match(/([0-9a-f]{32})(?:[?#]|$)/i) ||
