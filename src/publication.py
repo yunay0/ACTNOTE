@@ -297,32 +297,73 @@ def push_published_to_notion(
         sb_client.table("action_items")
         .select("id, content, assignee, assignee_user_id, due_date")
         .eq("meeting_id", meeting_id)
+        .is_("valid_until", "null")
         .in_("status", ["open", "in_progress"])
         .execute()
     )
     action_items_data = actions_resp.data or []
 
-    # PUB-004 자동화: DRAFT-005 로 매칭된 담당자(assignee_user_id) → users.email 해석.
-    # notion_sync 가 이 이메일을 Notion 멤버 이메일과 매칭해 Assignee(people) 컬럼을 채운다.
+    # PUB-004: assignee_user_id → users.email, 없으면 assignee 텍스트에서 이메일 파싱.
+    from src.notion_sync import extract_email_from_text
+
     assignee_uids = list(
         {a["assignee_user_id"] for a in action_items_data if a.get("assignee_user_id")}
     )
+    email_by_uid: dict[str, str] = {}
+    users_rows: list[dict] = []
     if assignee_uids:
         users_resp = (
             sb_client.table("users")
-            .select("id, email")
+            .select("id, email, name")
             .in_("id", assignee_uids)
             .execute()
         )
+        users_rows = users_resp.data or []
         email_by_uid = {
             u["id"]: u["email"]
-            for u in (users_resp.data or [])
+            for u in users_rows
             if u.get("email")
         }
-        for a in action_items_data:
-            uid = a.get("assignee_user_id")
-            if uid and email_by_uid.get(uid):
-                a["assignee_email"] = email_by_uid[uid]
+    for a in action_items_data:
+        uid = a.get("assignee_user_id")
+        if uid and email_by_uid.get(uid):
+            a["assignee_email"] = str(email_by_uid[uid]).strip().lower()
+        assignee_text = (a.get("assignee") or "").strip()
+        if not a.get("assignee_email") and assignee_text:
+            parsed = extract_email_from_text(assignee_text)
+            if parsed:
+                a["assignee_email"] = parsed
+        a["assignee_display"] = assignee_text or None
+        if not a.get("assignee_display") and uid and email_by_uid.get(uid):
+            name = next(
+                (u.get("name") for u in users_rows if u.get("id") == uid),
+                None,
+            )
+            em = email_by_uid.get(uid)
+            if name and em:
+                a["assignee_display"] = f"{name} ({em})"
+            elif em:
+                a["assignee_display"] = em
+
+    participant_names_by_email: dict[str, str] = {}
+    raw_participants = meeting_data.get("participants") or []
+    participant_emails = [
+        em
+        for em in (
+            extract_email_from_text(str(p))
+            or (str(p).strip().lower() if isinstance(p, str) and "@" in p else None)
+            for p in raw_participants
+        )
+        if em
+    ]
+    if participant_emails:
+        from src.assignee_matcher import fetch_workspace_members
+
+        for member in fetch_workspace_members(workspace_id, sb_client):
+            email = (member.get("email") or "").strip().lower()
+            name = (member.get("name") or "").strip()
+            if email and name:
+                participant_names_by_email[email] = name
 
     notion_page_id: str | None = None
     ticket_ids: list[str] = []
@@ -340,7 +381,8 @@ def push_published_to_notion(
             workspace_id=workspace_id,
             sb_client=sb_client,
             meeting_type=meeting_data.get("meeting_type"),
-            participants=meeting_data.get("participants"),
+            participants=participant_emails or meeting_data.get("participants"),
+            participant_names_by_email=participant_names_by_email,
             sections={
                 "key_topics": meeting_data.get("key_topics") or "",
                 "key_decisions": meeting_data.get("key_decisions") or "",

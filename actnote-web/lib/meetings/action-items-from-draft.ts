@@ -126,3 +126,25 @@ export function draftNoteRowsToActionItems(
     status: "open" as const,
   }));
 }
+
+type DraftActionPersistInput = {
+  content: string;
+  assignee: string | null;
+  assignee_user_id: string | null;
+  due_date: string | null;
+  confidence?: number | null;
+  status: "open" | "done" | "cancelled";
+};
+
+/** Edit UI rows → ai_draft_notes.action_items (empty/cancelled rows omitted). */
+export function actionItemsToDraftNoteRows(items: DraftActionPersistInput[]): DraftNoteActionRow[] {
+  return items
+    .filter((item) => item.status !== "cancelled" && item.content.trim())
+    .map((item) => ({
+      content: item.content.trim(),
+      assignee: item.assignee,
+      assignee_user_id: item.assignee_user_id,
+      due_date: item.due_date?.trim().slice(0, 10) ?? null,
+      confidence: item.confidence ?? null,
+    }));
+}

@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -55,34 +56,70 @@ def _client(token: str) -> _NotionClient:
 
 
 # ---------------------------------------------------------------------------
-# PUB-004 자동화: people 타입(Assignee/Participants) 이메일 → Notion user id 매칭
+# PUB-004 자동화: Assignee/Participants → Notion people(또는 rich_text 폴백)
 # ---------------------------------------------------------------------------
 
-# 토큰 기준 모듈 캐시 (회의마다 /v1/users 반복 호출 방지).
-_USER_EMAIL_MAP_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
-# db_id 기준 people 컬럼 캐시 (databases.retrieve 반복 호출 방지).
-_DB_PEOPLE_COLS_CACHE: dict[str, tuple[float, set[str]]] = {}
-_USER_EMAIL_MAP_TTL_SECONDS = 300
-# 장수명 컨테이너에서 캐시 무한 증가 방지용 상한 (초과 시 전체 비움).
+_EMAIL_IN_PARENS_RE = re.compile(r"\(([^)]+@[^)]+)\)")
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
+_ASSIGNEE_NAME_RE = re.compile(r"^(.+?)\s*\([^)]+@[^)]+\)\s*$")
+
+# 토큰·DB 스키마 캐시 (회의/티켓 push 반복 호출 방지).
+_USER_LOOKUP_CACHE: dict[str, tuple[float, dict[str, str], dict[str, str | None]]] = {}
+_DB_COLS_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+_USER_LOOKUP_TTL_SECONDS = 300
 _CACHE_MAX_ENTRIES = 256
 
 
-def _notion_user_email_map(notion: _NotionClient, token: str) -> dict[str, str]:
-    """Notion 워크스페이스 멤버의 ``{email(소문자): user_id}`` 맵을 반환한다.
+def extract_email_from_text(text: str | None) -> str | None:
+    """평문 이메일 또는 ``Name (email@domain)`` 형식에서 이메일을 추출한다."""
+    if not text or not isinstance(text, str):
+        return None
+    trimmed = text.strip()
+    if not trimmed:
+        return None
+    paren = _EMAIL_IN_PARENS_RE.search(trimmed)
+    if paren:
+        return paren.group(1).strip().lower()
+    found = _EMAIL_RE.search(trimmed)
+    if found:
+        return found.group(0).strip().lower()
+    if "@" in trimmed:
+        return trimmed.lower()
+    return None
 
-    ``GET /v1/users`` 를 페이지네이션으로 순회한다. ``person.email`` 은 통합 토큰에
-    **'Read user information including email addresses'** capability 가 켜져 있을 때만
-    돌아온다 — 꺼져 있으면 빈 맵이 되어 매칭 불가(공란 발행, PUB-004 폴백).
 
-    어떤 사유로든 조회에 실패하면 빈 맵을 반환해 발행 자체는 막지 않는다.
-    동일 토큰은 ``_USER_EMAIL_MAP_TTL_SECONDS`` 동안 캐시한다.
-    """
+def extract_display_name_from_assignee(text: str | None) -> str | None:
+    """``Name (email@domain)`` 라벨에서 표시 이름만 추출한다."""
+    if not text or not isinstance(text, str):
+        return None
+    trimmed = text.strip()
+    if not trimmed:
+        return None
+    m = _ASSIGNEE_NAME_RE.match(trimmed)
+    if m:
+        name = m.group(1).strip()
+        return name or None
+    if "@" in trimmed:
+        return trimmed.split("@", 1)[0].strip() or None
+    return trimmed
+
+
+def _normalize_person_name(name: str) -> str:
+    """Notion/ACTNOTE 이름 비교용 정규화."""
+    return " ".join(name.lower().split())
+
+
+def _notion_user_lookup_maps(
+    notion: _NotionClient, token: str
+) -> tuple[dict[str, str], dict[str, str | None]]:
+    """Notion 워크스페이스 멤버 lookup: ``(email→id, normalized_name→id)``."""
     now = time.time()
-    cached = _USER_EMAIL_MAP_CACHE.get(token)
-    if cached and (now - cached[0]) < _USER_EMAIL_MAP_TTL_SECONDS:
-        return cached[1]
+    cached = _USER_LOOKUP_CACHE.get(token)
+    if cached and (now - cached[0]) < _USER_LOOKUP_TTL_SECONDS:
+        return cached[1], cached[2]
 
     email_map: dict[str, str] = {}
+    name_hits: dict[str, set[str]] = {}
     cursor: str | None = None
     try:
         while True:
@@ -93,82 +130,140 @@ def _notion_user_email_map(notion: _NotionClient, token: str) -> dict[str, str]:
             for u in resp.get("results") or []:
                 if u.get("type") != "person":
                     continue
-                email = ((u.get("person") or {}).get("email") or "").strip().lower()
                 uid = u.get("id")
-                if email and uid:
+                if not uid:
+                    continue
+                email = ((u.get("person") or {}).get("email") or "").strip().lower()
+                if email:
                     email_map[email] = uid
+                name = (u.get("name") or "").strip()
+                if name:
+                    key = _normalize_person_name(name)
+                    name_hits.setdefault(key, set()).add(uid)
             if not resp.get("has_more"):
                 break
             cursor = resp.get("next_cursor")
             if not cursor:
                 break
-    except Exception as e:  # noqa: BLE001 — 매칭 실패는 발행 비차단(공란 폴백)
-        _log.warning("notion users.list 실패 — assignee/participants 매칭 생략(공란): %s", e)
-        return {}
+    except Exception as e:  # noqa: BLE001 — 매칭 실패는 발행 비차단
+        _log.warning("notion users.list 실패 — assignee/participants 매칭 생략: %s", e)
+        return {}, {}
 
-    if not email_map:
+    name_map: dict[str, str | None] = {
+        key: next(iter(uids)) if len(uids) == 1 else None
+        for key, uids in name_hits.items()
+    }
+    if not email_map and not any(v for v in name_map.values()):
         _log.info(
-            "notion users.list: 매칭 가능한 이메일 0건 "
-            "(통합 토큰의 '이메일 포함 사용자 정보 읽기' 권한 확인 필요) — people 컬럼 공란",
+            "notion users.list: 매칭 가능한 멤버 0건 "
+            "(OAuth '이메일 포함 사용자 정보 읽기' 권한·Notion 멤버 확인)",
         )
-    if len(_USER_EMAIL_MAP_CACHE) > _CACHE_MAX_ENTRIES:
-        _USER_EMAIL_MAP_CACHE.clear()
-    _USER_EMAIL_MAP_CACHE[token] = (now, email_map)
-    return email_map
+    if len(_USER_LOOKUP_CACHE) > _CACHE_MAX_ENTRIES:
+        _USER_LOOKUP_CACHE.clear()
+    _USER_LOOKUP_CACHE[token] = (now, email_map, name_map)
+    return email_map, name_map
 
 
-def _notion_db_people_columns(notion: _NotionClient, db_id: str) -> set[str]:
-    """DB 의 ``people`` 타입 컬럼명 집합을 반환한다 (db_id 기준 캐시).
-
-    공식 템플릿이 아닌 DB(해당 컬럼이 없거나 people 타입이 아님)에 people 값을 쓰면
-    Notion 이 ``validation_error`` 로 페이지 생성을 통째로 거부한다. 발행 전에 실제
-    스키마를 확인해, 컬럼이 존재하고 people 타입일 때만 채우기 위함.
-
-    조회 실패 시 빈 집합 → 사람 컬럼을 건드리지 않음(기존 공란 동작 유지, 발행 비차단).
-    """
+def _notion_db_column_types(notion: _NotionClient, db_id: str) -> dict[str, str]:
+    """DB 컬럼명 → Notion property type (db_id 기준 캐시)."""
     now = time.time()
-    cached = _DB_PEOPLE_COLS_CACHE.get(db_id)
-    if cached and (now - cached[0]) < _USER_EMAIL_MAP_TTL_SECONDS:
+    cached = _DB_COLS_CACHE.get(db_id)
+    if cached and (now - cached[0]) < _USER_LOOKUP_TTL_SECONDS:
         return cached[1]
 
-    cols: set[str] = set()
+    cols: dict[str, str] = {}
     try:
         db = notion.databases.retrieve(database_id=db_id)
         for name, meta in (db.get("properties") or {}).items():
-            if (meta or {}).get("type") == "people":
-                cols.add(name)
-    except Exception as e:  # noqa: BLE001 — 확인 실패는 발행 비차단(사람 컬럼 생략)
-        _log.warning("notion databases.retrieve 실패 — people 컬럼 확인 생략: %s", e)
-        return set()
+            ptype = (meta or {}).get("type")
+            if ptype:
+                cols[name] = str(ptype)
+    except Exception as e:  # noqa: BLE001
+        _log.warning("notion databases.retrieve 실패 — 컬럼 스키마 확인 생략: %s", e)
+        return {}
 
-    if len(_DB_PEOPLE_COLS_CACHE) > _CACHE_MAX_ENTRIES:
-        _DB_PEOPLE_COLS_CACHE.clear()
-    _DB_PEOPLE_COLS_CACHE[db_id] = (now, cols)
+    if len(_DB_COLS_CACHE) > _CACHE_MAX_ENTRIES:
+        _DB_COLS_CACHE.clear()
+    _DB_COLS_CACHE[db_id] = (now, cols)
     return cols
 
 
-def _people_prop_from_emails(
-    emails: list[str], email_map: dict[str, str]
-) -> dict[str, Any] | None:
-    """이메일 리스트 → Notion people property dict. 매칭 0건이면 ``None``(공란).
+def _resolve_db_column(col_types: dict[str, str], *candidates: str) -> str | None:
+    """대소문자 무시로 컬럼명을 찾는다."""
+    lower_map = {name.lower(): name for name in col_types}
+    for cand in candidates:
+        hit = lower_map.get(cand.lower())
+        if hit:
+            return hit
+    return None
 
-    문자열이 아닌 항목·이메일이 아닌 항목(이름 등)·미매칭·중복은 건너뛴다.
-    """
+
+def _rich_text_prop(text: str) -> dict[str, Any]:
+    """Notion rich_text property."""
+    return {"rich_text": [{"type": "text", "text": {"content": text[:2000]}}]}
+
+
+def _people_prop_from_identifiers(
+    emails: list[str],
+    names: list[str],
+    email_map: dict[str, str],
+    name_map: dict[str, str | None],
+) -> dict[str, Any] | None:
+    """이메일·이름 → Notion people property. 매칭 0건이면 ``None``."""
     seen: set[str] = set()
     people: list[dict[str, str]] = []
+
     for raw in emails:
         if not isinstance(raw, str):
             continue
-        key = raw.strip().lower()
+        key = extract_email_from_text(raw) or raw.strip().lower()
         if "@" not in key:
             continue
         uid = email_map.get(key)
         if uid and uid not in seen:
             seen.add(uid)
             people.append({"object": "user", "id": uid})
+
+    for raw in names:
+        if not isinstance(raw, str):
+            continue
+        key = _normalize_person_name(raw.strip())
+        if not key:
+            continue
+        uid = name_map.get(key)
+        if uid and uid not in seen:
+            seen.add(uid)
+            people.append({"object": "user", "id": uid})
+
     if not people:
         return None
     return {"people": people}
+
+
+def _apply_person_or_text_field(
+    props: dict[str, Any],
+    col_name: str,
+    col_type: str,
+    *,
+    emails: list[str],
+    names: list[str],
+    text_fallback: str | None,
+    email_map: dict[str, str],
+    name_map: dict[str, str | None],
+) -> None:
+    """people 컬럼은 Notion 멤버 매칭, rich_text 컬럼은 표시 텍스트(PUB-002 폴백)."""
+    if col_type == "people":
+        people = _people_prop_from_identifiers(emails, names, email_map, name_map)
+        if people:
+            props[col_name] = people
+        elif text_fallback:
+            _log.info(
+                "Notion people 매칭 실패 — %s 공란 유지 (fallback=%r)",
+                col_name,
+                text_fallback[:80],
+            )
+    elif col_type == "rich_text" and text_fallback:
+        props[col_name] = _rich_text_prop(text_fallback)
 
 
 def _get_integration_row(workspace_id: str, sb_client) -> dict:
@@ -654,6 +749,7 @@ def push_meeting(
     meeting_type: str | None = None,
     sections: dict[str, str] | None = None,
     participants: list[str] | None = None,
+    participant_names_by_email: dict[str, str] | None = None,
 ) -> str | None:
     """PUB-003 — 회의록을 INTEG-001 (`meeting_db_id`) 에 Notion 페이지로 생성/업데이트한다.
 
@@ -767,13 +863,45 @@ def push_meeting(
     if meeting_type:
         label = _MEETING_TYPE_LABELS.get(meeting_type.strip().lower(), meeting_type)
         properties["Meeting Type"] = {"select": {"name": label}}
-    # 'Participants' people 컬럼이 실제 스키마에 있을 때만 채운다 (없으면 400 방지·공란).
-    if participants and "Participants" in _notion_db_people_columns(notion, meeting_db_id):
-        people = _people_prop_from_emails(
-            participants, _notion_user_email_map(notion, token)
+
+    meeting_col_types = _notion_db_column_types(notion, meeting_db_id)
+    participants_col = _resolve_db_column(meeting_col_types, "Participants")
+    if participants and participants_col:
+        col_type = meeting_col_types[participants_col]
+        email_map, name_map = _notion_user_lookup_maps(notion, token)
+        names_by_email = {
+            str(k).strip().lower(): str(v).strip()
+            for k, v in (participant_names_by_email or {}).items()
+            if k and v and str(v).strip()
+        }
+        emails: list[str] = []
+        names: list[str] = []
+        labels: list[str] = []
+        for raw in participants:
+            if not isinstance(raw, str):
+                continue
+            em = extract_email_from_text(raw) or (
+                raw.strip().lower() if "@" in raw else None
+            )
+            if not em:
+                continue
+            emails.append(em)
+            nm = names_by_email.get(em)
+            if nm:
+                names.append(nm)
+                labels.append(f"{nm} ({em})")
+            else:
+                labels.append(em)
+        _apply_person_or_text_field(
+            properties,
+            participants_col,
+            col_type,
+            emails=emails,
+            names=names,
+            text_fallback=", ".join(labels) if labels else None,
+            email_map=email_map,
+            name_map=name_map,
         )
-        if people:
-            properties["Participants"] = people
 
     # --- 기존 페이지 여부 확인 ---
     existing_resp = (
@@ -853,34 +981,47 @@ def push_action_items(
         return []
 
     notion = _client(token)
-    # ACTNOTE URL 컬럼: ACTNOTE 앱 회의 상세로 연결 (Notion 회의록 페이지가 아님).
     actnote_url = _actnote_meeting_url(meeting_id)
-    # PUB-004 자동화: 'Assignee' people 컬럼이 실제 스키마에 있을 때만 매칭한다.
-    # (없거나 people 타입이 아니면 값을 넣지 않음 → 400 방지, 기존 공란 동작 유지.)
-    assignee_supported = "Assignee" in _notion_db_people_columns(notion, action_db_id)
-    email_map = _notion_user_email_map(notion, token) if assignee_supported else {}
+    action_col_types = _notion_db_column_types(notion, action_db_id)
+    title_col = _resolve_db_column(action_col_types, "Task title", "Task Title", "Name")
+    assignee_col = _resolve_db_column(action_col_types, "Assignee")
+    due_col = _resolve_db_column(action_col_types, "Due Date")
+    actnote_url_col = _resolve_db_column(action_col_types, "ACTNOTE URL")
+    email_map, name_map = _notion_user_lookup_maps(notion, token)
     created_ids: list[str] = []
 
     try:
         for item in action_items:
-            # 템플릿 컬럼: Task title(title) / Assignee(people) / Due Date(date) /
-            #            Status(status) / ACTNOTE URL(url)
-            # Assignee 는 people 타입 — DRAFT-005 로 매칭된 ACTNOTE 유저의 이메일이
-            # Notion 멤버 이메일과 일치하면 자동으로 people 컬럼을 채운다. 매칭 실패 시
-            # 공란 (PUB-004 폴백, Notion 에서 수동 지정). Status 는 미설정 시 DB 기본값.
-            props: dict[str, Any] = {
-                "Task title": {
-                    "title": [{"type": "text", "text": {"content": item.get("content") or ""}}]
-                },
-                "ACTNOTE URL": {"url": actnote_url},
+            props: dict[str, Any] = {}
+            title_key = title_col or "Task title"
+            props[title_key] = {
+                "title": [{"type": "text", "text": {"content": item.get("content") or ""}}]
             }
-            if item.get("due_date"):
-                props["Due Date"] = {"date": {"start": str(item["due_date"])}}
-            assignee_email = item.get("assignee_email")
-            if assignee_supported and assignee_email:
-                people = _people_prop_from_emails([assignee_email], email_map)
-                if people:
-                    props["Assignee"] = people
+            url_key = actnote_url_col or "ACTNOTE URL"
+            if url_key in action_col_types or not action_col_types:
+                props[url_key] = {"url": actnote_url}
+            if item.get("due_date") and due_col:
+                props[due_col] = {"date": {"start": str(item["due_date"])}}
+
+            if assignee_col:
+                assignee_display = (item.get("assignee_display") or item.get("assignee") or "").strip()
+                assignee_email = item.get("assignee_email")
+                if not assignee_email and assignee_display:
+                    assignee_email = extract_email_from_text(assignee_display)
+                assignee_name = extract_display_name_from_assignee(assignee_display)
+                emails = [str(assignee_email)] if assignee_email else []
+                names = [assignee_name] if assignee_name else []
+                text_fallback = assignee_display or (assignee_email or None)
+                _apply_person_or_text_field(
+                    props,
+                    assignee_col,
+                    action_col_types[assignee_col],
+                    emails=emails,
+                    names=names,
+                    text_fallback=text_fallback,
+                    email_map=email_map,
+                    name_map=name_map,
+                )
 
             page = notion.pages.create(
                 **{"parent": {"database_id": action_db_id}, "properties": props}

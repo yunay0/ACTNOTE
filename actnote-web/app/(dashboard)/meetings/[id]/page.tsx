@@ -39,6 +39,7 @@ import { DraftPublishSuccessModal } from "@/components/meetings/DraftPublishSucc
 import { draftHasActionPublishBlockers } from "@/lib/meetings/draft-action-gaps";
 import { meetingsHomeAfterPublishUrl } from "@/lib/meetings/post-publish-home";
 import {
+  actionItemsToDraftNoteRows,
   draftNoteRowsToActionItems,
   isDraftNoteActionId,
   parseActionItemsFromDraftNotes,
@@ -47,6 +48,7 @@ import {
 import type { MeetingStatus } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 import { workspaceMemberDisplayName, workspaceMemberInitials } from "@/lib/user/member-display";
+import { attributionNameOnlyLabel } from "@/lib/meetings/meeting-attribution";
 
 interface MeetingRow {
   id: string;
@@ -341,7 +343,7 @@ export default function MeetingDetailPage() {
       (supabase as any)
         .from("meetings")
         .select(
-          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, audio_file_name, workspace_id, created_by, error_message, description, meeting_type, participants, responsible_user_id, ai_draft_notes, duration_seconds, audio_file_size_bytes, notion_page_id"
+          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, audio_file_name, workspace_id, created_by, creator_display_name, creator_email, error_message, description, meeting_type, participants, responsible_user_id, responsible_display_name, responsible_display_email, ai_draft_notes, duration_seconds, audio_file_size_bytes, notion_page_id"
         )
         .eq("id", id)
         .is("deleted_at", null)
@@ -696,6 +698,10 @@ export default function MeetingDetailPage() {
 
     const trimmedDecisions = editDecisions.map((d) => d.trim()).filter(Boolean);
 
+    const actionRowsToPersist = editActionItems.filter(
+      (item) => item.status !== "cancelled" && item.content.trim(),
+    );
+
     const mergedDraft = mergeAnalysisExtrasIntoDraftDoc(draftNotesDoc, meeting.meeting_type, {
       key_topics: editKeyTopics,
       risks_and_issues: editRisksAndIssues,
@@ -704,6 +710,7 @@ export default function MeetingDetailPage() {
       key_decisions: editKeyDecisions,
       key_points: editKeyPoints,
     });
+    mergedDraft.action_items = actionItemsToDraftNoteRows(editActionItems);
 
     const { error: meetUpErr } = await (supabase as any)
       .from("meetings")
@@ -748,7 +755,9 @@ export default function MeetingDetailPage() {
     }
 
     const persistedActionIds = new Set(
-      editActionItems.filter((item) => !item.id.startsWith(NEW_ACTION_ITEM_PREFIX)).map((item) => item.id)
+      actionRowsToPersist
+        .filter((item) => !item.id.startsWith(NEW_ACTION_ITEM_PREFIX))
+        .map((item) => item.id),
     );
     const { data: currentActionRows, error: curActErr } = await (supabase as any)
       .from("action_items")
@@ -782,8 +791,8 @@ export default function MeetingDetailPage() {
       }
     }
 
-    for (const item of editActionItems) {
-      const content = item.content.trim() || "Action item";
+    for (const item of actionRowsToPersist) {
+      const content = item.content.trim();
       const dueNorm = item.due_date?.trim() ? item.due_date.trim().slice(0, 10) : null;
       const payload = {
         content,
@@ -793,7 +802,6 @@ export default function MeetingDetailPage() {
         status: item.status,
       };
       if (item.id.startsWith(NEW_ACTION_ITEM_PREFIX)) {
-        if (!item.content.trim()) continue;
         const { error: insErr } = await (supabase as any).from("action_items").insert({
           ...payload,
           meeting_id: meeting.id,
@@ -1103,11 +1111,22 @@ export default function MeetingDetailPage() {
     return members.find((x) => x.user_id === meeting.responsible_user_id) ?? null;
   }, [meeting?.responsible_user_id, members]);
 
+  const responsibleIsFormerMember = Boolean(
+    !responsibleMember &&
+      (meeting?.responsible_display_name?.trim() || meeting?.responsible_display_email?.trim()),
+  );
+
   const responsibleDisplayLabel = useMemo(() => {
     if (responsibleMember) {
       return responsibleMember.email
         ? `${responsibleMember.displayName} (${responsibleMember.email})`
         : responsibleMember.displayName;
+    }
+    if (responsibleIsFormerMember) {
+      return attributionNameOnlyLabel(
+        meeting?.responsible_display_name,
+        meeting?.responsible_display_email,
+      );
     }
     const snapName = meeting?.responsible_display_name?.trim();
     const snapEmail = meeting?.responsible_display_email?.trim();
@@ -1115,22 +1134,22 @@ export default function MeetingDetailPage() {
     if (snapName) return snapName;
     if (snapEmail) return snapEmail.split("@")[0] ?? snapEmail;
     return null;
-  }, [responsibleMember, meeting?.responsible_display_name, meeting?.responsible_display_email]);
-
-  const responsibleIsFormerMember = Boolean(
-    !responsibleMember &&
-      (meeting?.responsible_display_name?.trim() || meeting?.responsible_display_email?.trim()),
-  );
+  }, [
+    responsibleMember,
+    responsibleIsFormerMember,
+    meeting?.responsible_display_name,
+    meeting?.responsible_display_email,
+  ]);
 
   const analysisSegments = useMemo(
     () => meetingAnalysisSegmentsForRow(meeting?.meeting_type ?? null),
     [meeting?.meeting_type],
   );
 
-  const publishBlockedByActions = useMemo(
-    () => draftHasActionPublishBlockers(actionItems),
-    [actionItems],
-  );
+  const publishBlockedByActions = useMemo(() => {
+    const items = editMode ? editActionItems : actionItems;
+    return draftHasActionPublishBlockers(items);
+  }, [editMode, editActionItems, actionItems]);
 
   const finalizePublishSuccessNavigation = useCallback(() => {
     if (publishSuccessNavLockRef.current) return;
@@ -1585,27 +1604,31 @@ export default function MeetingDetailPage() {
                       <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
                         Created by
                       </dt>
-                      <dd className="mt-1 flex flex-wrap items-center gap-2 text-sm font-medium text-[#64748b]">
+                      <dd className="mt-1">
                         {responsibleDisplayLabel ? (
-                          <>
-                            {responsibleMember ? (
-                              <CreatedByAvatar member={responsibleMember} />
-                            ) : (
-                              <FormerMemberSnapshotAvatar label={responsibleDisplayLabel} />
-                            )}
-                            <span className={responsibleIsFormerMember ? "text-[#94a3b8]" : undefined}>
-                              {responsibleDisplayLabel}
-                              {responsibleIsFormerMember ? (
-                                <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-[#94a3b8]">
-                                  Former member
-                                </span>
+                          responsibleIsFormerMember ? (
+                            <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px]">
+                              <div className="flex items-center gap-2 text-sm font-medium text-[#94a3b8]">
+                                <FormerMemberSnapshotAvatar label={responsibleDisplayLabel} />
+                                <span>{responsibleDisplayLabel}</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-[#64748b]">
+                              {responsibleMember ? (
+                                <CreatedByAvatar member={responsibleMember} />
                               ) : null}
-                            </span>
-                          </>
+                              <span>{responsibleDisplayLabel}</span>
+                            </div>
+                          )
                         ) : meeting.responsible_user_id ? (
-                          <span className="font-normal italic text-[#94a3b8]">Loading…</span>
+                          <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px] text-sm font-normal italic text-[#94a3b8]">
+                            Loading…
+                          </div>
                         ) : (
-                          "—"
+                          <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px] text-sm font-medium text-[#94a3b8]">
+                            —
+                          </div>
                         )}
                       </dd>
                     </div>
@@ -1700,6 +1723,7 @@ export default function MeetingDetailPage() {
               description={meeting.description}
               participantNames={meeting.participants}
               responsibleLabel={responsibleDisplayLabel}
+              responsibleIsFormerMember={responsibleIsFormerMember}
               recordingUrl={meeting.audio_file_url}
               recordingFileName={meeting.audio_file_name ?? null}
               durationSeconds={displayDurationSec}

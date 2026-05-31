@@ -35,6 +35,7 @@ interface DraftOverviewPanelProps {
   description: string | null;
   participantNames: string[];
   responsibleLabel: string | null;
+  responsibleIsFormerMember?: boolean;
   recordingFileName?: string | null;
   recordingUrl: string | null;
   durationSeconds: number | null | undefined;
@@ -110,7 +111,20 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
           </div>
 
           <Field label="Created by">
-            <GrayBox>{props.responsibleLabel?.trim() || "—"}</GrayBox>
+            <GrayBox>
+              {props.responsibleLabel?.trim() ? (
+                props.responsibleIsFormerMember ? (
+                  <span className="inline-flex items-center gap-2 text-[#94a3b8]">
+                    <FormerMemberAvatar label={props.responsibleLabel} />
+                    <span>{props.responsibleLabel}</span>
+                  </span>
+                ) : (
+                  props.responsibleLabel
+                )
+              ) : (
+                <span className="text-[#94a3b8]">—</span>
+              )}
+            </GrayBox>
           </Field>
         </div>
       </section>
@@ -202,5 +216,17 @@ function GrayBox({ children }: { children: React.ReactNode }): ReactElement {
     <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px] text-[14px] leading-relaxed text-[#475569]">
       {children}
     </div>
+  );
+}
+
+function FormerMemberAvatar({ label }: { label: string }): ReactElement {
+  const initial = label.trim().slice(0, 1).toUpperCase() || "?";
+  return (
+    <span
+      aria-hidden
+      className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#e2e8f0] text-[10px] font-bold leading-none text-[#94a3b8]"
+    >
+      {initial}
+    </span>
   );
 }

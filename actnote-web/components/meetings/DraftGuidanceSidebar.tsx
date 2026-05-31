@@ -45,9 +45,9 @@ export function DraftGuidanceSidebar(props: DraftGuidanceSidebarProps): ReactEle
         <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4 shadow-sm">
           <p className="text-[12px] font-bold uppercase tracking-[0.06em] text-amber-900">Caution</p>
           <p className="mt-2 text-[13px] leading-relaxed text-amber-950">
-            Publish is disabled until every action item has an <strong>active workspace member</strong> as
-            assignee and a <strong>due date/time</strong>. Former members must be reassigned before
-            publishing.
+            Publish is disabled while any remaining action item is missing an{" "}
+            <strong>active workspace member</strong> assignee or a <strong>due date</strong>. You can
+            remove all action items if you want to publish without them.
           </p>
         </div>
       ) : null}
