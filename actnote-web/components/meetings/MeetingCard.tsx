@@ -6,6 +6,7 @@ import { MoreVertical, Trash2, Eye } from "lucide-react";
 import type { Meeting } from "@/lib/types/meeting";
 import { isProcessing } from "@/lib/types/meeting";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
+import { attributionNameOnlyLabel } from "@/lib/meetings/meeting-attribution";
 import { MeetingDeleteConfirmModal } from "@/components/meetings/MeetingDeleteConfirmModal";
 
 interface MeetingCardProps {
@@ -91,10 +92,12 @@ export function MeetingCard({
       ? "No participants"
       : `${participants.length} participant${participants.length !== 1 ? "s" : ""}`;
   // C2: 참여자 옆 표시를 첫 참여자 → 작성자(Created by) 기준으로 변경 (2026-05-26 QA).
-  const creatorDisplay =
-    (meeting.creator_name?.trim() ||
-      meeting.creator_email?.split("@")[0] ||
-      "").trim();
+  const creatorIsFormerMember = !meeting.created_by && Boolean(meeting.creator_name?.trim());
+  const creatorDisplay = creatorIsFormerMember
+    ? attributionNameOnlyLabel(meeting.creator_name, meeting.creator_email)
+    : (meeting.creator_name?.trim() ||
+        meeting.creator_email?.split("@")[0] ||
+        "").trim();
   const actionCount = meeting.action_items_count ?? 0;
   const dateStr = formatMeetingDateTime(meeting.meeting_date ?? meeting.created_at);
   const isErr = meeting.status === "error";
@@ -246,13 +249,19 @@ export function MeetingCard({
           {creatorDisplay ? (
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
               <div
-                className="flex size-4 shrink-0 items-center justify-center rounded-[18px] bg-gradient-to-br from-[#4284f4] to-[#34a853] text-[8px] font-bold leading-none text-white"
+                className={
+                  creatorIsFormerMember
+                    ? "flex size-4 shrink-0 items-center justify-center rounded-[18px] bg-[#e2e8f0] text-[8px] font-bold leading-none text-[#94a3b8]"
+                    : "flex size-4 shrink-0 items-center justify-center rounded-[18px] bg-gradient-to-br from-[#4284f4] to-[#34a853] text-[8px] font-bold leading-none text-white"
+                }
                 aria-hidden
               >
                 {initialsFromParticipant(creatorDisplay)}
               </div>
               <span
-                className="truncate pl-0.5 text-[12px] text-[#64748b]"
+                className={`truncate pl-0.5 text-[12px] ${
+                  creatorIsFormerMember ? "text-[#94a3b8]" : "text-[#64748b]"
+                }`}
                 title={`Created by ${creatorDisplay}`}
               >
                 {creatorDisplay}

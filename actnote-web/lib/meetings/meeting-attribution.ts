@@ -70,6 +70,28 @@ export function creatorLabelFromSnapshot(
   );
 }
 
+/** FK가 NULL이고 스냅샷만 남은 탈퇴·삭제 멤버 */
+export function isFormerAttributionMember(
+  linkedUserId: string | null | undefined,
+  displayName: string | null | undefined,
+  displayEmail: string | null | undefined,
+): boolean {
+  if (linkedUserId?.trim()) return false;
+  return Boolean(displayName?.trim() || displayEmail?.trim());
+}
+
+/** 탈퇴 멤버 카드/필드용 — 이름만 (이메일 제외) */
+export function attributionNameOnlyLabel(
+  displayName: string | null | undefined,
+  displayEmail: string | null | undefined,
+): string | null {
+  const name = displayName?.trim();
+  if (name) return name;
+  const email = displayEmail?.trim();
+  if (email) return email.split("@")[0] ?? email;
+  return null;
+}
+
 /** 회의 생성 시 DB 스냅샷 컬럼 채우기 (계정 삭제 대비) */
 export function buildMeetingAttributionSnapshots(
   creatorEmail: string | null | undefined,
