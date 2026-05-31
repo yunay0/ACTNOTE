@@ -5,7 +5,7 @@
 // Cancel → /settings/integrations
 // Save Changes (active only when verified) → save DB ID → /settings/integrations
 
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { OnboardingHeader } from "@/components/onboarding/OnboardingHeader";
 import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
@@ -175,14 +175,37 @@ export default function SettingsMeetingDbPage() {
               </div>
               <div className="flex flex-col gap-2">
                 {fieldRows.map((row) => (
-                  <div key={row.actnoteField} className="flex items-center gap-0">
-                    <div className="flex h-[38px] flex-1 items-center rounded-l-[8px] border border-[#E9ECEF] bg-[#F8F9FA] px-[14px] text-[13px] font-medium text-[#495057]">{row.actnoteField}</div>
-                    <div className="flex w-8 items-center justify-center">
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7H11M11 7L8 4M11 7L8 10" stroke="#ADB5BD" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  <Fragment key={row.actnoteField}>
+                    <div className="flex items-center gap-0">
+                      <div className="flex h-[38px] flex-1 items-center rounded-l-[8px] border border-[#E9ECEF] bg-[#F8F9FA] px-[14px] text-[13px] font-medium text-[#495057]">{row.actnoteField}</div>
+                      <div className="flex w-8 items-center justify-center">
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7H11M11 7L8 4M11 7L8 10" stroke="#ADB5BD" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      </div>
+                      <div className="flex h-[38px] flex-1 items-center rounded-r-[8px] border border-[#10B981] bg-[#F0FDF4] px-[14px] text-[13px] text-[#166534]">{row.notionColumn}</div>
                     </div>
-                    <div className="flex h-[38px] flex-1 items-center rounded-r-[8px] border border-[#10B981] bg-[#F0FDF4] px-[14px] text-[13px] text-[#166534]">{row.notionColumn}</div>
-                  </div>
+                    {row.actnoteField === "Participants" && (
+                      <div className="flex items-start gap-2 rounded-[8px] border border-[#BFDBFE] bg-[#EFF6FF] px-3 py-[5px]">
+                        <svg className="mt-[3px] shrink-0" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                          <circle cx="7" cy="7" r="6" stroke="#3B82F6" strokeWidth="1.2" />
+                          <path d="M7 6.3V10" stroke="#3B82F6" strokeWidth="1.3" strokeLinecap="round" />
+                          <circle cx="7" cy="4.3" r="0.75" fill="#3B82F6" />
+                        </svg>
+                        <p className="text-[12px] leading-[19px] text-[#1E40AF]">
+                          Participant emails are matched to Notion workspace members automatically. Members not found in Notion will be skipped.
+                        </p>
+                      </div>
+                    )}
+                  </Fragment>
                 ))}
+                <div className="flex items-start gap-2 rounded-[8px] border border-[#BBF7D0] bg-[#F0FDF4] px-3 py-[10px]">
+                  <svg className="mt-[2px] shrink-0" width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <circle cx="7" cy="7" r="6" stroke="#10B981" strokeWidth="1.2" />
+                    <path d="M4.5 7.2L6.2 8.9L9.5 5.4" stroke="#10B981" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  <p className="text-[12px] leading-[19px] text-[#166534]">
+                    Key Topics, Summary, and Follow-up are published as page content inside each meeting note.
+                  </p>
+                </div>
               </div>
             </div>
           )}
