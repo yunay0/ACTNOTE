@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { decryptActnoteToken } from "@/lib/notion/encrypt-token";
 
 interface Body {
   token?: string;
@@ -43,12 +45,58 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
   const body = (await req.json().catch(() => ({}))) as Body;
-  const token = body.token?.trim() ?? "";
+  let token = body.token?.trim() ?? "";
   const url = body.url?.trim() ?? "";
 
-  if (!token || !url) return NextResponse.json({ ok: false, error: "token and url are required" }, { status: 400 });
+  if (!url) return NextResponse.json({ ok: false, error: "url is required" }, { status: 400 });
 
-  if (!token.startsWith("ntn_")) return NextResponse.json({ ok: false, error: "Invalid token format" }, { status: 400 });
+  // 클라이언트가 직접 넘긴 토큰만 형식 검사 (저장된 토큰은 이미 신뢰됨 — OAuth 토큰은
+  // ntn_ 로 시작하지 않을 수 있으므로 형식 검사 대상에서 제외).
+  const clientProvidedToken = token.length > 0;
+  if (clientProvidedToken && !token.startsWith("ntn_")) {
+    return NextResponse.json({ ok: false, error: "Invalid token format" }, { status: 400 });
+  }
+
+  // settings 에서 DB URL 변경 시: 클라이언트에 토큰이 없으면(sessionStorage 비어있음)
+  // 워크스페이스에 이미 저장된 integration 토큰을 복호화해서 사용한다.
+  if (!token) {
+    const { data: mem } = await (supabase as any)
+      .from("workspace_members")
+      .select("workspace_id")
+      .eq("user_id", user.id)
+      .in("role", ["owner", "admin"])
+      .limit(1)
+      .maybeSingle();
+
+    if (!mem?.workspace_id) {
+      return NextResponse.json({ ok: false, error: "No eligible workspace found" }, { status: 400 });
+    }
+
+    const sbService = createServiceRoleClient();
+    const { data: integ } = await sbService
+      .from("integrations")
+      .select("access_token_encrypted")
+      .eq("workspace_id", mem.workspace_id as string)
+      .eq("platform", "notion")
+      .maybeSingle();
+
+    const enc = (integ as { access_token_encrypted?: string } | null)?.access_token_encrypted;
+    if (!enc) {
+      return NextResponse.json(
+        { ok: false, error: "No saved Notion token found — reconnect Notion first" },
+        { status: 400 }
+      );
+    }
+
+    try {
+      token = decryptActnoteToken(enc).trim();
+    } catch {
+      return NextResponse.json(
+        { ok: false, error: "Failed to read saved Notion token — reconnect Notion" },
+        { status: 500 }
+      );
+    }
+  }
 
   const dbId = extractNotionDbId(url);
   if (!dbId) return NextResponse.json({ ok: false, error: "Could not extract a Notion database ID from this URL" }, { status: 400 });
