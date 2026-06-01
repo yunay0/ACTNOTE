@@ -107,7 +107,7 @@ export function buildJoinRequestEmailToOwner(opts: {
 }): InviteMailBody {
   const { requesterName, requesterEmail, workspaceName, message, reviewUrl } = opts;
 
-  const subject = `[ACTNOTE] ${requesterName}님이 ${workspaceName} 워크스페이스 참여를 요청했습니다`;
+  const subject = `[ACTNOTE] ${requesterName} requested to join ${workspaceName}`;
 
   const bodyHtml = `
     <h1 style="margin:0 0 8px;font-size:24px;font-weight:700;color:#0A2540;text-align:center;">Someone wants to join your workspace</h1>
@@ -130,7 +130,7 @@ export function buildJoinRequestEmailToOwner(opts: {
     ${ctaButton(reviewUrl, "Go to Workspace")}
   `;
 
-  const text = `${subject}\n\n${requesterName} (${requesterEmail})님의 참여 요청${message ? `\n\n메시지: ${message}` : ""}\n\n검토 페이지:\n${reviewUrl}`;
+  const text = `${subject}\n\nJoin request from ${requesterName} (${requesterEmail})${message ? `\n\nMessage: ${message}` : ""}\n\nReview page:\n${reviewUrl}`;
 
   return { subject, html: emailShell("👤 New Join Request", bodyHtml), text };
 }
@@ -158,7 +158,7 @@ export function buildJoinRequestResultEmail(opts: {
     requesterEmail ? requesterCard(requesterEmail, requesterName ?? null) : "";
 
   if (action === "approved") {
-    const subject = `[ACTNOTE] ${workspaceName} 워크스페이스 참여가 승인되었습니다`;
+    const subject = `[ACTNOTE] You've been approved to join ${workspaceName}`;
 
     const bodyHtml = `
       <h1 style="margin:0 0 8px;font-size:24px;font-weight:700;color:#0A2540;text-align:center;">Your request was approved.</h1>
@@ -171,11 +171,11 @@ export function buildJoinRequestResultEmail(opts: {
       ${ctaButton(workspaceUrl, "Go to Home")}
     `;
 
-    const text = `${subject}\n\n워크스페이스 바로가기:\n${workspaceUrl}`;
+    const text = `${subject}\n\nGo to workspace:\n${workspaceUrl}`;
     return { subject, html: emailShell("🎉 You've been approved", bodyHtml), text };
   }
 
-  const subject = `[ACTNOTE] ${workspaceName} 워크스페이스 참여 요청이 거절되었습니다`;
+  const subject = `[ACTNOTE] Your request to join ${workspaceName} was declined`;
 
   const requestAgainHref = requestAgainUrl ?? workspaceUrl;
   const bodyHtml = `
@@ -193,6 +193,6 @@ export function buildJoinRequestResultEmail(opts: {
     ${ctaButton(requestAgainHref, "Request Again")}
   `;
 
-  const text = `${subject}\n\n문의사항은 워크스페이스 관리자에게 연락하세요.`;
+  const text = `${subject}\n\nIf you have questions, please contact the workspace owner.`;
   return { subject, html: emailShell("🚫 Were not approved", bodyHtml), text };
 }
