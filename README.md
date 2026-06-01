@@ -221,6 +221,23 @@ uv run python -m src.notifications
 uv run python scripts/benchmark_crag.py
 ```
 
+### 6.5 Notion 발행 진단 (Assignee/Participants/Due Date 누락 시)
+
+Notion 발행 후 담당자·참석자·마감일이 비어 있으면, 어디서 끊겼는지 한 번에 확인합니다.
+**Modal 안에서 실행** — 로컬에 `ACTNOTE_ENCRYPTION_KEY`(운영과 동일 값)가 없어도 됩니다.
+
+```bash
+modal run scripts/diagnose_modal.py --meeting-id <MEETING_ID>
+```
+
+출력 해석:
+- `[2] 이메일 매칭 가능 멤버 N명` — people 컬럼(Assignee/Participants) 매칭 가능 여부. 0명이면 Notion 통합의 "이메일 포함 사용자 정보 읽기" 권한 또는 멤버십 문제.
+- `[3a]/[3b] DB 컬럼` — `{}` 면 컬럼 조회 실패(아래 caveat 참고). 정상이면 컬럼명→타입과 resolver 매칭 결과 표시.
+
+로컬 키가 있으면 `uv run python scripts/diagnose_notion_publish.py <MEETING_ID>` 로도 동일 진단(+ action_items 데이터 유무)을 볼 수 있습니다.
+
+> **Notion-Version 고정 caveat:** 최신 `notion-client` 는 신규 Notion-Version(`2025-09-03`, "data source" 모델)을 기본값으로 써서 `databases.retrieve` 가 `properties` 대신 `data_sources` 만 반환합니다. 그러면 컬럼 매칭이 전부 실패해 Assignee/Participants/Due Date 가 누락됩니다. 이를 막기 위해 `src/notion_sync.py` 의 `_client()` 가 Notion-Version 을 **`2022-06-28` 로 고정**합니다(프론트 `verify-db` 와 동일). 추후 data source API 정식 마이그레이션은 [CLAUDE.md](./CLAUDE.md) 백로그 참고. **`src/notion_sync.py` 변경 후에는 `modal deploy src/modal_app.py` 재배포 필요.**
+
 ---
 
 ## 7. 문서 인덱스
@@ -244,7 +261,7 @@ uv run python scripts/benchmark_crag.py
 ./                                 # 백엔드 루트
 ├── src/                           # 파이프라인 · 워커 · 알림 · Notion 등
 ├── src/modal_app.py · jobs.py     # Modal 앱 · 프레임워크 비의존 작업
-├── scripts/                       # run_pipeline, benchmark, CLI
+├── scripts/                       # run_pipeline, benchmark, diagnose_modal/notion (발행 진단), CLI
 ├── prompts/templates/             # 회의 유형별 MD 템플릿
 ├── migrations/                    # Supabase SQL (팀 정한 순서 실행)
 ├── docs/
