@@ -184,6 +184,9 @@ export default function OnboardingInvitePage() {
     router.push("/onboarding/complete?invited=0");
   }
 
+  // 유효한 이메일이 하나도 없으면 Send Invitations 비활성화
+  const canSend = normalizeEmails(emails).length > 0;
+
   if (checkingAuth) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#f8fafc]">
@@ -301,8 +304,8 @@ export default function OnboardingInvitePage() {
               <button
                 type="button"
                 onClick={handleSend}
-                disabled={loading}
-                className="flex h-[52px] min-w-0 flex-1 items-center justify-center rounded-[10px] text-base font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:opacity-50"
+                disabled={loading || !canSend}
+                className="flex h-[52px] min-w-0 flex-1 items-center justify-center rounded-[10px] text-base font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ background: "linear-gradient(135deg, #ff6b35 0%, #ff8555 100%)" }}
               >
                 {loading ? (

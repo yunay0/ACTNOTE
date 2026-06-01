@@ -13,7 +13,7 @@ import { OnboardingLayout } from "@/components/onboarding/OnboardingLayout";
 // 1,2,3단계 (all): "You're All Set! 🎉"
 //
 // "Connect Notion now →"    → /settings/integrations
-// "Invite team members →"   → /settings/workspace
+// "Invite team members →"   → /settings/workspace?section=members
 
 interface FeatureItem {
   done: boolean;
@@ -128,7 +128,8 @@ function CompleteInner() {
         ? `${invited} team member${invited === 1 ? "" : "s"} will receive email invitations`
         : "Only you have access to the workspace right now.",
       actionText: teamDone ? undefined : "Invite team members →",
-      actionHref: teamDone ? undefined : "/settings/workspace",
+      // /settings/workspace 는 ?section=members 가 있어야 Members(초대) 화면을 보여준다 (FIN-002)
+      actionHref: teamDone ? undefined : "/settings/workspace?section=members",
     },
   ];
 
@@ -230,7 +231,7 @@ function CompleteInner() {
             onClick={() => router.push("/workspace/select")}
             className="flex h-[48px] w-full items-center justify-center rounded-[10px] bg-[#F26522] text-[15px] font-semibold text-white transition-opacity hover:opacity-90"
           >
-            {allDone ? "Go to Workspace →" : "Continue to Workspace →"}
+            Start Using ACTNOTE →
           </button>
 
         </div>

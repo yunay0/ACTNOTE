@@ -108,13 +108,19 @@ function OnboardingInner() {
       const ws = rows?.[0];
       const displayName = ws?.name ?? "";
       if (ws && !displayName.endsWith("'s workspace")) {
-        router.replace("/workspace/select");
-        return;
+        // 온보딩 중 "← Go Back" 으로 돌아온 경우(edit=1): /workspace/select 로 튕기지 않고
+        // 기존 이름을 폼에 채워 다시 편집할 수 있게 한다 (INT-001).
+        if (searchParams.get("edit") === "1") {
+          setName(displayName);
+        } else {
+          router.replace("/workspace/select");
+          return;
+        }
       }
 
       setCheckingAuth(false);
     });
-  }, [router]);
+  }, [router, searchParams]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const val = e.target.value;
@@ -156,7 +162,10 @@ function OnboardingInner() {
   }
 
   const charCount = name.length;
-  const isDisabled = name.trim().length === 0 || loading;
+  // 입력이 있을 때만 실시간 검증 (특수문자/이모지 등 정책 위배 → 버튼 비활성화 + 빨간 테두리)
+  const liveError = name.trim().length > 0 ? validateWorkspaceName(name) : null;
+  const displayError = error ?? liveError;
+  const isDisabled = name.trim().length === 0 || loading || liveError !== null;
 
   const inviteSlugEarly = searchParams.get("invite_slug")?.trim();
   if (inviteSlugEarly) {
@@ -221,11 +230,13 @@ function OnboardingInner() {
                 placeholder="ACTNOTE Corp"
                 autoComplete="organization"
                 autoFocus
-                className="h-12 w-full rounded-[10px] border-2 border-[#e2e8f0] px-[18px] text-[14.2px] text-[#0a2540] placeholder-[#94a3b8] outline-none transition-colors focus:border-[#ff6b35]"
+                className={`h-12 w-full rounded-[10px] border-2 px-[18px] text-[14.2px] text-[#0a2540] placeholder-[#94a3b8] outline-none transition-colors ${
+                  displayError ? "border-red-500 focus:border-red-500" : "border-[#e2e8f0] focus:border-[#ff6b35]"
+                }`}
               />
               <div className="flex items-start justify-between gap-4 pt-0.5">
                 <p className="max-w-[242px] text-[12.2px] font-normal leading-normal text-[#64748b]">
-                  {error ? <span className="text-red-600">{error}</span> : "This will be visible to all team members"}
+                  {displayError ? <span className="text-red-600">{displayError}</span> : "This will be visible to all team members"}
                 </p>
                 <span
                   className={`shrink-0 whitespace-nowrap text-right text-[11px] font-normal leading-normal ${

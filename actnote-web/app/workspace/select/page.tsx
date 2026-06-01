@@ -117,11 +117,14 @@ function WorkspaceSelectInner() {
     const profileName = (profileRow?.name as string | null | undefined)?.trim() || "";
     const displayName = profileName || metaFull || "";
 
-    const avatarUrl =
+    const rawAvatar =
       (profileRow?.avatar_url as string | null | undefined)?.trim() ||
       (typeof meta?.avatar_url === "string" && meta.avatar_url) ||
       (typeof meta?.picture === "string" && meta.picture) ||
       null;
+    // 업로드한 아바타는 private 'meetings' 버킷에 저장됨 → signed URL 로 변환해야 표시됨.
+    // (Google OAuth picture 같은 외부 URL 은 헬퍼가 그대로 통과시킴) — 로그인 직후 깨짐 방지.
+    const avatarUrl = await resolveMeetingsImageDisplayUrl(supabase, rawAvatar);
     const profileEmail = (profileRow?.email as string | null | undefined)?.trim() || null;
     const email = profileEmail || user.email || null;
 

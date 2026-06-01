@@ -130,7 +130,7 @@ function InviteSuccessInner() {
             onClick={() => router.push(`/onboarding/complete?invited=${sentCount}`)}
             className="flex h-[58px] w-[323px] items-center justify-center gap-2 rounded-[12px] bg-[#FF6B35] text-[16px] font-bold text-white transition-opacity hover:opacity-90"
           >
-            Continue to Workspace →
+            Complete Setup →
           </button>
 
         </div>
