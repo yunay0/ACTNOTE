@@ -7,6 +7,7 @@ import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { MeetingCard } from "@/components/meetings/MeetingCard";
 import { ConnectNotionModal } from "@/components/meetings/ConnectNotionModal";
 import { LimitedFeaturesWithoutNotionModal } from "@/components/meetings/LimitedFeaturesWithoutNotionModal";
+import { HomeNotionStatusBanner } from "@/components/meetings/HomeNotionStatusBanner";
 import { useMeetings } from "@/lib/hooks/useMeetings";
 import { useNotionIntegrationStatus } from "@/lib/hooks/useNotionIntegrationStatus";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
@@ -296,9 +297,11 @@ function MeetingsPageContent() {
     published: visibleMeetings.filter((m) => m.approval_status === "published").length,
   }), [visibleMeetings]);
 
+  const showHomeNotionBanner = notionConnected === false;
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <DashboardHeader title="Home" />
+      <DashboardHeader title="Home" notificationBellAccent />
 
       {showConnectNotionModal ? (
         <ConnectNotionModal
@@ -315,6 +318,14 @@ function MeetingsPageContent() {
       ) : null}
 
       <div className="flex-1 overflow-auto p-10">
+        {showHomeNotionBanner ? (
+          <div className="mb-8">
+            <HomeNotionStatusBanner
+              variant={isWsOwner ? "owner_not_connected" : "member_not_connected"}
+            />
+          </div>
+        ) : null}
+
         {deleteBanner && (
           <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex justify-between gap-4 items-start">
             <span>{deleteBanner}</span>
@@ -494,7 +505,7 @@ export default function MeetingsPage() {
     <Suspense
       fallback={
         <div className="flex flex-1 flex-col overflow-hidden">
-          <DashboardHeader title="Home" />
+          <DashboardHeader title="Home" notificationBellAccent />
           <div className="flex-1 overflow-auto p-10">
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {[1, 2, 3].map((i) => (

@@ -1100,7 +1100,9 @@ def push_action_items(
         for item in action_items:
             props: dict[str, Any] = {}
             content = (item.get("content") or "").strip()
-            task_title = derive_action_item_task_title(content)
+            task_title = (item.get("task_title") or "").strip()
+            if not task_title:
+                task_title = derive_action_item_task_title(content)
             title_key = title_col or "Task title"
             props[title_key] = {
                 "title": [{"type": "text", "text": {"content": task_title}}]

@@ -288,7 +288,7 @@ def push_published_to_notion(
 
     actions_resp = (
         sb_client.table("action_items")
-        .select("id, content, assignee, assignee_user_id, due_date")
+        .select("id, content, task_title, assignee, assignee_user_id, due_date")
         .eq("meeting_id", meeting_id)
         .is_("valid_until", "null")
         .in_("status", ["open", "in_progress"])

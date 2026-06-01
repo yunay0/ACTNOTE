@@ -4,6 +4,7 @@
 
 export type DraftNoteActionRow = {
   content: string;
+  task_title?: string | null;
   assignee: string | null;
   assignee_user_id: string | null;
   due_date: string | null;
@@ -39,8 +40,12 @@ export function parseActionItemsFromDraftNotes(
     const confRaw = o.confidence;
     const confidence =
       typeof confRaw === "number" && !Number.isNaN(confRaw) ? confRaw : null;
+    const taskTitleRaw = o.task_title;
+    const task_title =
+      taskTitleRaw != null && String(taskTitleRaw).trim() ? String(taskTitleRaw).trim() : null;
     out.push({
       content,
+      task_title,
       assignee: o.assignee != null && String(o.assignee).trim() ? String(o.assignee).trim() : null,
       assignee_user_id:
         o.assignee_user_id != null && String(o.assignee_user_id).trim()
@@ -57,6 +62,7 @@ export function parseActionItemsFromDraftNotes(
 export type SyncedActionItemRow = {
   id: string;
   content: string;
+  task_title: string | null;
   assignee: string | null;
   assignee_user_id: string | null;
   due_date: string | null;
@@ -80,6 +86,7 @@ export async function syncActionItemsFromDraftNotes(
       meeting_id: meetingId,
       workspace_id: workspaceId,
       content: row.content,
+      task_title: row.task_title?.trim() || null,
       assignee: row.assignee,
       assignee_user_id: row.assignee_user_id,
       due_date: row.due_date,
@@ -90,7 +97,7 @@ export async function syncActionItemsFromDraftNotes(
     const { data, error } = await supabase
       .from("action_items")
       .insert(payload)
-      .select("id, content, assignee, assignee_user_id, due_date, confidence, status")
+      .select("id, content, task_title, assignee, assignee_user_id, due_date, confidence, status")
       .single();
 
     if (error) {
@@ -101,6 +108,10 @@ export async function syncActionItemsFromDraftNotes(
     inserted.push({
       id: String(d.id),
       content: String(d.content ?? row.content),
+      task_title:
+        d.task_title != null && String(d.task_title).trim()
+          ? String(d.task_title).trim()
+          : row.task_title ?? null,
       assignee: d.assignee != null ? String(d.assignee) : row.assignee,
       assignee_user_id:
         d.assignee_user_id != null ? String(d.assignee_user_id) : row.assignee_user_id,
@@ -119,6 +130,7 @@ export function draftNoteRowsToActionItems(
   return rows.map((row, index) => ({
     id: `${DRAFT_NOTE_ACTION_ID_PREFIX}${index}`,
     content: row.content,
+    task_title: row.task_title ?? null,
     assignee: row.assignee,
     assignee_user_id: row.assignee_user_id,
     due_date: row.due_date,
@@ -129,6 +141,7 @@ export function draftNoteRowsToActionItems(
 
 type DraftActionPersistInput = {
   content: string;
+  task_title?: string | null;
   assignee: string | null;
   assignee_user_id: string | null;
   due_date: string | null;
@@ -142,6 +155,7 @@ export function actionItemsToDraftNoteRows(items: DraftActionPersistInput[]): Dr
     .filter((item) => item.status !== "cancelled" && item.content.trim())
     .map((item) => ({
       content: item.content.trim(),
+      task_title: item.task_title?.trim() || null,
       assignee: item.assignee,
       assignee_user_id: item.assignee_user_id,
       due_date: item.due_date?.trim().slice(0, 10) ?? null,
