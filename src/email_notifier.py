@@ -528,19 +528,20 @@ def render_join_approved_email(
     app_url: str | None = None,
 ) -> dict[str, str]:
     """WS-007 / NOTI-002 — 요청자에게 승인 알림."""
-    title = f"{escape(workspace_name)} 워크스페이스 합류가 승인되었습니다"
+    title = f"You've been approved to join {escape(workspace_name)}"
     body = (
         f'<p style="margin:0 0 24px 0;line-height:1.6">'
-        f'<b>{escape(workspace_name)}</b> 워크스페이스 합류가 승인되었습니다. 이제 회의록을 함께 볼 수 있습니다.'
+        f'You\'ve been approved to join the <b>{escape(workspace_name)}</b> workspace. '
+        f'You can now collaborate on meeting notes.'
         f'</p>'
         f'<a href="{escape(workspace_url)}" '
         f'style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;'
         f'padding:12px 24px;border-radius:8px;font-weight:600">'
-        f'워크스페이스로 이동</a>'
+        f'Go to workspace</a>'
     )
     text = (
-        f"{workspace_name} 합류가 승인되었습니다.\n\n"
-        f"이동:\n{workspace_url}\n"
+        f"You've been approved to join {workspace_name}.\n\n"
+        f"Go to workspace:\n{workspace_url}\n"
     )
     return {
         "subject": title,
@@ -556,22 +557,22 @@ def render_join_declined_email(
     app_url: str | None = None,
 ) -> dict[str, str]:
     """WS-007 / NOTI-002 — 요청자에게 거절 알림."""
-    title = f"{escape(workspace_name)} 워크스페이스 합류 요청이 거절되었습니다"
+    title = f"Your request to join {escape(workspace_name)} was declined"
     body = (
         f'<p style="margin:0 0 16px 0;line-height:1.6">'
-        f'<b>{escape(workspace_name)}</b> 워크스페이스 합류 요청이 거절되었습니다.'
+        f'Your request to join the <b>{escape(workspace_name)}</b> workspace was declined.'
         f'</p>'
         f'<p style="margin:0 0 24px 0;line-height:1.6;color:#374151">'
-        f'다른 워크스페이스를 찾거나 관리자에게 직접 문의 후 다시 요청할 수 있습니다.'
+        f'You can look for another workspace or contact the administrator before requesting again.'
         f'</p>'
         f'<a href="{escape(retry_url)}" '
         f'style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;'
         f'padding:12px 24px;border-radius:8px;font-weight:600">'
-        f'다시 시도하기</a>'
+        f'Try again</a>'
     )
     text = (
-        f"{workspace_name} 합류 요청이 거절되었습니다.\n\n"
-        f"다시 시도:\n{retry_url}\n"
+        f"Your request to join {workspace_name} was declined.\n\n"
+        f"Try again:\n{retry_url}\n"
     )
     return {
         "subject": title,

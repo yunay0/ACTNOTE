@@ -15,6 +15,9 @@ import {
 } from "@/lib/user/member-display";
 import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
 
+/** 멤버 초대 이메일 형식 검증 (잘못된 이메일이면 Send Invite 비활성화) */
+const INVITE_EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 /** Supabase `workspace_members.role` */
 type DbRole = "owner" | "admin" | "member";
 
@@ -1385,7 +1388,7 @@ export default function WorkspaceSettingsPage() {
               >
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-[30px] font-semibold leading-snug text-[#212529]">Access Requests</h2>
+                    <h2 className="text-[18px] font-semibold leading-snug text-[#212529]">Access Requests</h2>
                     <p className="text-[14px] text-[#6c757d]">Approve or decline workspace access requests</p>
                   </div>
                   <span className="rounded-full bg-[#fff4f0] px-3 py-1 text-[12px] font-bold text-[#ff6b35]">
@@ -1508,7 +1511,7 @@ export default function WorkspaceSettingsPage() {
                           setInviteSentTo(null);
                         }}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter" && inviteEmail.trim()) void handleInvite();
+                          if (e.key === "Enter" && INVITE_EMAIL_REGEX.test(inviteEmail.trim())) void handleInvite();
                         }}
                         placeholder="Enter email to invite"
                         className="h-11 flex-1 rounded-lg border border-[#dee2e6] bg-white px-4 text-[13px] text-[#212529] placeholder-[#adb5bd] outline-none focus:border-[#2e5c8a] focus:ring-2 focus:ring-[#2e5c8a]/10"
@@ -1516,8 +1519,8 @@ export default function WorkspaceSettingsPage() {
                       <button
                         type="button"
                         onClick={handleInvite}
-                        disabled={inviteSending || !inviteEmail.trim()}
-                        className="h-11 rounded-lg bg-[#f26522] px-5 text-[14px] font-bold text-white hover:opacity-90 disabled:opacity-50"
+                        disabled={inviteSending || !INVITE_EMAIL_REGEX.test(inviteEmail.trim())}
+                        className="h-11 rounded-lg bg-[#f26522] px-5 text-[14px] font-bold text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {inviteSending ? "Sending..." : "Send Invite"}
                       </button>

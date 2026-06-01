@@ -108,7 +108,7 @@ export default function NotionOverviewPage() {
           {/* Buttons */}
           <div className="flex items-center justify-between gap-[50px]">
             <button
-              onClick={() => router.push("/onboarding")}
+              onClick={() => router.push("/onboarding?edit=1")}
               className="h-[45px] w-[185px] rounded-[10px] border border-[#DEE2E6] bg-white text-[14px] font-medium text-[#6C757D] transition-colors hover:bg-[#f8f9fa]"
             >
               ← Go Back

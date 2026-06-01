@@ -37,6 +37,8 @@ export async function resolveMeetingsImageDisplayUrl(
     .from(MEETINGS_BUCKET)
     .createSignedUrl(objectPath, expiresIn);
 
-  if (error || !data?.signedUrl) return trimmed;
+  // signed URL 생성 실패 시 raw public URL(private 버킷이라 깨짐)을 돌려주면
+  // <img> 가 깨진 아이콘을 띄운다. null 을 돌려주면 호출부가 이니셜 fallback 으로 떨어진다.
+  if (error || !data?.signedUrl) return null;
   return data.signedUrl;
 }
