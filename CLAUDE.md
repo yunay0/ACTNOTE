@@ -408,6 +408,7 @@ from src.notion_sync import exchange_notion_code, complete_notion_oauth
 - **Contact Support 연결** (코드 반영 — 2026-05-20): `pipeline-error-copy.ts` + `ProcessingProgress.tsx`에서 Gmail 딥링크 우선, `mailto:` 폴백. TC 이슈 #4 해결.
 - **LLM temperature=0** (코드 반영 — 2026-05-20): `llm_extractor._call_messages()`에서 `temperature=0` 설정됨. TC 이슈 #5 배포 후 재검증 필요.
 - **embeddings dirty flag** (완료 — 2026-05-20): `023_action_dirty_flag.sql` 추가. `action_items` 변경 시 `embeddings_dirty=TRUE` 자동 마킹.
+- **Notion 발행 매칭 전면 실패 — Assignee/Participants/Due Date 누락** (해결 — 2026-06-01): 최신 `notion-client` 가 신규 Notion-Version(2025-09-03 "data source" 모델)을 기본값으로 사용 → `databases.retrieve` 가 `properties` 대신 `data_sources` 만 반환 → `_notion_db_column_types` 가 `{}` → 모든 people/date 컬럼 매칭 실패(누락). people 권한·DB 데이터·컬럼명은 전부 정상이었음. **수정:** `notion_sync._client()` 에 `notion_version="2022-06-28"` 고정(프론트 `verify-db` 와 동일 버전). 부수적으로 `_resolve_db_column` 에 이름 후보 확장 + 타입 폴백 보강. **진단 도구:** `scripts/diagnose_modal.py`(Modal 안에서 실행 — 로컬 키 불필요), `scripts/diagnose_notion_publish.py`(로컬). **배포 필요: `modal deploy src/modal_app.py`.**
 
 ### 다중 워크스페이스 고도화 (보류 — 2026-05-25)
 
@@ -438,6 +439,10 @@ from src.notion_sync import exchange_notion_code, complete_notion_oauth
 - **재시도 = 전체 재실행/재과금** (decision #3, 의도적): Modal `retries=3` 은 step memoization 이 없어 실패 재시도 시 STT·화자분리·LLM 을 처음부터 재과금. 멱등성은 `_cleanup_for_reanalysis()` 가 보장(중복 derived 없음)하나 비용은 중복. 체크포인트 최적화는 보류 — `src/jobs.py` docstring 참조.
 - Modal CPU 함수 timeout(현재 3600s) ↔ 웹 엔드포인트 150s + 동시성 상한(`max_containers`, 대시보드) 정합 측정 필요 (회의 길이별 벤치마크 후 확정).
 - 비용 산정 + 모델 업그레이드 (5/25~5/27) — Modal CPU+GPU 시간 과금분 포함.
+- **Notion data source API 정식 마이그레이션 (TODO — 2026-06-01)**: 현재 Notion-Version `2022-06-28` 고정으로 신규 "data source" 모델을 우회 중(위 해결된 이슈 참조). 구버전이 deprecate 되기 전에 정식 전환 필요:
+  - 컬럼 조회: `databases.retrieve` → `data_sources[].id` 로 `data_sources.retrieve(data_source_id)` 호출해 `properties` 획득.
+  - 페이지 생성 parent: `{"database_id": ...}` → `{"type": "data_source_id", "data_source_id": ...}`.
+  - `src/notion_sync.py` 전반(`_notion_db_column_types`, `push_meeting`, `push_action_items`, `ensure_action_db`)과 프론트 `verify-db` 동시 점검. notion-client 버전이 data_sources 메서드를 지원하는지 확인.
 
 ---
 

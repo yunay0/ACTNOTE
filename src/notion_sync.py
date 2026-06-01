@@ -52,7 +52,12 @@ _STATUS_OPTIONS = [
 # ---------------------------------------------------------------------------
 
 def _client(token: str) -> _NotionClient:
-    return _NotionClient(auth=token)
+    # Notion-Version 을 2022-06-28 로 고정한다.
+    # 최신 notion-client 는 신규 "data source" API 버전(2025-09-03)을 기본값으로 쓰는데,
+    # 그 버전에서는 databases.retrieve 가 properties 를 반환하지 않고 data_sources 만 준다.
+    # → _notion_db_column_types 가 {} 가 되어 Assignee/Participants/Due Date 컬럼이 전부
+    #   매칭 실패(누락)한다. 프론트 verify-db 도 2022-06-28 을 쓰므로 버전을 일치시킨다.
+    return _NotionClient(auth=token, notion_version=NOTION_API_VERSION)
 
 
 # ---------------------------------------------------------------------------
