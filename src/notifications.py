@@ -406,7 +406,7 @@ def notify_action_assigned(
     )
     meeting = meeting_resp.data or {}
     creator_id: str | None = meeting.get("created_by")
-    meeting_title = (meeting.get("title") or "").strip() or "회의"
+    meeting_title = (meeting.get("title") or "").strip() or "Meeting"
 
     actions_resp = (
         sb_client.table("action_items")
@@ -451,7 +451,7 @@ def notify_action_assigned(
             "user_id": a["assignee_user_id"],
             "workspace_id": workspace_id,
             "type": "action_assigned",
-            "title": f'새 액션 아이템: {meeting_title}',
+            "title": f'New action item: {meeting_title}',
             "message": (a.get("content") or "")[:200],
             "meeting_id": meeting_id,
             "action_item_id": a["id"],
@@ -592,7 +592,7 @@ def send_invite_email(
     if not inviter_name:
         # name 비어있으면 이메일 로컬파트로 대체
         e = (inviter.get("email") or "").strip()
-        inviter_name = e.split("@", 1)[0] if e else "팀원"
+        inviter_name = e.split("@", 1)[0] if e else "A teammate"
 
     ws_resp = (
         sb_client.table("workspaces")
@@ -601,7 +601,7 @@ def send_invite_email(
         .single()
         .execute()
     )
-    workspace_name = (ws_resp.data or {}).get("name") or "워크스페이스"
+    workspace_name = (ws_resp.data or {}).get("name") or "your workspace"
 
     rendered = render_invite_email(
         invite_link=invite_link,
@@ -856,8 +856,8 @@ def notify_reauth_required(workspace_id: str, sb_client=None) -> int:
         user_id=owner_id,
         workspace_id=workspace_id,
         type="integration_reauth_required",
-        title="Notion 재연동이 필요합니다",
-        message=f"{ws_name} 워크스페이스의 Notion 토큰이 유효하지 않습니다.",
+        title="Reconnect Notion required",
+        message=f"The Notion token for the {ws_name} workspace is no longer valid.",
         sb_client=sb_client,
     )
 
@@ -940,8 +940,8 @@ def notify_join_request_received(
         user_id=owner_id,
         workspace_id=workspace_id,
         type="join_request_received",
-        title=f"{requester_name}님이 합류를 요청했습니다",
-        message=f"{ws_name} 워크스페이스 합류 요청을 확인하세요.",
+        title=f"{requester_name} requested to join",
+        message=f"Review the request to join {ws_name} workspace.",
         sb_client=sb_client,
     )
 
@@ -994,8 +994,8 @@ def notify_join_request_approved(
         user_id=requester_user_id,
         workspace_id=workspace_id,
         type="join_request_approved",
-        title=f"{ws_name} 합류가 승인되었습니다",
-        message="이제 워크스페이스에 접근할 수 있습니다.",
+        title=f"Approved to join {ws_name}",
+        message="You can now access this workspace.",
         sb_client=sb_client,
     )
 
@@ -1045,8 +1045,8 @@ def notify_join_request_declined(
         user_id=requester_user_id,
         workspace_id=workspace_id,
         type="join_request_declined",
-        title=f"{ws_name} 합류 요청이 거절되었습니다",
-        message="다른 워크스페이스를 찾거나 관리자에게 직접 문의하세요.",
+        title=f"Request to join {ws_name} declined",
+        message="You can find another workspace or contact the owner directly.",
         sb_client=sb_client,
     )
 
