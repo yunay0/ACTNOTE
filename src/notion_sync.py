@@ -188,13 +188,28 @@ def _notion_db_column_types(notion: _NotionClient, db_id: str) -> dict[str, str]
     return cols
 
 
-def _resolve_db_column(col_types: dict[str, str], *candidates: str) -> str | None:
-    """대소문자 무시로 컬럼명을 찾는다."""
+def _resolve_db_column(
+    col_types: dict[str, str],
+    *candidates: str,
+    fallback_type: str | None = None,
+) -> str | None:
+    """대소문자 무시로 컬럼명을 찾는다.
+
+    이름 후보로 못 찾으면 ``fallback_type`` 의 컬럼이 정확히 1개일 때 그것을 쓴다.
+    프론트 settings 의 ``autoMap`` 이 타입 기반(people/date/url/title) 매핑을 화면에
+    "✓ Auto-mapped" 로 보여주지만 그 매핑은 DB 에 저장되지 않으므로, 백엔드가 동일한
+    타입 기반 폴백을 수행해 컬럼명이 달라도(Owner/담당자/Due/Deadline/Attendees 등)
+    assignee·participants·due date 가 누락되지 않도록 한다.
+    """
     lower_map = {name.lower(): name for name in col_types}
     for cand in candidates:
         hit = lower_map.get(cand.lower())
         if hit:
             return hit
+    if fallback_type:
+        typed = [name for name, t in col_types.items() if t == fallback_type]
+        if len(typed) == 1:
+            return typed[0]
     return None
 
 
@@ -934,7 +949,10 @@ def push_meeting(
         properties["Meeting Type"] = {"select": {"name": label}}
 
     meeting_col_types = _notion_db_column_types(notion, meeting_db_id)
-    participants_col = _resolve_db_column(meeting_col_types, "Participants")
+    participants_col = _resolve_db_column(
+        meeting_col_types, "Participants", "Participant", "Attendees",
+        "Attendee", "Members", "참석자", "참가자", fallback_type="people",
+    )
     if participants and participants_col:
         col_type = meeting_col_types[participants_col]
         email_map, name_map = _notion_user_lookup_maps(notion, token)
@@ -1052,15 +1070,22 @@ def push_action_items(
     notion = _client(token)
     actnote_url = _actnote_meeting_url(meeting_id)
     action_col_types = _notion_db_column_types(notion, action_db_id)
-    title_col = _resolve_db_column(action_col_types, "Task title", "Task Title", "Name")
-    assignee_col = _resolve_db_column(action_col_types, "Assignee")
-    due_col = _resolve_due_date_column(action_col_types)
-    if not due_col and action_col_types:
-        _log.info(
-            "push_action_items: Due Date(date) 컬럼 없음 — 마감일 미기록 (db properties=%s)",
-            list(action_col_types.keys()),
-        )
-    actnote_url_col = _resolve_db_column(action_col_types, "ACTNOTE URL")
+    title_col = _resolve_db_column(
+        action_col_types, "Task title", "Task Title", "Name", "Title",
+        fallback_type="title",
+    )
+    assignee_col = _resolve_db_column(
+        action_col_types, "Assignee", "Assigned to", "Assigned", "Owner",
+        "담당자", "담당", fallback_type="people",
+    )
+    due_col = _resolve_db_column(
+        action_col_types, "Due Date", "Due date", "Due", "Deadline",
+        "마감일", "마감", "기한", fallback_type="date",
+    )
+    actnote_url_col = _resolve_db_column(
+        action_col_types, "ACTNOTE URL", "Meeting Link", "Link",
+        fallback_type="url",
+    )
     email_map, name_map = _notion_user_lookup_maps(notion, token)
     created_ids: list[str] = []
 
@@ -1078,15 +1103,13 @@ def push_action_items(
             url_key = actnote_url_col or "ACTNOTE URL"
             if url_key in action_col_types or not action_col_types:
                 props[url_key] = {"url": actnote_url}
-            due_start = _notion_date_start_from_action(item)
-            if due_start and due_col:
-                props[due_col] = {"date": {"start": due_start}}
-            elif due_start and not due_col:
-                _log.warning(
-                    "push_action_items: 마감일 %r 있으나 Notion date 컬럼 없음 (action_id=%s)",
-                    due_start,
-                    item.get("id"),
-                )
+            if item.get("due_date") and due_col:
+                due_type = action_col_types.get(due_col)
+                due_val = str(item["due_date"])
+                if due_type == "date" or not due_type:
+                    props[due_col] = {"date": {"start": due_val}}
+                elif due_type == "rich_text":
+                    props[due_col] = _rich_text_prop(due_val)
 
             if assignee_col:
                 assignee_display = (item.get("assignee_display") or item.get("assignee") or "").strip()
