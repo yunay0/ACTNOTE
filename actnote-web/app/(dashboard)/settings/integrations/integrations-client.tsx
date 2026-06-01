@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Upload } from "lucide-react";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
@@ -326,9 +327,7 @@ export default function IntegrationsSettingsClient({ bannerError }: { bannerErro
                     onClick={() => router.push("/onboarding/notion/apikey?from=settings")}
                     className="flex h-[36px] items-center gap-2 rounded-[8px] bg-[#F26522] px-[18px] text-[14px] font-bold text-white hover:opacity-90"
                   >
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-                      <rect x="1" y="1" width="12" height="12" rx="2" stroke="#FFFFFF" strokeWidth="1.6" />
-                    </svg>
+                    <Upload className="size-3.5" strokeWidth={2} aria-hidden />
                     Connect Notion
                   </button>
                 </div>
