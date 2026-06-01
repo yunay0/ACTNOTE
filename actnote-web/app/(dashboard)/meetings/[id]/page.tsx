@@ -16,6 +16,10 @@ import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url
 import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
 import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
+import { DashboardHeader } from "@/components/layout/DashboardHeader";
+import { MeetingMetaSummaryCard } from "@/components/meetings/MeetingMetaSummaryCard";
+import { MeetingWorkflowStatusBadge } from "@/components/meetings/MeetingWorkflowStatusBadge";
+import type { MeetingWorkflowPhase } from "@/components/meetings/MeetingWorkflowStatusBadge";
 import { StatusBadge } from "@/components/meetings/StatusBadge";
 import { TranscriptViewer, type TranscriptLine } from "@/components/meetings/TranscriptViewer";
 import { ProcessingProgress } from "@/components/meetings/ProcessingProgress";
@@ -32,7 +36,11 @@ import {
   readAnalysisSectionText,
   readDraftAnalysisText,
 } from "@/lib/meetings/meeting-analysis-layout";
-import { DraftNotionStatusBanner, resolveDraftNotionBannerVariant } from "@/components/meetings/DraftNotionStatusBanner";
+import {
+  DraftNotionStatusBanner,
+  resolveDraftNotionBannerVariant,
+  resolvePublishedNotionBannerVariant,
+} from "@/components/meetings/DraftNotionStatusBanner";
 import { useNotionIntegrationStatus } from "@/lib/hooks/useNotionIntegrationStatus";
 import { DraftOverviewPanel } from "@/components/meetings/DraftOverviewPanel";
 import { MeetingDraftActionItemsSection } from "@/components/meetings/MeetingDraftActionItemsSection";
@@ -41,7 +49,11 @@ import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
 import { DraftGuidanceSidebar } from "@/components/meetings/DraftGuidanceSidebar";
 import { DraftDeleteMeetingModal } from "@/components/meetings/DraftDeleteMeetingModal";
 import { DraftPublishSuccessModal } from "@/components/meetings/DraftPublishSuccessModal";
-import { draftHasActionPublishBlockers } from "@/lib/meetings/draft-action-gaps";
+import {
+  isDraftPublishReady,
+  type DraftPublishSnapshot,
+} from "@/lib/meetings/draft-publish-readiness";
+import { workspaceMembersForActionAssignee } from "@/lib/meetings/action-item-assignees";
 import { meetingsHomeAfterPublishUrl } from "@/lib/meetings/post-publish-home";
 import {
   actionItemsToDraftNoteRows,
@@ -76,6 +88,7 @@ interface MeetingRow {
   responsible_user_id: string | null;
   creator_display_name?: string | null;
   notion_page_id?: string | null;
+  published_at?: string | null;
   creator_email?: string | null;
   responsible_display_name?: string | null;
   responsible_display_email?: string | null;
@@ -92,6 +105,7 @@ interface MeetingRow {
 interface ActionItem {
   id: string;
   content: string;
+  task_title?: string | null;
   assignee: string | null;
   assignee_user_id: string | null;
   due_date: string | null;
@@ -102,10 +116,21 @@ interface ActionItem {
 
 const NEW_ACTION_ITEM_PREFIX = "new:";
 
+function meetingWorkflowPhase(
+  approvalStatus: MeetingRow["approval_status"],
+  status: MeetingStatus,
+): MeetingWorkflowPhase | null {
+  if (approvalStatus === "published") return "published";
+  if (status === "ready") return "draft";
+  if (isProcessing(status)) return "analyzing";
+  return null;
+}
+
 function emptyDraftActionItem(): ActionItem {
   return {
     id: `${NEW_ACTION_ITEM_PREFIX}${crypto.randomUUID()}`,
     content: "",
+    task_title: null,
     assignee: null,
     assignee_user_id: null,
     due_date: null,
@@ -354,7 +379,7 @@ export default function MeetingDetailPage() {
       (supabase as any)
         .from("meetings")
         .select(
-          "id, title, status, approval_status, created_at, meeting_date, summary, decisions, referenced_documents, audio_file_url, audio_file_name, workspace_id, created_by, creator_display_name, creator_email, error_message, description, meeting_type, participants, responsible_user_id, responsible_display_name, responsible_display_email, ai_draft_notes, blockers, key_topics, key_decisions, risks_and_issues, follow_up, key_points, duration_seconds, audio_file_size_bytes, notion_page_id"
+          "id, title, status, approval_status, created_at, meeting_date, published_at, summary, decisions, referenced_documents, audio_file_url, audio_file_name, workspace_id, created_by, creator_display_name, creator_email, error_message, description, meeting_type, participants, responsible_user_id, responsible_display_name, responsible_display_email, ai_draft_notes, blockers, key_topics, key_decisions, risks_and_issues, follow_up, key_points, duration_seconds, audio_file_size_bytes, notion_page_id"
         )
         .eq("id", id)
         .is("deleted_at", null)
@@ -459,8 +484,9 @@ export default function MeetingDetailPage() {
     }
 
     const actionSelectFull =
-      "id, content, assignee, assignee_user_id, due_date, confidence, status, notion_page_id";
-    const actionSelectMinimal = "id, content, assignee, assignee_user_id, due_date, status, notion_page_id";
+      "id, content, task_title, assignee, assignee_user_id, due_date, confidence, status, notion_page_id";
+    const actionSelectMinimal =
+      "id, content, assignee, assignee_user_id, due_date, status, notion_page_id";
 
     let itemsRes = await (supabase as any)
       .from("action_items")
@@ -481,11 +507,25 @@ export default function MeetingDetailPage() {
 
     let normalized: ActionItem[] = ((itemsRes.data as ActionItem[]) ?? []).map((row) => ({
       ...row,
+      task_title:
+        row.task_title != null && String(row.task_title).trim()
+          ? String(row.task_title).trim()
+          : null,
       assignee_user_id: row.assignee_user_id ?? null,
       confidence: row.confidence ?? null,
       status: (row.status as ActionItem["status"]) ?? "open",
       due_date: toYmdInput(row.due_date != null ? String(row.due_date) : null),
     }));
+
+    if (draftObj) {
+      const fromNotes = parseActionItemsFromDraftNotes(draftObj);
+      if (fromNotes.length > 0 && normalized.length > 0) {
+        normalized = normalized.map((row, index) => ({
+          ...row,
+          task_title: row.task_title ?? fromNotes[index]?.task_title ?? null,
+        }));
+      }
+    }
 
     if (normalized.length === 0 && draftObj) {
       const fromNotes = parseActionItemsFromDraftNotes(draftObj);
@@ -653,8 +693,6 @@ export default function MeetingDetailPage() {
         meeting.approval_status !== "published" && meetingRole === "owner";
       if (canOwnerOpenDraft) {
         void loadMembers(meeting.workspace_id);
-        /** 파이프라인 완료 직후 Draft 본문(분석+액션)을 바로 표시 — 수동 Next 불필요 (Figma 157:11934). */
-        setDraftSurfaceStep((step) => (step === "overview" ? "detail" : step));
       }
     }
     wasProcessingRef.current = proc;
@@ -823,6 +861,7 @@ export default function MeetingDetailPage() {
       const dueNorm = item.due_date?.trim() ? item.due_date.trim().slice(0, 10) : null;
       const payload = {
         content,
+        task_title: item.task_title?.trim() || null,
         assignee: item.assignee,
         assignee_user_id: item.assignee_user_id ?? null,
         due_date: dueNorm && isValidYmd(dueNorm) ? dueNorm : null,
@@ -864,6 +903,17 @@ export default function MeetingDetailPage() {
   ): Promise<{ ok: boolean; error?: string }> {
     if (!meeting || meeting.approval_status === "published") return { ok: false, error: "Not editable." };
     if (meetingRole !== "owner") return { ok: false, error: "Permission denied." };
+
+    if (patch.assignee_user_id?.trim()) {
+      const uid = patch.assignee_user_id.trim();
+      const inWorkspace = members.some((m) => m.user_id === uid);
+      if (!inWorkspace) {
+        return {
+          ok: false,
+          error: "Assignee must be a current workspace member (meeting participants not required).",
+        };
+      }
+    }
 
     const supabase = createClient();
     const sanitized: Record<string, string | null> = {};
@@ -908,13 +958,14 @@ export default function MeetingDetailPage() {
           meeting_id: meeting.id,
           workspace_id: meeting.workspace_id,
           content: source.content.trim(),
+          task_title: source.task_title?.trim() || null,
           assignee: sanitized.assignee ?? source.assignee,
           assignee_user_id: sanitized.assignee_user_id ?? source.assignee_user_id,
           due_date: sanitized.due_date ?? source.due_date,
           change_type: "ADD",
           status: "open",
         })
-        .select("id, due_date, assignee, assignee_user_id, content, confidence, status")
+        .select("id, due_date, assignee, assignee_user_id, content, task_title, confidence, status")
         .single();
       if (error) return { ok: false, error: error.message };
       const row = data as ActionItem;
@@ -1168,11 +1219,6 @@ export default function MeetingDetailPage() {
     [meeting?.meeting_type],
   );
 
-  const publishBlockedByActions = useMemo(() => {
-    const items = editMode ? editActionItems : actionItems;
-    return draftHasActionPublishBlockers(items);
-  }, [editMode, editActionItems, actionItems]);
-
   const finalizePublishSuccessNavigation = useCallback(() => {
     if (publishSuccessNavLockRef.current) return;
     publishSuccessNavLockRef.current = true;
@@ -1285,13 +1331,90 @@ export default function MeetingDetailPage() {
   const canDeleteMeeting =
     meetingRole === "owner" ||
     (meetingRole === "creator" && !isPublished);
+
+  const publishSnapshot = useMemo((): DraftPublishSnapshot | null => {
+    if (!meeting) return null;
+    const doc = draftNotesDoc;
+    if (editMode && canEdit) {
+      return {
+        meetingType: meeting.meeting_type,
+        title: editTitle,
+        summary: editSummary,
+        draftNotesDoc: doc,
+        blockersText: editBlockers,
+        keyTopicsText: editKeyTopics,
+        keyDecisionsText: editKeyDecisions,
+        risksAndIssuesText: editRisksAndIssues,
+        followUpText: editFollowUp,
+        keyPointsText: editKeyPoints,
+        actionItems: editActionItems,
+      };
+    }
+    return {
+      meetingType: meeting.meeting_type,
+      title: meeting.title ?? "",
+      summary: meeting.summary ?? "",
+      draftNotesDoc: doc,
+      blockersText: readAnalysisSectionText(meeting.blockers, doc, "blockers"),
+      keyTopicsText: readAnalysisSectionText(meeting.key_topics, doc, "key_topics"),
+      keyDecisionsText: readAnalysisSectionText(
+        meeting.key_decisions,
+        doc,
+        "key_decisions",
+      ),
+      risksAndIssuesText: readAnalysisSectionText(
+        meeting.risks_and_issues,
+        doc,
+        "risks_and_issues",
+      ),
+      followUpText: readAnalysisSectionText(meeting.follow_up, doc, "follow_up"),
+      keyPointsText: readAnalysisSectionText(meeting.key_points, doc, "key_points"),
+      actionItems,
+    };
+  }, [
+    meeting,
+    draftNotesDoc,
+    editMode,
+    canEdit,
+    editTitle,
+    editSummary,
+    editBlockers,
+    editKeyTopics,
+    editKeyDecisions,
+    editRisksAndIssues,
+    editFollowUp,
+    editKeyPoints,
+    editActionItems,
+    actionItems,
+  ]);
+
+  const publishReady = useMemo(
+    () => (publishSnapshot ? isDraftPublishReady(publishSnapshot) : false),
+    [publishSnapshot],
+  );
+
+  const publishButtonDisabled = publishing || saving || !publishReady;
+
+  /** 액션 담당자: 워크스페이스 전체 (회의 participants 미등록 멤버 포함) */
+  const actionAssigneeMembers = useMemo(
+    () => workspaceMembersForActionAssignee(members, meeting.participants),
+    [members, meeting.participants],
+  );
   const dateStr = new Date(meeting.meeting_date ?? meeting.created_at).toLocaleString("en-US", {
     year: "numeric", month: "long", day: "numeric",
     hour: "2-digit", minute: "2-digit", hour12: true,
   });
   const transcriptSpeakerMapping = speakerMapping;
 
-  const draftStickyChrome = Boolean(canEdit && draftSurfaceStep === "detail");
+  /** Figma Draft_01 — Edit / Delete / Publish on overview + detail (not detail-only). */
+  const showDraftShell = isReady && !isPublished;
+  /** Figma S-13-02 (217:10959) — pipeline 진행 중 상단 24px "Analyzing" 헤더. */
+  const showAnalyzingShell = !isReady && isProcessing(meeting.status);
+  const showMeetingTopShell = showDraftShell || showAnalyzingShell;
+  const draftOnDetailStep = canEdit
+    ? draftSurfaceStep === "detail"
+    : readOnlySurfaceStep === "detail";
+  const draftStickyChrome = Boolean(canEdit && showDraftShell);
   const transcriptSideOpen =
     isReady && transcriptPanelOpen && transcriptLines.length > 0;
 
@@ -1307,14 +1430,16 @@ export default function MeetingDetailPage() {
   );
   const showMdDraftRightRail = guidanceRailEligible || transcriptSideOpen;
 
-  const analyzingStageHeading =
-    meeting.status === "transcribing" ||
-    meeting.status === "diarizing" ||
-    meeting.status === "summarizing";
-
-  const analyzingFixedChrome = showWideAnalyzingLayout && canDeleteMeeting;
+  /** 분석 중: 오너만 Edit/Delete/Publish(비활성). 생성자 멤버는 Delete만 (draft 동일). */
+  const showOwnerAnalyzingChrome = showWideAnalyzingLayout && meetingRole === "owner";
+  const showCreatorDeleteOnlyChrome =
+    canDeleteMeeting &&
+    meetingRole === "creator" &&
+    (showWideAnalyzingLayout || showDraftShell);
   const scrollBottomPad =
-    draftStickyChrome || analyzingFixedChrome ? "pb-28 md:pb-24" : "";
+    draftStickyChrome || showOwnerAnalyzingChrome || showCreatorDeleteOnlyChrome
+      ? "pb-28 md:pb-24"
+      : "";
 
   const recordingLabel = resolveRecordingLabel(meeting.audio_file_name, meeting.audio_file_url);
   const displayDurationSec =
@@ -1329,15 +1454,31 @@ export default function MeetingDetailPage() {
   })();
 
   const showDraftNotionBanner = isReady && !isPublished && notionConnected !== null;
-  const showPublishedNotionBanner =
-    isPublished && wsDbRole === "owner" && notionConnected === false;
+  const showPublishedNotionBanner = isPublished && notionConnected !== null;
   const draftNotionBannerVariant = resolveDraftNotionBannerVariant(
     wsDbRole === "owner",
     notionConnected === true,
   );
+  const publishedNotionBannerVariant = showPublishedNotionBanner
+    ? resolvePublishedNotionBannerVariant(
+        wsDbRole === "owner",
+        notionConnected === true,
+        Boolean(meeting.notion_page_id?.trim()),
+      )
+    : null;
+
+  const workflowPhase = meetingWorkflowPhase(meeting.approval_status, meeting.status);
+  const showMeetingMetaCard = !(showDraftShell && draftOnDetailStep);
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="flex flex-1 flex-col overflow-hidden bg-[#f8fafc]">
+      {showDraftShell ? (
+        <DashboardHeader title="Draft" onBack={() => router.push("/meetings")} />
+      ) : null}
+      {showAnalyzingShell ? (
+        <DashboardHeader title="Analyzing" onBack={() => router.push("/meetings")} />
+      ) : null}
+
       <DraftDeleteMeetingModal
         open={deleteModal}
         deleting={deleting}
@@ -1461,93 +1602,113 @@ export default function MeetingDetailPage() {
               }
             >
             <div className={`min-w-0 space-y-6 ${canEdit ? "" : "w-full"}`}>
-          {/* 뒤로가기 */}
-          <button onClick={() => router.push("/meetings")} className="inline-flex items-center gap-1.5 text-sm text-[#64748b] hover:text-[#0a2540] transition-colors">
-            <ArrowLeft className="h-4 w-4" /> Back to Meetings
-          </button>
+          {!showMeetingTopShell ? (
+            <button
+              onClick={() => router.push("/meetings")}
+              className="inline-flex items-center gap-1.5 text-sm text-[#64748b] hover:text-[#0a2540] transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4" /> Back to Meetings
+            </button>
+          ) : null}
 
-          {/* 헤더 카드 */}
-          <div className="rounded-xl border border-[#e2e8f0] bg-white p-6 shadow-sm space-y-3">
-            <div className="flex items-start justify-between gap-4">
+          {showDraftShell && draftOnDetailStep ? (
+            <div className="flex flex-wrap items-start justify-between gap-4">
               {editMode && canEdit ? (
                 <input
                   type="text"
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
                   placeholder="Meeting title"
-                  className="flex-1 text-xl font-bold leading-snug text-[#0a2540] rounded-xl border border-[#e2e8f0] px-3 py-2 outline-none focus:border-[#ff6b35]"
+                  className="min-w-[12rem] flex-1 text-2xl font-bold leading-snug text-[#0a2540] rounded-xl border border-[#e2e8f0] bg-white px-3 py-2 outline-none focus:border-[#ff6b35]"
                 />
-              ) : analyzingStageHeading ? (
-                <div className="min-w-0 flex-1">
-                  <h1 className="text-xl font-bold leading-snug text-[#0a2540]">Analyzing</h1>
-                  <p className="mt-1 truncate text-sm font-semibold text-[#64748b]" title={meeting.title ?? ""}>
-                    {meeting.title?.trim() || "Untitled meeting"}
-                  </p>
-                </div>
               ) : (
-                <h1 className="text-xl font-bold leading-snug text-[#0a2540]">
-                  {meeting.title || "Untitled Meeting"}
-                </h1>
+                <h2 className="min-w-0 flex-1 text-2xl font-bold leading-snug text-[#0a2540]">
+                  {meeting.title?.trim() || "Untitled Meeting"}
+                </h2>
               )}
-              <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                {meeting.approval_status !== "published" ? (
-                  <StatusBadge status={meeting.status} />
-                ) : null}
-                {isReady && transcriptLines.length > 0 ? (
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <MeetingWorkflowStatusBadge phase="draft" />
+                {transcriptLines.length > 0 ? (
                   <button
                     type="button"
                     onClick={() => setTranscriptPanelOpen((prev) => !prev)}
                     className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
                       transcriptPanelOpen
                         ? "border-[#ff6b35] bg-[#fff4f0] text-[#ff6b35]"
-                        : "border-[#e2e8f0] text-[#64748b] hover:bg-[#f8fafc]"
+                        : "border-[#e2e8f0] bg-white text-[#64748b] hover:bg-[#f8fafc]"
                     }`}
                   >
                     <FileText className="h-3.5 w-3.5" />
                     {transcriptPanelOpen ? "Hide transcript" : "View transcript"}
                   </button>
                 ) : null}
-                {meeting.approval_status === "published" && (
-                  <span className="flex items-center gap-1.5 rounded-lg bg-green-50 px-3 py-1.5 text-sm font-bold text-green-700">✅ Published</span>
-                )}
-                {/* F7: PUB-003 — Notion 페이지 링크 */}
-                {isPublished && meeting.notion_page_id && (
-                  <a
-                    href={`https://www.notion.so/${meeting.notion_page_id.replace(/-/g, "")}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] bg-white px-3 py-1.5 text-sm font-semibold text-[#0a2540] hover:bg-[#f8fafc]"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="shrink-0">
-                      <rect x="3" y="2" width="18" height="20" rx="2" stroke="currentColor" strokeWidth="1.5" />
-                      <path d="M7 6.5V17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                      <path d="M7 6.5L17 17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                      <path d="M17 6.5V17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                    </svg>
-                    View in Notion
-                  </a>
-                )}
-                {/* F7: PUB-004 — Notion 티켓 수 */}
-                {isPublished && actionItems.filter((a) => a.notion_page_id).length > 0 && (
-                  <span className="flex items-center gap-1.5 rounded-lg bg-[#f0fdf4] px-3 py-1.5 text-sm font-semibold text-[#16a34a]">
-                    🎫 {actionItems.filter((a) => a.notion_page_id).length} ticket{actionItems.filter((a) => a.notion_page_id).length === 1 ? "" : "s"} created
-                  </span>
-                )}
-                {/* 상단 휴지통 아이콘은 제거. 삭제는 하단 Delete 버튼으로 일원화. */}
               </div>
             </div>
-            <div className="flex items-center gap-1.5 text-sm text-[#64748b]">
-              <CalendarDays className="h-4 w-4" />{dateStr}
-            </div>
-          </div>
+          ) : null}
+
+          {showMeetingMetaCard ? (
+            <MeetingMetaSummaryCard
+              title={meeting.title}
+              dateLabel={dateStr}
+              workflowPhase={workflowPhase}
+              trailing={
+                <>
+                  {workflowPhase === null && meeting.status === "error" ? (
+                    <StatusBadge status="error" className="px-4 py-2 text-sm font-bold" />
+                  ) : null}
+                  {isReady && !showDraftShell && transcriptLines.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setTranscriptPanelOpen((prev) => !prev)}
+                      className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
+                        transcriptPanelOpen
+                          ? "border-[#ff6b35] bg-[#fff4f0] text-[#ff6b35]"
+                          : "border-[#e2e8f0] bg-white text-[#64748b] hover:bg-[#f8fafc]"
+                      }`}
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      {transcriptPanelOpen ? "Hide transcript" : "View transcript"}
+                    </button>
+                  ) : null}
+                  {isPublished && meeting.notion_page_id ? (
+                    <a
+                      href={`https://www.notion.so/${meeting.notion_page_id.replace(/-/g, "")}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] bg-white px-3 py-1.5 text-sm font-semibold text-[#0a2540] hover:bg-[#f8fafc]"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="shrink-0">
+                        <rect x="3" y="2" width="18" height="20" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                        <path d="M7 6.5V17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                        <path d="M7 6.5L17 17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                        <path d="M17 6.5V17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                      </svg>
+                      View in Notion
+                    </a>
+                  ) : null}
+                  {isPublished && actionItems.filter((a) => a.notion_page_id).length > 0 ? (
+                    <span className="flex items-center gap-1.5 rounded-lg bg-[#f0fdf4] px-3 py-1.5 text-sm font-semibold text-[#16a34a]">
+                      🎫 {actionItems.filter((a) => a.notion_page_id).length} ticket
+                      {actionItems.filter((a) => a.notion_page_id).length === 1 ? "" : "s"} created
+                    </span>
+                  ) : null}
+                </>
+              }
+            />
+          ) : null}
 
           {showDraftNotionBanner ? (
             <DraftNotionStatusBanner
               variant={draftNotionBannerVariant}
               workspaceName={draftWorkspaceName}
             />
-          ) : showPublishedNotionBanner ? (
-            <DraftNotionStatusBanner variant="owner_published_not_synced" workspaceName={draftWorkspaceName} />
+          ) : showPublishedNotionBanner && publishedNotionBannerVariant ? (
+            <DraftNotionStatusBanner
+              variant={publishedNotionBannerVariant}
+              workspaceName={draftWorkspaceName}
+              publishedAtIso={meeting.published_at ?? meeting.created_at}
+              notionPageId={meeting.notion_page_id}
+            />
           ) : null}
 
             {/* 분석 중(ready 이전) 메타 섹션. ready/published는 overview/detail 2단계에서 렌더링. */}
@@ -1830,13 +1991,7 @@ export default function MeetingDetailPage() {
                   <MeetingDraftActionItemsSection
                     items={editMode && canEdit ? editActionItems : actionItems}
                     participantNames={meeting.participants}
-                    members={members.map((m) => ({
-                      user_id: m.user_id,
-                      displayName: m.displayName,
-                      email: m.email ?? "",
-                      avatar_url: m.avatar_url,
-                      name: m.name,
-                    }))}
+                    members={actionAssigneeMembers}
                     editMode={Boolean(editMode && canEdit)}
                     canPatchInteractive={canEdit}
                     onPatchRow={(rowId, patch) =>
@@ -1854,6 +2009,17 @@ export default function MeetingDetailPage() {
                         ? (rowId, next) => {
                             setEditActionItems((prev) =>
                               prev.map((a) => (a.id === rowId ? { ...a, content: next } : a)),
+                            );
+                          }
+                        : undefined
+                    }
+                    onTaskTitleDraftChange={
+                      editMode && canEdit
+                        ? (rowId, next) => {
+                            setEditActionItems((prev) =>
+                              prev.map((a) =>
+                                a.id === rowId ? { ...a, task_title: next || null } : a,
+                              ),
                             );
                           }
                         : undefined
@@ -1934,7 +2100,7 @@ export default function MeetingDetailPage() {
                       </aside>
                     ) : guidanceRailEligible ? (
                       <DraftGuidanceSidebar
-                        publishBlockedForActions={Boolean(canEdit && publishBlockedByActions)}
+                        publishBlockedForActions={Boolean(canEdit && !publishReady)}
                       />
                     ) : null}
                   </div>
@@ -1944,17 +2110,58 @@ export default function MeetingDetailPage() {
 
             {guidanceRailEligible && !transcriptPanelOpen ? (
               <div className="mt-8 md:hidden">
-                <DraftGuidanceSidebar publishBlockedForActions={Boolean(canEdit && publishBlockedByActions)} />
+                <DraftGuidanceSidebar publishBlockedForActions={Boolean(canEdit && !publishReady)} />
               </div>
             ) : null}
           </div>
         </div>
       </div>
 
-      {analyzingFixedChrome ? (
+      {showOwnerAnalyzingChrome ? (
         <div
           role="toolbar"
           aria-label="Meeting actions during analysis"
+          className="fixed bottom-0 left-[240px] right-0 z-[42] flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] bg-white/95 px-6 py-4 shadow-[0_-4px_24px_rgba(10,37,64,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/90"
+        >
+          <button
+            type="button"
+            onClick={enterEditMode}
+            disabled={!isReady}
+            className="flex h-11 min-w-[5.5rem] items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white px-5 text-[14px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Pencil className="h-4 w-4" aria-hidden /> Edit
+          </button>
+          <button
+            type="button"
+            onClick={openDeleteMeetingModal}
+            className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] bg-red-600 px-6 text-[14px] font-bold text-white transition-colors hover:bg-red-700"
+          >
+            Delete
+          </button>
+          <button
+            type="button"
+            onClick={() => void handlePublishClick()}
+            disabled={publishButtonDisabled || !isReady}
+            className="inline-flex h-11 min-w-[8rem] items-center justify-center gap-2 rounded-[10px] px-8 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
+          >
+            {publishing ? (
+              <span
+                className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"
+                aria-hidden
+              />
+            ) : (
+              <Send className="h-4 w-4" aria-hidden />
+            )}
+            Publish
+          </button>
+        </div>
+      ) : null}
+
+      {showCreatorDeleteOnlyChrome ? (
+        <div
+          role="toolbar"
+          aria-label="Meeting actions"
           className="fixed bottom-0 left-[240px] right-0 z-[42] flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] bg-white/95 px-6 py-4 shadow-[0_-4px_24px_rgba(10,37,64,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/90"
         >
           <button
@@ -1994,8 +2201,9 @@ export default function MeetingDetailPage() {
           <button
             type="button"
             onClick={() => void handlePublishClick()}
-            disabled={publishing || saving}
-            className="inline-flex h-11 min-w-[8rem] items-center justify-center gap-2 rounded-[10px] px-8 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:opacity-50"
+            disabled={publishButtonDisabled}
+            title={!publishReady ? "Complete required fields before publishing" : undefined}
+            className="inline-flex h-11 min-w-[8rem] items-center justify-center gap-2 rounded-[10px] px-8 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
           >
             {publishing ? (

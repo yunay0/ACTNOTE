@@ -13,7 +13,7 @@ import {
   dueDateYmdToDatetimeLocalStart,
   fromDatetimeLocalToDueFields,
 } from "@/lib/meetings/deadline-local";
-import { deriveActionItemTaskTitle } from "@/lib/meetings/action-item-task-title";
+import { resolveActionItemTaskTitle } from "@/lib/meetings/action-item-task-title";
 import { workspaceMemberInitials } from "@/lib/user/member-display";
 
 /** Figma 157:11934 — 필수 Assignee / Due Date 외곽 (항상 주황, 클릭 가능) */
@@ -25,6 +25,7 @@ const MANDATORY_ORANGE_BUTTON = `${MANDATORY_ORANGE_SHELL} cursor-pointer hover:
 interface ActionRow {
   id: string;
   content: string;
+  task_title?: string | null;
   assignee: string | null;
   assignee_user_id: string | null;
   due_date: string | null;
@@ -50,6 +51,7 @@ interface MeetingDraftActionItemsSectionProps {
     patch: Record<string, string | null | undefined>,
   ) => Promise<{ ok: boolean; error?: string }>;
   onContentDraftChange?: (rowId: string, next: string) => void;
+  onTaskTitleDraftChange?: (rowId: string, next: string) => void;
   /** editMode일 때 row 삭제 핸들러 (없으면 컬럼 미노출) */
   onDeleteRow?: (rowId: string) => void;
 }
@@ -348,9 +350,19 @@ export function MeetingDraftActionItemsSection(props: MeetingDraftActionItemsSec
                     />
                   </td>
                   <td className="px-4 py-3">
-                    <p className="text-[13px] font-bold leading-snug text-[#0a2540]">
-                      {deriveActionItemTaskTitle(row.content)}
-                    </p>
+                    {props.editMode ? (
+                      <input
+                        type="text"
+                        value={resolveActionItemTaskTitle(row.content, row.task_title)}
+                        onChange={(e) => props.onTaskTitleDraftChange?.(row.id, e.target.value)}
+                        placeholder="Task title"
+                        className="w-full rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-[13px] font-bold leading-snug text-[#0a2540] outline-none focus:border-[#ff6b35]"
+                      />
+                    ) : (
+                      <p className="text-[13px] font-bold leading-snug text-[#0a2540]">
+                        {resolveActionItemTaskTitle(row.content, row.task_title)}
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     {props.editMode ? (

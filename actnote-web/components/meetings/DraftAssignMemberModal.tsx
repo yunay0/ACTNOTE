@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { ArrowLeft, Loader2, Search, X } from "lucide-react";
 import { DraftModalPortal } from "@/components/meetings/DraftModalPortal";
+import { suggestedParticipantAssignees } from "@/lib/meetings/action-item-assignees";
 import { workspaceMemberDisplayName } from "@/lib/user/member-display";
 
 export interface DraftAssignMemberOption {
@@ -31,29 +32,6 @@ function membersFilter(members: DraftAssignMemberOption[], q: string): DraftAssi
       m.displayName.toLowerCase().includes(s) ||
       Boolean(m.email && m.email.toLowerCase().includes(s)),
   );
-}
-
-function resolveRecommended(
-  members: DraftAssignMemberOption[],
-  participantNames: string[],
-): DraftAssignMemberOption[] {
-  const picks: DraftAssignMemberOption[] = [];
-  const needles = participantNames.map((p) => p.trim().toLowerCase()).filter(Boolean);
-
-  for (const m of members) {
-    if (picks.length >= 3) break;
-    const dn = m.displayName.toLowerCase();
-    const em = m.email.toLowerCase();
-    const hit = needles.some(
-      (p) => p === dn || p === em || dn.includes(p) || p.includes(dn) || (em && em.includes(p)),
-    );
-    if (hit) picks.push(m);
-  }
-  for (const m of members) {
-    if (picks.length >= 3) break;
-    if (!picks.some((x) => x.user_id === m.user_id)) picks.push(m);
-  }
-  return picks;
 }
 
 function MemberAvatar({ member, size = 40 }: { member: DraftAssignMemberOption; size?: number }): ReactElement {
@@ -108,8 +86,8 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
   const [selected, setSelected] = useState<DraftAssignMemberOption | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const recommended = useMemo(
-    () => resolveRecommended(props.members, props.participantNames ?? []),
+  const suggestedParticipants = useMemo(
+    () => suggestedParticipantAssignees(props.members, props.participantNames ?? []),
     [props.members, props.participantNames],
   );
 
@@ -169,7 +147,8 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
                   Assign Member
                 </h2>
                 <p className="mt-2 text-[14px] leading-6 text-[#64748b]">
-                  Please select a member for this task.
+                  Any workspace member can be assigned, including people not listed as meeting
+                  participants.
                 </p>
               </div>
 
@@ -185,16 +164,16 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
                 )}
               </div>
 
-              {recommended.length > 0 ? (
+              {suggestedParticipants.length > 0 ? (
                 <div className="w-full max-w-[412px]">
                   <p className="flex items-center gap-1.5 text-[13px] font-bold text-[#0a2540]">
                     <span className="text-[11px]" aria-hidden>
                       ▼
                     </span>
-                    Recommended
+                    Meeting participants
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {recommended.map((m) => (
+                    {suggestedParticipants.map((m) => (
                       <RecommendedChip
                         key={m.user_id}
                         member={m}
@@ -207,6 +186,7 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
               ) : null}
 
               <div className="w-full max-w-[412px]">
+                <p className="mb-2 text-[13px] font-bold text-[#0a2540]">All workspace members</p>
                 <div className="flex h-14 items-center gap-1 rounded-[28px] border border-[#757575] bg-white px-1 focus-within:border-[#0a2540]">
                   {searchQ.trim() ? (
                     <button
@@ -274,7 +254,10 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
                         type="button"
                         role="option"
                         aria-selected={selected?.user_id === m.user_id}
-                        onClick={() => pickMember(m)}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          pickMember(m);
+                        }}
                         className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[#f8fafc] ${
                           selected?.user_id === m.user_id ? "bg-[#fff4f0]" : ""
                         }`}

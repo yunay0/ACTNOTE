@@ -20,9 +20,16 @@ interface DashboardHeaderProps {
   title?: string;
   backHref?: string;
   onBack?: () => void;
+  /** Figma Home — amber notification bell (default: slate). */
+  notificationBellAccent?: boolean;
 }
 
-export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardHeaderProps) {
+export function DashboardHeader({
+  title = "Home",
+  backHref,
+  onBack,
+  notificationBellAccent = false,
+}: DashboardHeaderProps) {
   const router = useRouter();
   const { setCurrentWorkspace } = useWorkspaceContext();
   const {
@@ -218,9 +225,12 @@ export function DashboardHeader({ title = "Home", backHref, onBack }: DashboardH
         <div ref={bellRef} className="relative">
           <button
             onClick={() => { setBellOpen((v) => !v); if (!bellOpen) loadNotifications(); }}
-            className="relative flex h-10 w-10 items-center justify-center rounded-lg text-[#64748b] hover:bg-[#f8fafc] transition-colors"
+            className={`relative flex h-10 w-10 items-center justify-center rounded-lg transition-colors hover:bg-[#f8fafc] ${
+              notificationBellAccent ? "text-[#f59e0b]" : "text-[#64748b]"
+            }`}
+            aria-label="Notifications"
           >
-            <Bell className="h-5 w-5" />
+            <Bell className="h-5 w-5" strokeWidth={2.25} fill={notificationBellAccent ? "currentColor" : "none"} />
             {unreadCount > 0 && (
               <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#ff6b35] text-[10px] font-bold text-white">
                 {unreadCount > 9 ? "9+" : unreadCount}

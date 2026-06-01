@@ -364,3 +364,13 @@ export function deriveActionItemTaskTitle(content: string): string {
 
   return clampTitle(keywords.join(" "));
 }
+
+/** DB `task_title` override, else derived from description. */
+export function resolveActionItemTaskTitle(
+  content: string,
+  taskTitle?: string | null,
+): string {
+  const custom = taskTitle?.trim();
+  if (custom) return custom;
+  return deriveActionItemTaskTitle(content);
+}
