@@ -36,6 +36,24 @@ function OnboardingInner() {
         return;
       }
 
+      // 온보딩 중 "← Go Back"(edit=1): 멤버십/도메인 체크보다 먼저 처리한다.
+      // post-038 흐름에서는 워크스페이스 생성 시 membership 도 함께 생기므로,
+      // 아래 멤버십 체크를 그대로 두면 /workspace/select 로 튕겨 이름 편집이 불가능하다 (INT-001).
+      if (searchParams.get("edit") === "1") {
+        const { data: ownRows } = await (supabase as any)
+          .from("workspaces")
+          .select("name")
+          .eq("owner_id", data.user.id)
+          .limit(1);
+        const ownWs = ownRows?.[0];
+        if (ownWs) {
+          setName((ownWs.name as string) ?? "");
+          setCheckingAuth(false);
+          return;
+        }
+        // 내가 owner 인 워크스페이스가 없으면 일반 흐름으로 진행한다.
+      }
+
       const { data: memberships, error: memErr } = await (supabase as any)
         .from("workspace_members")
         .select("workspace_id")
@@ -108,14 +126,8 @@ function OnboardingInner() {
       const ws = rows?.[0];
       const displayName = ws?.name ?? "";
       if (ws && !displayName.endsWith("'s workspace")) {
-        // 온보딩 중 "← Go Back" 으로 돌아온 경우(edit=1): /workspace/select 로 튕기지 않고
-        // 기존 이름을 폼에 채워 다시 편집할 수 있게 한다 (INT-001).
-        if (searchParams.get("edit") === "1") {
-          setName(displayName);
-        } else {
-          router.replace("/workspace/select");
-          return;
-        }
+        router.replace("/workspace/select");
+        return;
       }
 
       setCheckingAuth(false);
