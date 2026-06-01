@@ -19,6 +19,18 @@ function NotionIcon({ size = 24, color = "#191919" }: { size?: number; color?: s
   );
 }
 
+// Document-with-lines icon — empty-state placeholder (Figma 28×28, 외곽 + 길이 다른 3줄)
+function NotionDocIcon({ size = 28, color = "#ADB5BD" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 28 28" fill="none">
+      <rect x="4.67" y="3.5" width="18.66" height="21" rx="2.5" stroke={color} strokeWidth="2.1" />
+      <rect x="8.16" y="8.17" width="11.67" height="1.75" rx="0.87" fill={color} />
+      <rect x="8.16" y="12.83" width="9.33" height="1.75" rx="0.87" fill={color} />
+      <rect x="8.16" y="17.5" width="10.5" height="1.75" rx="0.87" fill={color} />
+    </svg>
+  );
+}
+
 interface Integration {
   meeting_db_id: string | null;
   action_db_id: string | null;
@@ -150,7 +162,7 @@ export default function IntegrationsSettingsClient({ bannerError }: { bannerErro
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <DashboardHeader title="Integrations" backHref="/meetings" />
+      <DashboardHeader title="Workspace Settings" backHref="/meetings" />
 
       {showDisconnectModal && (
         <DisconnectModal
@@ -176,7 +188,7 @@ export default function IntegrationsSettingsClient({ bannerError }: { bannerErro
             {/* Section header */}
             <div className="flex items-start justify-between">
               <div className="flex flex-col gap-[5px]">
-                <p className="text-[18px] font-semibold text-[#212529]">Notion</p>
+                <p className="text-[18px] font-semibold text-[#212529]">Notion Integration</p>
                 <p className="text-[14px] text-[#6C757D]">Publish meeting notes and auto-create action item tickets</p>
               </div>
 
@@ -191,8 +203,8 @@ export default function IntegrationsSettingsClient({ bannerError }: { bannerErro
                 </div>
               ) : (
                 <div className="flex items-center gap-[6px]">
-                  <NotionIcon size={12} color="#000" />
-                  <span className="text-[16px] text-[#000]">Not Connected</span>
+                  <span className="size-1.5 shrink-0 rounded-full bg-black" aria-hidden />
+                  <span className="text-[14px] text-[#000]">Not Connected</span>
                 </div>
               )}
             </div>
@@ -284,7 +296,7 @@ export default function IntegrationsSettingsClient({ bannerError }: { bannerErro
                 {/* Empty state */}
                 <div className="flex flex-col items-center gap-[6px] rounded-[10px] bg-[#F8F9FA] px-6 pb-11 pt-7">
                   <div className="flex size-14 items-center justify-center rounded-[12px] bg-[#F1F3F5]">
-                    <NotionIcon size={28} color="#ADB5BD" />
+                    <NotionDocIcon size={28} color="#ADB5BD" />
                   </div>
                   <div className="flex flex-col items-center pt-[10px]">
                     <p className="text-[15px] font-semibold text-[#212529]">Notion is not connected</p>
@@ -314,7 +326,9 @@ export default function IntegrationsSettingsClient({ bannerError }: { bannerErro
                     onClick={() => router.push("/onboarding/notion/apikey?from=settings")}
                     className="flex h-[36px] items-center gap-2 rounded-[8px] bg-[#F26522] px-[18px] text-[14px] font-bold text-white hover:opacity-90"
                   >
-                    <NotionIcon size={14} color="#fff" />
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+                      <rect x="1" y="1" width="12" height="12" rx="2" stroke="#FFFFFF" strokeWidth="1.6" />
+                    </svg>
                     Connect Notion
                   </button>
                 </div>
