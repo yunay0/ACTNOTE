@@ -39,6 +39,7 @@ import {
 } from "@/components/meetings/DraftNotionStatusBanner";
 import { useNotionIntegrationStatus } from "@/lib/hooks/useNotionIntegrationStatus";
 import { DraftOverviewPanel } from "@/components/meetings/DraftOverviewPanel";
+import { DraftMeetingInformationFields } from "@/components/meetings/DraftMeetingInformationFields";
 import { MeetingDraftActionItemsSection } from "@/components/meetings/MeetingDraftActionItemsSection";
 import { MeetingAnalysisResultsBlock } from "@/components/meetings/MeetingAnalysisResultsBlock";
 import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
@@ -1652,110 +1653,34 @@ export default function MeetingDetailPage() {
             {/* 분석 중(ready 이전) 메타 섹션. ready/published는 overview/detail 2단계에서 렌더링. */}
             {!isReady && (
               <>
-                <section className="space-y-5">
-                  <DraftSectionHeading step={1} title="Meeting Information" />
-                  <div className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-5">
-                    <dl className="grid gap-4 sm:grid-cols-2">
-                    <div className="sm:col-span-2">
-                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
-                        Meeting title
-                      </dt>
-                      <dd className="mt-0.5 text-sm font-medium text-[#0a2540]">
-                        {meeting.title?.trim() || "—"}
-                      </dd>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
-                        Meeting type
-                      </dt>
-                      <dd className="mt-0.5 text-sm font-medium text-[#0a2540]">
-                        {meeting.meeting_type
-                          ? formatMeetingTypeLabel(meeting.meeting_type)
-                          : "—"}
-                      </dd>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
-                        Date & time
-                      </dt>
-                      <dd className="mt-0.5 text-sm font-medium text-[#0a2540]">
-                        {meeting.meeting_date || meeting.created_at
-                          ? new Date(meeting.meeting_date ?? meeting.created_at).toLocaleString(
-                              "en-US",
-                              { dateStyle: "medium", timeStyle: "short" }
-                            )
-                          : "—"}
-                      </dd>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
-                        Participants<span className="text-[#ff6b35]"> *</span>
-                      </dt>
-                      <dd className="mt-2">
-                        {meeting.participants.length > 0 ? (
-                          <div className="flex flex-wrap gap-2">
-                            {meeting.participants.map((p, i) => (
-                              <span
-                                key={`${p}-${i}`}
-                                className="rounded-full border border-[#e2e8f0] bg-white px-3 py-1 text-xs font-medium text-[#0a2540]"
-                              >
-                                {p}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-sm font-medium text-[#94a3b8]">—</span>
-                        )}
-                      </dd>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
-                        Description{" "}
-                        <span className="font-normal normal-case text-[#cbd5e1]">(optional)</span>
-                      </dt>
-                      <dd className="mt-0.5 whitespace-pre-wrap text-sm leading-relaxed text-[#0a2540]">
-                        {meeting.description?.trim() ? (
-                          meeting.description
-                        ) : (
-                          <span className="font-medium text-[#94a3b8]">—</span>
-                        )}
-                      </dd>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#94a3b8]">
-                        Created by
-                      </dt>
-                      <dd className="mt-1">
-                        {responsibleDisplayLabel ? (
-                          responsibleIsFormerMember ? (
-                            <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px]">
-                              <div className="flex items-center gap-2 text-sm font-medium text-[#94a3b8]">
-                                <FormerMemberSnapshotAvatar label={responsibleDisplayLabel} />
-                                <span>{responsibleDisplayLabel}</span>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-[#64748b]">
-                              {responsibleMember ? (
-                                <CreatedByAvatar member={responsibleMember} />
-                              ) : null}
-                              <span>{responsibleDisplayLabel}</span>
-                            </div>
-                          )
-                        ) : meeting.responsible_user_id ? (
-                          <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px] text-sm font-normal italic text-[#94a3b8]">
-                            Loading…
-                          </div>
-                        ) : (
-                          <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px] text-sm font-medium text-[#94a3b8]">
-                            —
-                          </div>
-                        )}
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-                </section>
+                <DraftMeetingInformationFields
+                  meetingTitle={meeting.title}
+                  meetingTypeRaw={meeting.meeting_type}
+                  meetingScheduledAtIso={meeting.meeting_date ?? meeting.created_at ?? null}
+                  description={meeting.description}
+                  participantNames={meeting.participants}
+                  createdBy={
+                    responsibleDisplayLabel ? (
+                      responsibleIsFormerMember ? (
+                        <span className="inline-flex items-center gap-2 text-[#94a3b8]">
+                          <FormerMemberSnapshotAvatar label={responsibleDisplayLabel} />
+                          <span>{responsibleDisplayLabel}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex flex-wrap items-center gap-2 font-medium text-[#475569]">
+                          {responsibleMember ? (
+                            <CreatedByAvatar member={responsibleMember} />
+                          ) : null}
+                          <span>{responsibleDisplayLabel}</span>
+                        </span>
+                      )
+                    ) : meeting.responsible_user_id ? (
+                      <span className="italic text-[#94a3b8]">Loading…</span>
+                    ) : (
+                      <span className="text-[#94a3b8]">—</span>
+                    )
+                  }
+                />
                 {/* Uploaded Recording 카드: 분석 중(ready 이전)만 표시. */}
                 {showWideAnalyzingLayout ? (
                   <section className="space-y-5">

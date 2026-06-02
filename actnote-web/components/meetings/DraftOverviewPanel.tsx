@@ -2,9 +2,9 @@
 
 import type { ReactElement } from "react";
 import { BarChart3, CalendarDays, Music2, ArrowRight } from "lucide-react";
-import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 import { formatRecordingSizeMbDecimal } from "@/lib/meeting/recordingFilename";
 import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
+import { DraftMeetingInformationFields } from "@/components/meetings/DraftMeetingInformationFields";
 
 function formatMmSs(seconds: number | null | undefined): string {
   const s = seconds == null || !Number.isFinite(seconds) ? 0 : Math.max(0, Math.floor(seconds));
@@ -49,85 +49,20 @@ interface DraftOverviewPanelProps {
  * 분석 완료 직후 Draft 첫 화면 — 회의 정보 + 녹음 카드 후 Next 진입점.
  */
 export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement {
-  const typeLabel = props.meetingTypeRaw?.trim()
-    ? formatMeetingTypeLabel(props.meetingTypeRaw)
-    : "—";
-  const whenStr =
-    props.meetingScheduledAtIso != null && props.meetingScheduledAtIso.trim() !== ""
-      ? new Date(props.meetingScheduledAtIso).toLocaleString("en-US", {
-          dateStyle: "medium",
-          timeStyle: "short",
-        })
-      : "—";
   const fileLabel = resolveRecordingLabel(props.recordingFileName, props.recordingUrl);
   const hasRecording = Boolean(props.recordingUrl?.trim());
 
   return (
     <div className="space-y-10">
-      <section className="space-y-5">
-        <DraftSectionHeading step={1} title="Meeting Information" />
-
-        <div className="space-y-4">
-          <Field label="Meeting Title" required>
-            <GrayBox>{props.meetingTitle?.trim() || "Untitled Meeting"}</GrayBox>
-          </Field>
-
-          <Field label="Meeting Type" required>
-            <GrayBox>{typeLabel}</GrayBox>
-          </Field>
-
-          <Field label="Date & Time" required>
-            <GrayBox>{whenStr}</GrayBox>
-          </Field>
-
-          <Field label="Description" sub="(Optional)">
-            <GrayBox>
-              {props.description?.trim() ? (
-                <span className="whitespace-pre-wrap">{props.description}</span>
-              ) : (
-                <span className="text-[#94a3b8]">Empty</span>
-              )}
-            </GrayBox>
-          </Field>
-
-          <div className="space-y-2">
-            <span className="text-[13px] font-bold text-[#0a2540]">
-              Participants<span className="text-[#ff6b35]"> *</span>
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {props.participantNames.length > 0 ? (
-                props.participantNames.map((p, i) => (
-                  <span
-                    key={`${p}-${i}`}
-                    className="rounded-full border border-[#e2e8f0] bg-[#f8fafc] px-3 py-1 text-xs font-semibold text-[#0a2540]"
-                  >
-                    {p}
-                  </span>
-                ))
-              ) : (
-                <span className="text-[13px] text-[#94a3b8]">None listed</span>
-              )}
-            </div>
-          </div>
-
-          <Field label="Created by">
-            <GrayBox>
-              {props.responsibleLabel?.trim() ? (
-                props.responsibleIsFormerMember ? (
-                  <span className="inline-flex items-center gap-2 text-[#94a3b8]">
-                    <FormerMemberAvatar label={props.responsibleLabel} />
-                    <span>{props.responsibleLabel}</span>
-                  </span>
-                ) : (
-                  props.responsibleLabel
-                )
-              ) : (
-                <span className="text-[#94a3b8]">—</span>
-              )}
-            </GrayBox>
-          </Field>
-        </div>
-      </section>
+      <DraftMeetingInformationFields
+        meetingTitle={props.meetingTitle}
+        meetingTypeRaw={props.meetingTypeRaw}
+        meetingScheduledAtIso={props.meetingScheduledAtIso}
+        description={props.description}
+        participantNames={props.participantNames}
+        responsibleLabel={props.responsibleLabel}
+        responsibleIsFormerMember={props.responsibleIsFormerMember}
+      />
 
       <section className="space-y-5">
         <DraftSectionHeading
@@ -171,7 +106,9 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
             </div>
           </div>
         ) : (
-          <GrayBox>No recording attachment on this meeting.</GrayBox>
+          <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px] text-[14px] text-[#94a3b8]">
+            No recording attachment on this meeting.
+          </div>
         )}
       </section>
 
@@ -185,48 +122,5 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
         </button>
       </div>
     </div>
-  );
-}
-
-function Field({
-  label,
-  children,
-  required,
-  sub,
-}: {
-  label: string;
-  children: React.ReactNode;
-  required?: boolean;
-  sub?: string;
-}): ReactElement {
-  return (
-    <div className="space-y-2">
-      <p className="text-[13px] font-bold text-[#0a2540]">
-        {label}
-        {required ? <span className="text-[#ff6b35]"> *</span> : null}{" "}
-        {sub ? <span className="font-normal text-[#94a3b8]">{sub}</span> : null}
-      </p>
-      {children}
-    </div>
-  );
-}
-
-function GrayBox({ children }: { children: React.ReactNode }): ReactElement {
-  return (
-    <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px] text-[14px] leading-relaxed text-[#475569]">
-      {children}
-    </div>
-  );
-}
-
-function FormerMemberAvatar({ label }: { label: string }): ReactElement {
-  const initial = label.trim().slice(0, 1).toUpperCase() || "?";
-  return (
-    <span
-      aria-hidden
-      className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[#e2e8f0] text-[10px] font-bold leading-none text-[#94a3b8]"
-    >
-      {initial}
-    </span>
   );
 }

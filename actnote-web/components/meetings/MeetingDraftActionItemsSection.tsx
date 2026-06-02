@@ -89,11 +89,10 @@ function GapPill(): ReactElement {
   );
 }
 
-/** Figma — 입력 완료 시 회색 pill (Mina, 05/09/2026) */
-function FilledValuePill({ children }: { children: ReactNode }): ReactElement {
+/** Due date — date text only (no leading dot); owner/member/published 동일 */
+function DueDatePill({ children }: { children: ReactNode }): ReactElement {
   return (
-    <span className="inline-flex h-5 max-w-full items-center gap-1.5 rounded-full bg-[#f4f4f4] py-0.5 pl-1.5 pr-3 text-[15px] font-medium text-[#94a3b8]">
-      <span className="size-2.5 shrink-0 rounded-full bg-[#cbd5e1]" aria-hidden />
+    <span className="inline-flex h-5 max-w-full items-center rounded-full bg-[#f4f4f4] px-3 py-0.5 text-[15px] font-medium text-[#94a3b8]">
       <span className="truncate">{children}</span>
     </span>
   );
@@ -219,7 +218,7 @@ function MandatoryDueCell({
 }): ReactElement {
   const needsD = draftActionNeedsDueGap(row);
   const dateLabel = formatDuePill(row.due_date ?? null);
-  const inner = needsD || !dateLabel ? <GapPill /> : <FilledValuePill>{dateLabel}</FilledValuePill>;
+  const inner = needsD || !dateLabel ? <GapPill /> : <DueDatePill>{dateLabel}</DueDatePill>;
 
   if (interactive) {
     return (

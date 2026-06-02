@@ -10,6 +10,7 @@ export interface DraftAssignMemberOption {
   user_id: string;
   displayName: string;
   email: string;
+  avatar_url?: string | null;
 }
 
 function initialsForMember(name: string, email: string): string {
@@ -35,13 +36,29 @@ function membersFilter(members: DraftAssignMemberOption[], q: string): DraftAssi
 }
 
 function MemberAvatar({ member, size = 40 }: { member: DraftAssignMemberOption; size?: number }): ReactElement {
+  const [broken, setBroken] = useState(false);
   const dim = `${size}px`;
   const initials = initialsForMember(member.displayName, member.email);
+  const url = member.avatar_url?.trim();
+
+  if (url && !broken) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt=""
+        className="shrink-0 rounded-full object-cover"
+        style={{ width: dim, height: dim }}
+        onError={() => setBroken(true)}
+      />
+    );
+  }
+
   return (
     <div
       aria-hidden
       className="flex shrink-0 items-center justify-center rounded-full bg-[#f4f4f4] text-[13px] font-semibold text-[#94a3b8]"
-      style={{ width: dim, height: dim }}
+      style={{ width: dim, height: dim, fontSize: size <= 24 ? 10 : 13 }}
     >
       {initials}
     </div>
@@ -61,11 +78,11 @@ function RecommendedChip({
     <button
       type="button"
       onClick={onPick}
-      className={`inline-flex h-7 max-w-full items-center gap-1.5 rounded-full py-0.5 pl-1.5 pr-3 text-[15px] font-medium transition-colors ${
+      className={`inline-flex h-7 max-w-full items-center gap-1.5 rounded-full py-0.5 pl-1 pr-3 text-[15px] font-medium transition-colors ${
         selected ? "bg-[#fff4f0] text-[#0a2540] ring-2 ring-[#ff6b35]/40" : "bg-[#f4f4f4] text-[#94a3b8] hover:bg-[#e8ecf1]"
       }`}
     >
-      <span className="size-2.5 shrink-0 rounded-full bg-[#cbd5e1]" aria-hidden />
+      <MemberAvatar member={member} size={22} />
       <span className="truncate">{member.displayName}</span>
     </button>
   );
@@ -155,8 +172,8 @@ export function DraftAssignMemberModal(props: DraftAssignMemberModalProps): Reac
               <div className="flex w-full max-w-[412px] flex-wrap items-center gap-2 rounded-[25px] border border-[#fee2e2] bg-[#f4f4f4] px-5 py-4">
                 <span className="text-[13px] font-bold text-[#0a2540]">Assignee</span>
                 {selected ? (
-                  <span className="inline-flex h-6 items-center gap-1.5 rounded-full bg-[#fff4f0] py-0.5 pl-1.5 pr-3 text-[15px] font-medium text-[#0a2540] ring-1 ring-[#ff6b35]/30">
-                    <span className="size-2.5 shrink-0 rounded-full bg-[#ff6b35]/50" aria-hidden />
+                  <span className="inline-flex h-6 items-center gap-1.5 rounded-full bg-[#fff4f0] py-0.5 pl-1 pr-3 text-[15px] font-medium text-[#0a2540] ring-1 ring-[#ff6b35]/30">
+                    <MemberAvatar member={selected} size={20} />
                     {selected.displayName}
                   </span>
                 ) : (
