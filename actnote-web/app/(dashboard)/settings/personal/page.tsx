@@ -7,6 +7,7 @@ import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { useUserProfile } from "@/components/user/UserProfileProvider";
 import { createClient } from "@/lib/supabase/client";
 import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
+import { resolveOwnAvatarDisplayUrlWithCleanup } from "@/lib/user/avatar-cleanup";
 import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
 import { cn } from "@/lib/utils";
 
@@ -116,12 +117,20 @@ export default function PersonalSettingsPage() {
   const [transferSelectedUserId, setTransferSelectedUserId] = useState<string | null>(null);
   const [transferBusy, setTransferBusy] = useState(false);
 
-  const syncProfilePhotoDisplayFromSaved = useCallback(async (storedUrl: string | null) => {
-    const supabase = createClient();
-    const display = await resolveMeetingsImageDisplayUrl(supabase, storedUrl);
-    setProfilePhotoUrl(display);
-    setProfilePhotoBroken(false);
-  }, []);
+  const syncProfilePhotoDisplayFromSaved = useCallback(
+    async (storedUrl: string | null) => {
+      const supabase = createClient();
+      const display = await resolveOwnAvatarDisplayUrlWithCleanup(supabase, storedUrl);
+      setProfilePhotoUrl(display);
+      setProfilePhotoBroken(false);
+      // 저장된 객체가 사라져 DB(users.avatar_url)가 정리된 경우 로컬 상태·사이드바도 동기화.
+      if (storedUrl && !display) {
+        setSavedAvatarUrl(null);
+        applyAvatarUpdate(null, null);
+      }
+    },
+    [applyAvatarUpdate],
+  );
 
   useEffect(() => {
     async function load() {
