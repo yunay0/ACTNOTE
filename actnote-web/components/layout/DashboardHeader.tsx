@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, LogOut, Bell } from "lucide-react";
+import { ArrowLeft, LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   notificationClickTarget,
@@ -226,11 +226,13 @@ export function DashboardHeader({
           <button
             onClick={() => { setBellOpen((v) => !v); if (!bellOpen) loadNotifications(); }}
             className={`relative flex h-10 w-10 items-center justify-center rounded-lg transition-colors hover:bg-[#f8fafc] ${
-              notificationBellAccent ? "text-[#f59e0b]" : "text-[#64748b]"
+              notificationBellAccent ? "opacity-100" : "opacity-70"
             }`}
             aria-label="Notifications"
           >
-            <Bell className="h-5 w-5" strokeWidth={2.25} fill={notificationBellAccent ? "currentColor" : "none"} />
+            <span className="text-[20px] leading-none" aria-hidden>
+              🔔
+            </span>
             {unreadCount > 0 && (
               <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#ff6b35] text-[10px] font-bold text-white">
                 {unreadCount > 9 ? "9+" : unreadCount}
