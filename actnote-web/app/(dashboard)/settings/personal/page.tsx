@@ -537,7 +537,7 @@ export default function PersonalSettingsPage() {
   if (loading) {
     return (
       <div className="flex flex-1 flex-col overflow-hidden">
-        <DashboardHeader title="Settings" backHref="/meetings" />
+        <DashboardHeader title="Settings" backHref="/meetings" notificationBellAccent />
         <div className="flex flex-1 items-center justify-center">
           <span className="h-6 w-6 animate-spin rounded-full border-2 border-[#ff6b35] border-t-transparent" />
         </div>
@@ -565,7 +565,7 @@ export default function PersonalSettingsPage() {
           e.currentTarget.value = "";
         }}
       />
-      <DashboardHeader title="Personal Settings" backHref="/meetings" />
+      <DashboardHeader title="Personal Settings" backHref="/meetings" notificationBellAccent />
 
       {photoModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#1a2b4a]/45 px-4 backdrop-blur-[1px]">
