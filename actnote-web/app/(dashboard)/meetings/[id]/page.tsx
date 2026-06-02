@@ -17,10 +17,7 @@ import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
 import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
-import { MeetingMetaSummaryCard } from "@/components/meetings/MeetingMetaSummaryCard";
 import { MeetingWorkflowStatusBadge } from "@/components/meetings/MeetingWorkflowStatusBadge";
-import type { MeetingWorkflowPhase } from "@/components/meetings/MeetingWorkflowStatusBadge";
-import { StatusBadge } from "@/components/meetings/StatusBadge";
 import { TranscriptViewer, type TranscriptLine } from "@/components/meetings/TranscriptViewer";
 import { ProcessingProgress } from "@/components/meetings/ProcessingProgress";
 import { MeetingAiAnalysisPreview } from "@/components/meetings/MeetingAiAnalysisPreview";
@@ -34,7 +31,6 @@ import {
   mergeAnalysisExtrasIntoDraftDoc,
   publishMissingFieldMessage,
   readAnalysisSectionText,
-  readDraftAnalysisText,
 } from "@/lib/meetings/meeting-analysis-layout";
 import {
   DraftNotionStatusBanner,
@@ -115,16 +111,6 @@ interface ActionItem {
 }
 
 const NEW_ACTION_ITEM_PREFIX = "new:";
-
-function meetingWorkflowPhase(
-  approvalStatus: MeetingRow["approval_status"],
-  status: MeetingStatus,
-): MeetingWorkflowPhase | null {
-  if (approvalStatus === "published") return "published";
-  if (status === "ready") return "draft";
-  if (isProcessing(status)) return "analyzing";
-  return null;
-}
 
 function emptyDraftActionItem(): ActionItem {
   return {
@@ -1399,25 +1385,21 @@ export default function MeetingDetailPage() {
   /** 발행·수정·삭제(모든 상태): 오너만 (docs/permissions.md §2) */
   const canManagePublication = meetingRole === "owner";
   const canEdit = isReady && !isPublished && canManagePublication;
-  const canPublish = canEdit;
   /** 오너: 모든 상태 삭제 / 생성자: published 전 상태만 삭제 */
   const canDeleteMeeting =
     meetingRole === "owner" ||
     (meetingRole === "creator" && !isPublished);
 
   const publishButtonDisabled = publishing || saving || !publishReady;
-
-  const dateStr = new Date(meeting.meeting_date ?? meeting.created_at).toLocaleString("en-US", {
-    year: "numeric", month: "long", day: "numeric",
-    hour: "2-digit", minute: "2-digit", hour12: true,
-  });
   const transcriptSpeakerMapping = speakerMapping;
 
   /** Figma Draft_01 — Edit / Delete / Publish on overview + detail (not detail-only). */
   const showDraftShell = isReady && !isPublished;
   /** Figma S-13-02 (217:10959) — pipeline 진행 중 상단 24px "Analyzing" 헤더. */
   const showAnalyzingShell = !isReady && isProcessing(meeting.status);
-  const showMeetingTopShell = showDraftShell || showAnalyzingShell;
+  /** Published 상단 헤더 */
+  const showPublishedShell = isPublished;
+  const showMeetingTopShell = showDraftShell || showAnalyzingShell || showPublishedShell;
   const draftOnDetailStep = canEdit
     ? draftSurfaceStep === "detail"
     : readOnlySurfaceStep === "detail";
@@ -1474,9 +1456,6 @@ export default function MeetingDetailPage() {
       )
     : null;
 
-  const workflowPhase = meetingWorkflowPhase(meeting.approval_status, meeting.status);
-  const showMeetingMetaCard = !(showDraftShell && draftOnDetailStep);
-
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-[#f8fafc]">
       {showDraftShell ? (
@@ -1484,6 +1463,9 @@ export default function MeetingDetailPage() {
       ) : null}
       {showAnalyzingShell ? (
         <DashboardHeader title="Analyzing" onBack={() => router.push("/meetings")} />
+      ) : null}
+      {showPublishedShell ? (
+        <DashboardHeader title="Published" onBack={() => router.push("/meetings")} />
       ) : null}
 
       <DraftDeleteMeetingModal
@@ -1651,57 +1633,6 @@ export default function MeetingDetailPage() {
                 ) : null}
               </div>
             </div>
-          ) : null}
-
-          {showMeetingMetaCard ? (
-            <MeetingMetaSummaryCard
-              title={meeting.title}
-              dateLabel={dateStr}
-              workflowPhase={workflowPhase}
-              trailing={
-                <>
-                  {workflowPhase === null && meeting.status === "error" ? (
-                    <StatusBadge status="error" className="px-4 py-2 text-sm font-bold" />
-                  ) : null}
-                  {isReady && !showDraftShell && transcriptLines.length > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => setTranscriptPanelOpen((prev) => !prev)}
-                      className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
-                        transcriptPanelOpen
-                          ? "border-[#ff6b35] bg-[#fff4f0] text-[#ff6b35]"
-                          : "border-[#e2e8f0] bg-white text-[#64748b] hover:bg-[#f8fafc]"
-                      }`}
-                    >
-                      <FileText className="h-3.5 w-3.5" />
-                      {transcriptPanelOpen ? "Hide transcript" : "View transcript"}
-                    </button>
-                  ) : null}
-                  {isPublished && meeting.notion_page_id ? (
-                    <a
-                      href={`https://www.notion.so/${meeting.notion_page_id.replace(/-/g, "")}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 rounded-lg border border-[#e2e8f0] bg-white px-3 py-1.5 text-sm font-semibold text-[#0a2540] hover:bg-[#f8fafc]"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="shrink-0">
-                        <rect x="3" y="2" width="18" height="20" rx="2" stroke="currentColor" strokeWidth="1.5" />
-                        <path d="M7 6.5V17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                        <path d="M7 6.5L17 17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                        <path d="M17 6.5V17.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                      </svg>
-                      View in Notion
-                    </a>
-                  ) : null}
-                  {isPublished && actionItems.filter((a) => a.notion_page_id).length > 0 ? (
-                    <span className="flex items-center gap-1.5 rounded-lg bg-[#f0fdf4] px-3 py-1.5 text-sm font-semibold text-[#16a34a]">
-                      🎫 {actionItems.filter((a) => a.notion_page_id).length} ticket
-                      {actionItems.filter((a) => a.notion_page_id).length === 1 ? "" : "s"} created
-                    </span>
-                  ) : null}
-                </>
-              }
-            />
           ) : null}
 
           {showDraftNotionBanner ? (

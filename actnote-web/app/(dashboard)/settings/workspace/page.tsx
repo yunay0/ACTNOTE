@@ -1619,7 +1619,7 @@ export default function WorkspaceSettingsPage() {
                     type="button"
                     disabled={!isElevated}
                     onClick={openLogoModal}
-                    className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#dee2e6] bg-white px-[19px] text-[14px] text-[#495057] transition-colors hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#dee2e6] bg-white px-4 text-[14px] text-[#495057] transition-colors hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Upload className="h-4 w-4" aria-hidden />
                     Upload Logo
