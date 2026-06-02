@@ -1246,6 +1246,79 @@ export default function MeetingDetailPage() {
     return () => window.clearInterval(timerId);
   }, [publishSuccessModal, finalizePublishSuccessNavigation]);
 
+  // Rules of Hooks: 아래 useMemo 3종은 반드시 early-return(loading/notFound/!meeting/권한)
+  // 위에 있어야 한다. 렌더 경로에 따라 hook 개수가 달라지면 React #310 크래시.
+  // (meeting null 가드를 내장하므로 early-return 전에 호출해도 안전)
+  const publishSnapshot = useMemo((): DraftPublishSnapshot | null => {
+    if (!meeting) return null;
+    const isPublishedNow = meeting.approval_status === "published";
+    const isReadyNow = meeting.status === "ready" || meeting.status === "published";
+    const canEditNow = isReadyNow && !isPublishedNow && meetingRole === "owner";
+    const doc = draftNotesDoc;
+    if (editMode && canEditNow) {
+      return {
+        meetingType: meeting.meeting_type,
+        title: editTitle,
+        summary: editSummary,
+        draftNotesDoc: doc,
+        blockersText: editBlockers,
+        keyTopicsText: editKeyTopics,
+        keyDecisionsText: editKeyDecisions,
+        risksAndIssuesText: editRisksAndIssues,
+        followUpText: editFollowUp,
+        keyPointsText: editKeyPoints,
+        actionItems: editActionItems,
+      };
+    }
+    return {
+      meetingType: meeting.meeting_type,
+      title: meeting.title ?? "",
+      summary: meeting.summary ?? "",
+      draftNotesDoc: doc,
+      blockersText: readAnalysisSectionText(meeting.blockers, doc, "blockers"),
+      keyTopicsText: readAnalysisSectionText(meeting.key_topics, doc, "key_topics"),
+      keyDecisionsText: readAnalysisSectionText(
+        meeting.key_decisions,
+        doc,
+        "key_decisions",
+      ),
+      risksAndIssuesText: readAnalysisSectionText(
+        meeting.risks_and_issues,
+        doc,
+        "risks_and_issues",
+      ),
+      followUpText: readAnalysisSectionText(meeting.follow_up, doc, "follow_up"),
+      keyPointsText: readAnalysisSectionText(meeting.key_points, doc, "key_points"),
+      actionItems,
+    };
+  }, [
+    meeting,
+    meetingRole,
+    draftNotesDoc,
+    editMode,
+    editTitle,
+    editSummary,
+    editBlockers,
+    editKeyTopics,
+    editKeyDecisions,
+    editRisksAndIssues,
+    editFollowUp,
+    editKeyPoints,
+    editActionItems,
+    actionItems,
+  ]);
+
+  const publishReady = useMemo(
+    () => (publishSnapshot ? isDraftPublishReady(publishSnapshot) : false),
+    [publishSnapshot],
+  );
+
+  /** 액션 담당자: 워크스페이스 전체 (회의 participants 미등록 멤버 포함) */
+  const actionAssigneeMembers = useMemo(
+    () => workspaceMembersForActionAssignee(members, meeting?.participants ?? []),
+    [members, meeting?.participants],
+  );
+
   // ─── 로딩 / 에러 ────────────────────────────────────────────
   if (loading) {
     return (
@@ -1332,74 +1405,8 @@ export default function MeetingDetailPage() {
     meetingRole === "owner" ||
     (meetingRole === "creator" && !isPublished);
 
-  const publishSnapshot = useMemo((): DraftPublishSnapshot | null => {
-    if (!meeting) return null;
-    const doc = draftNotesDoc;
-    if (editMode && canEdit) {
-      return {
-        meetingType: meeting.meeting_type,
-        title: editTitle,
-        summary: editSummary,
-        draftNotesDoc: doc,
-        blockersText: editBlockers,
-        keyTopicsText: editKeyTopics,
-        keyDecisionsText: editKeyDecisions,
-        risksAndIssuesText: editRisksAndIssues,
-        followUpText: editFollowUp,
-        keyPointsText: editKeyPoints,
-        actionItems: editActionItems,
-      };
-    }
-    return {
-      meetingType: meeting.meeting_type,
-      title: meeting.title ?? "",
-      summary: meeting.summary ?? "",
-      draftNotesDoc: doc,
-      blockersText: readAnalysisSectionText(meeting.blockers, doc, "blockers"),
-      keyTopicsText: readAnalysisSectionText(meeting.key_topics, doc, "key_topics"),
-      keyDecisionsText: readAnalysisSectionText(
-        meeting.key_decisions,
-        doc,
-        "key_decisions",
-      ),
-      risksAndIssuesText: readAnalysisSectionText(
-        meeting.risks_and_issues,
-        doc,
-        "risks_and_issues",
-      ),
-      followUpText: readAnalysisSectionText(meeting.follow_up, doc, "follow_up"),
-      keyPointsText: readAnalysisSectionText(meeting.key_points, doc, "key_points"),
-      actionItems,
-    };
-  }, [
-    meeting,
-    draftNotesDoc,
-    editMode,
-    canEdit,
-    editTitle,
-    editSummary,
-    editBlockers,
-    editKeyTopics,
-    editKeyDecisions,
-    editRisksAndIssues,
-    editFollowUp,
-    editKeyPoints,
-    editActionItems,
-    actionItems,
-  ]);
-
-  const publishReady = useMemo(
-    () => (publishSnapshot ? isDraftPublishReady(publishSnapshot) : false),
-    [publishSnapshot],
-  );
-
   const publishButtonDisabled = publishing || saving || !publishReady;
 
-  /** 액션 담당자: 워크스페이스 전체 (회의 participants 미등록 멤버 포함) */
-  const actionAssigneeMembers = useMemo(
-    () => workspaceMembersForActionAssignee(members, meeting.participants),
-    [members, meeting.participants],
-  );
   const dateStr = new Date(meeting.meeting_date ?? meeting.created_at).toLocaleString("en-US", {
     year: "numeric", month: "long", day: "numeric",
     hour: "2-digit", minute: "2-digit", hour12: true,
