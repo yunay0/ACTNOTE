@@ -1141,7 +1141,7 @@ export default function PersonalSettingsPage() {
           {/* Profile Information — Figma S-10-01 */}
           <section className="rounded-xl border border-[#e9ecef] bg-white p-[29px] shadow-sm">
             <div className="mb-6 space-y-1">
-              <h2 className="text-[30px] font-semibold leading-snug text-[#212529]">
+              <h2 className="text-[18px] font-semibold text-[#212529]">
                 Profile Information
               </h2>
               <p className="text-[14px] text-[#6c757d]">
@@ -1262,7 +1262,7 @@ export default function PersonalSettingsPage() {
           <section className="rounded-xl border border-[#e9ecef] bg-white p-[29px] shadow-sm" aria-labelledby="danger-zone-heading">
             <div className="space-y-6">
               <div className="space-y-1">
-                <h2 id="danger-zone-heading" className="text-[30px] font-semibold text-[#212529]">
+                <h2 id="danger-zone-heading" className="text-[18px] font-semibold text-[#212529]">
                   Delete Account
                 </h2>
                 <p className="text-[14px] text-[#6c757d]">Permanently remove your account and all associated data</p>
