@@ -61,7 +61,13 @@ function NewMeetingPageInner() {
     () => (searchParams.get("reattach") ?? "").trim(),
     [searchParams],
   );
-  const { workspaceId } = useWorkspaceContext();
+  const { workspaceId, memberships } = useWorkspaceContext();
+  /** WS owner/admin만 New Meeting 우측 안내 패널 (member는 숨김) */
+  const showNewMeetingGuidancePanels = useMemo(() => {
+    if (!workspaceId) return false;
+    const role = memberships.find((m) => m.workspace_id === workspaceId)?.role;
+    return role === "owner" || role === "admin";
+  }, [workspaceId, memberships]);
   const { userId: currentUserId, avatarDisplayUrl, profileRevision } = useUserProfile();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1159,7 +1165,8 @@ function NewMeetingPageInner() {
             </div>
           </div>
 
-          {/* Right — Info panels */}
+          {/* Right — Info panels (workspace member 제외) */}
+          {showNewMeetingGuidancePanels ? (
           <div className="flex w-[360px] shrink-0 flex-col gap-5">
             <div className="rounded-xl border border-[#e2e8f0] bg-white p-[25px]">
               <h3 className="mb-4 flex items-center gap-2 pb-px text-[15.6px] font-bold leading-none text-[#0a2540]">
@@ -1191,6 +1198,7 @@ function NewMeetingPageInner() {
               </ul>
             </div>
           </div>
+          ) : null}
         </div>
 
         </div>{/* end content row + scroll area */}
