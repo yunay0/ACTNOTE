@@ -55,6 +55,7 @@ interface Member {
   displayName: string;
   initials: string;
   gradient: string;
+  avatarDisplayUrl: string | null;
 }
 
 interface JoinRequestRow {
@@ -141,6 +142,7 @@ export default function WorkspaceSettingsPage() {
   const [joinReqBusy, setJoinReqBusy] = useState<string | null>(null);
   const [declineModalRequest, setDeclineModalRequest] = useState<JoinRequestRow | null>(null);
   const [removeModalMember, setRemoveModalMember] = useState<Member | null>(null);
+  const [memberAvatarBroken, setMemberAvatarBroken] = useState<Record<string, boolean>>({});
   const [deleteWorkspaceModalOpen, setDeleteWorkspaceModalOpen] = useState(false);
   const [deleteWorkspaceInput, setDeleteWorkspaceInput] = useState("");
   const [deleteWorkspaceBusy, setDeleteWorkspaceBusy] = useState(false);
@@ -238,16 +240,19 @@ export default function WorkspaceSettingsPage() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: memberRows } = await (supabase as any)
       .from("workspace_members")
-      .select("user_id, role, users(id, name, email)")
+      .select("user_id, role, users(id, name, email, avatar_url)")
       .eq("workspace_id", ws.id);
 
     if (memberRows) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const list: Member[] = memberRows.map((row: any, idx: number) => {
+      const list: Member[] = await Promise.all(memberRows.map(async (row: any, idx: number) => {
         const u = Array.isArray(row.users) ? row.users[0] : row.users;
         const profileName = typeof u?.name === "string" ? u.name : "";
         const email = typeof u?.email === "string" ? u.email : "";
+        const avatarUrl =
+          typeof u?.avatar_url === "string" && u.avatar_url.trim() ? u.avatar_url.trim() : null;
         const dbRole = parseDbRole(row.role as string);
+        const avatarDisplayUrl = await resolveMeetingsImageDisplayUrl(supabase, avatarUrl);
         return {
           user_id: row.user_id,
           dbRole,
@@ -257,10 +262,12 @@ export default function WorkspaceSettingsPage() {
           displayName: workspaceMemberDisplayName(profileName, email),
           initials: workspaceMemberInitials(profileName, email),
           gradient: GRADIENTS[idx % GRADIENTS.length],
+          avatarDisplayUrl,
         };
-      });
+      }));
       list.sort((a, b) => dbRoleSortKey(a.dbRole) - dbRoleSortKey(b.dbRole));
       setMembers(list);
+      setMemberAvatarBroken({});
     }
 
     const canSeeJoinRequests = myDb === "owner" || myDb === "admin";
@@ -1543,16 +1550,28 @@ export default function WorkspaceSettingsPage() {
                         className="flex items-center gap-3.5 rounded-[10px] bg-[#f8f9fa] p-4"
                       >
                         <div
-                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[16px] font-semibold text-white"
-                          style={{
-                            background:
-                              isOwnerBadge
-                                ? "linear-gradient(135deg, #1a2b4a 0%, #1a2b4a 100%)"
-                                : m.gradient,
-                          }}
+                        className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full text-[16px] font-semibold text-white"
+                        style={m.avatarDisplayUrl && !memberAvatarBroken[m.user_id] ? undefined : {
+                          background:
+                            isOwnerBadge
+                              ? "linear-gradient(135deg, #1a2b4a 0%, #1a2b4a 100%)"
+                              : m.gradient,
+                        }}
                         >
-                          {m.initials}
-                        </div>
+                        {m.avatarDisplayUrl && !memberAvatarBroken[m.user_id] ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={m.avatarDisplayUrl}
+                            alt=""
+                            className="h-full w-full object-cover"
+                            onError={() =>
+                              setMemberAvatarBroken((prev) => ({ ...prev, [m.user_id]: true }))
+                            }
+                          />
+                        ) : (
+                          m.initials
+                        )}
+                      </div>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-[15px] font-semibold text-[#212529]">
                             {m.displayName}
