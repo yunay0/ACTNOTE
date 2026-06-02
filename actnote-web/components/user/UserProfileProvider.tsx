@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
+import { resolveOwnAvatarDisplayUrlWithCleanup } from "@/lib/user/avatar-cleanup";
 import {
   workspaceMemberDisplayName,
   workspaceMemberInitials,
@@ -96,7 +96,7 @@ export function UserProfileProvider({ children }: { children: React.ReactNode })
       typeof profile?.avatar_url === "string" && profile.avatar_url.trim()
         ? profile.avatar_url.trim()
         : null;
-    const display = await resolveMeetingsImageDisplayUrl(supabase, storedAvatar);
+    const display = await resolveOwnAvatarDisplayUrlWithCleanup(supabase, storedAvatar);
     setAvatarDisplayUrl(display);
     setAvatarBroken(false);
     setProfileRevision((v) => v + 1);

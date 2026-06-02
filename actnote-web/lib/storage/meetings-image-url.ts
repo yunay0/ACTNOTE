@@ -13,6 +13,21 @@ export function meetingsStoragePathFromPublicUrl(publicUrl: string): string | nu
 }
 
 /**
+ * 저장된 값(공개 URL 또는 `profile/`·`workspace-logos/` 경로) → meetings 버킷 객체 경로.
+ * blob/data URL 또는 버킷과 무관한 값이면 null.
+ */
+export function meetingsStoragePathFromStored(storedUrl: string): string | null {
+  const trimmed = storedUrl.trim();
+  if (!trimmed || trimmed.startsWith("blob:") || trimmed.startsWith("data:")) return null;
+  return (
+    meetingsStoragePathFromPublicUrl(trimmed) ??
+    (trimmed.startsWith("profile/") || trimmed.startsWith("workspace-logos/")
+      ? trimmed
+      : null)
+  );
+}
+
+/**
  * Browser display URL for a meetings-bucket object.
  * Uses signed URL when the stored value is a Supabase public URL (private bucket safe).
  */
@@ -25,11 +40,7 @@ export async function resolveMeetingsImageDisplayUrl(
   const trimmed = storedUrl.trim();
   if (trimmed.startsWith("blob:") || trimmed.startsWith("data:")) return trimmed;
 
-  const objectPath =
-    meetingsStoragePathFromPublicUrl(trimmed) ??
-    (trimmed.startsWith("profile/") || trimmed.startsWith("workspace-logos/")
-      ? trimmed
-      : null);
+  const objectPath = meetingsStoragePathFromStored(trimmed);
 
   if (!objectPath) return trimmed;
 
