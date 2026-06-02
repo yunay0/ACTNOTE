@@ -3,21 +3,18 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft, BarChart3, CalendarDays,
+  ArrowLeft,
   Send, Pencil, Plus, X,
   AlertCircle, ExternalLink,
   FileText,
-  Music2,
   Loader2,
 } from "lucide-react";
-import { formatRecordingSizeMbDecimal } from "@/lib/meeting/recordingFilename";
 import { createClient } from "@/lib/supabase/client";
 import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
 import { getMeetingRole, type MeetingRole } from "@/lib/meetings/meeting-role";
 import { softDeleteMeetingRow } from "@/lib/meetings/soft-delete";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { DashboardHeader } from "@/components/layout/DashboardHeader";
-import { MeetingWorkflowStatusBadge } from "@/components/meetings/MeetingWorkflowStatusBadge";
 import { TranscriptViewer, type TranscriptLine } from "@/components/meetings/TranscriptViewer";
 import { ProcessingProgress } from "@/components/meetings/ProcessingProgress";
 import { MeetingAiAnalysisPreview } from "@/components/meetings/MeetingAiAnalysisPreview";
@@ -44,6 +41,8 @@ import { MeetingDraftActionItemsSection } from "@/components/meetings/MeetingDra
 import { MeetingAnalysisResultsBlock } from "@/components/meetings/MeetingAnalysisResultsBlock";
 import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
 import { DraftGuidanceSidebar } from "@/components/meetings/DraftGuidanceSidebar";
+import { MeetingUploadedRecordingReadonlyCard } from "@/components/meetings/MeetingUploadedRecordingReadonlyCard";
+import { resolveMeetingParticipantLabels } from "@/lib/meetings/participant-display-labels";
 import { DraftDeleteMeetingModal } from "@/components/meetings/DraftDeleteMeetingModal";
 import { DraftPublishSuccessModal } from "@/components/meetings/DraftPublishSuccessModal";
 import {
@@ -249,14 +248,6 @@ function resolveRecordingLabel(
   } catch {
     return "Uploaded recording";
   }
-}
-
-function formatMmSsShort(seconds: number | null | undefined): string {
-  const s =
-    seconds == null || !Number.isFinite(seconds) ? 0 : Math.max(0, Math.floor(seconds));
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return `${String(m)}:${String(rem).padStart(2, "0")}`;
 }
 
 export default function MeetingDetailPage() {
@@ -1306,6 +1297,14 @@ export default function MeetingDetailPage() {
     [members, meeting?.participants],
   );
 
+  const participantDisplayLabels = useMemo(
+    () =>
+      meeting
+        ? resolveMeetingParticipantLabels(meeting.participants ?? [], members)
+        : [],
+    [meeting, members],
+  );
+
   // ─── 로딩 / 에러 ────────────────────────────────────────────
   if (loading) {
     return (
@@ -1444,7 +1443,9 @@ export default function MeetingDetailPage() {
   })();
 
   const showDraftNotionBanner = isReady && !isPublished && notionConnected !== null;
-  const showPublishedNotionBanner = isPublished && notionConnected !== null;
+  /** Published — Notion 안내는 overview(첫 페이지)에서만; Next 후 detail에서는 숨김 */
+  const showPublishedNotionBanner =
+    isPublished && readOnlySurfaceStep === "overview" && notionConnected !== null;
   const draftNotionBannerVariant = resolveDraftNotionBannerVariant(
     wsDbRole === "owner",
     notionConnected === true,
@@ -1601,38 +1602,20 @@ export default function MeetingDetailPage() {
             </button>
           ) : null}
 
-          {showDraftShell && draftOnDetailStep ? (
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              {editMode && canEdit ? (
-                <input
-                  type="text"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  placeholder="Meeting title"
-                  className="min-w-[12rem] flex-1 text-2xl font-bold leading-snug text-[#0a2540] rounded-xl border border-[#e2e8f0] bg-white px-3 py-2 outline-none focus:border-[#ff6b35]"
-                />
-              ) : (
-                <h2 className="min-w-0 flex-1 text-2xl font-bold leading-snug text-[#0a2540]">
-                  {meeting.title?.trim() || "Untitled Meeting"}
-                </h2>
-              )}
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                <MeetingWorkflowStatusBadge phase="draft" />
-                {transcriptLines.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => setTranscriptPanelOpen((prev) => !prev)}
-                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
-                      transcriptPanelOpen
-                        ? "border-[#ff6b35] bg-[#fff4f0] text-[#ff6b35]"
-                        : "border-[#e2e8f0] bg-white text-[#64748b] hover:bg-[#f8fafc]"
-                    }`}
-                  >
-                    <FileText className="h-3.5 w-3.5" />
-                    {transcriptPanelOpen ? "Hide transcript" : "View transcript"}
-                  </button>
-                ) : null}
-              </div>
+          {showDraftShell && draftOnDetailStep && transcriptLines.length > 0 ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setTranscriptPanelOpen((prev) => !prev)}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold transition-colors ${
+                  transcriptPanelOpen
+                    ? "border-[#ff6b35] bg-[#fff4f0] text-[#ff6b35]"
+                    : "border-[#e2e8f0] bg-white text-[#64748b] hover:bg-[#f8fafc]"
+                }`}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                {transcriptPanelOpen ? "Hide transcript" : "View transcript"}
+              </button>
             </div>
           ) : null}
 
@@ -1658,7 +1641,7 @@ export default function MeetingDetailPage() {
                   meetingTypeRaw={meeting.meeting_type}
                   meetingScheduledAtIso={meeting.meeting_date ?? meeting.created_at ?? null}
                   description={meeting.description}
-                  participantNames={meeting.participants}
+                  participantNames={participantDisplayLabels}
                   createdBy={
                     responsibleDisplayLabel ? (
                       responsibleIsFormerMember ? (
@@ -1691,30 +1674,11 @@ export default function MeetingDetailPage() {
                       titleRequiredMark
                     />
                     {meeting.audio_file_url?.trim() ? (
-                      <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] p-[18px] shadow-none">
-                        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                          <div aria-hidden className="flex shrink-0 items-center justify-center sm:size-14">
-                            <Music2 className="size-8 text-[#64748b]" strokeWidth={2} />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="break-words text-[15px] font-bold leading-snug text-[#0a2540]">
-                              {recordingLabel}
-                            </p>
-                            <p className="mt-1 flex flex-wrap items-center gap-3 text-[13px] text-[#64748b]">
-                              <span className="flex items-center gap-1">
-                                <CalendarDays className="size-3.5 opacity-70" aria-hidden />
-                                Duration {formatMmSsShort(displayDurationSec)}
-                              </span>
-                              {meeting.audio_file_size_bytes != null && meeting.audio_file_size_bytes > 0 ? (
-                                <span className="flex items-center gap-1">
-                                  <BarChart3 className="size-3.5 opacity-70" aria-hidden />
-                                  {formatRecordingSizeMbDecimal(meeting.audio_file_size_bytes)}
-                                </span>
-                              ) : null}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
+                      <MeetingUploadedRecordingReadonlyCard
+                        fileLabel={recordingLabel}
+                        durationSeconds={displayDurationSec}
+                        fileSizeBytes={meeting.audio_file_size_bytes}
+                      />
                     ) : (
                       <div className="rounded-xl border border-[#e2e8f0] bg-[#f8fafc] px-[18px] py-4 text-[13px] text-[#94a3b8]">
                         No recording attachment on this meeting.
@@ -1746,28 +1710,13 @@ export default function MeetingDetailPage() {
               </>
             )}
 
-          {/* D2: 편집 모드 안내 바 — Save Changes 버튼 제거. 변경 사항은 Publish 시 자동 저장 (2026-05-26 QA). */}
-          {editMode && canEdit && (
-            <div className="flex items-center justify-between rounded-xl border border-[#ff6b35]/30 bg-[#fff4f0] px-5 py-3">
-              <p className="text-sm font-semibold text-[#ff6b35]">
-                ✏️ Edit mode — your changes will be saved when you Publish
-              </p>
-              <button
-                onClick={cancelEdit}
-                className="rounded-lg border border-[#e2e8f0] bg-white px-4 py-1.5 text-sm font-semibold text-[#64748b] hover:bg-[#f8fafc]"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-
           {isReady && (canEdit ? draftSurfaceStep === "overview" : readOnlySurfaceStep === "overview") ? (
             <DraftOverviewPanel
               meetingTitle={meeting.title}
               meetingTypeRaw={meeting.meeting_type}
               meetingScheduledAtIso={meeting.meeting_date ?? meeting.created_at ?? null}
               description={meeting.description}
-              participantNames={meeting.participants}
+              participantNames={participantDisplayLabels}
               responsibleLabel={responsibleDisplayLabel}
               responsibleIsFormerMember={responsibleIsFormerMember}
               recordingUrl={meeting.audio_file_url}
@@ -1963,6 +1912,7 @@ export default function MeetingDetailPage() {
                       </aside>
                     ) : guidanceRailEligible ? (
                       <DraftGuidanceSidebar
+                        variant={showWideAnalyzingLayout ? "analyzing" : "draft"}
                         publishBlockedForActions={Boolean(canEdit && !publishReady)}
                       />
                     ) : null}
@@ -1973,7 +1923,10 @@ export default function MeetingDetailPage() {
 
             {guidanceRailEligible && !transcriptPanelOpen ? (
               <div className="mt-8 md:hidden">
-                <DraftGuidanceSidebar publishBlockedForActions={Boolean(canEdit && !publishReady)} />
+                <DraftGuidanceSidebar
+                  variant={showWideAnalyzingLayout ? "analyzing" : "draft"}
+                  publishBlockedForActions={Boolean(canEdit && !publishReady)}
+                />
               </div>
             ) : null}
           </div>

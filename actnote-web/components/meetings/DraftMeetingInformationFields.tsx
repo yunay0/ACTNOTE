@@ -65,8 +65,8 @@ export function DraftMeetingInformationFields(
           <GrayBox>{whenStr}</GrayBox>
         </Field>
 
-        <Field label="Description" sub="(Optional)">
-          <GrayBox>
+        <Field label="Description (Optional)">
+          <GrayBox tall>
             {props.description?.trim() ? (
               <span className="whitespace-pre-wrap">{props.description}</span>
             ) : (
@@ -84,8 +84,12 @@ export function DraftMeetingInformationFields(
               props.participantNames.map((p, i) => (
                 <span
                   key={`${p}-${i}`}
-                  className="rounded-full border border-[#e2e8f0] bg-[#f8fafc] px-3 py-1 text-xs font-semibold text-[#0a2540]"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[#e2e8f0] bg-[#f8fafc] py-1 pl-1.5 pr-3 text-xs font-semibold text-[#0a2540]"
                 >
+                  <span
+                    className="size-2.5 shrink-0 rounded-full border border-[#e2e8f0] bg-white"
+                    aria-hidden
+                  />
                   {p}
                 </span>
               ))
@@ -107,28 +111,29 @@ function Field({
   label,
   children,
   required,
-  sub,
 }: {
   label: string;
   children: ReactNode;
   required?: boolean;
-  sub?: string;
 }): ReactElement {
   return (
     <div className="space-y-2">
       <p className="text-[13px] font-bold text-[#0a2540]">
         {label}
-        {required ? <span className="text-[#ff6b35]"> *</span> : null}{" "}
-        {sub ? <span className="font-normal text-[#94a3b8]">{sub}</span> : null}
+        {required ? <span className="text-[#ff6b35]"> *</span> : null}
       </p>
       {children}
     </div>
   );
 }
 
-function GrayBox({ children }: { children: ReactNode }): ReactElement {
+function GrayBox({ children, tall }: { children: ReactNode; tall?: boolean }): ReactElement {
   return (
-    <div className="rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px] text-[14px] leading-relaxed text-[#475569]">
+    <div
+      className={`rounded-[10px] border-2 border-[#e2e8f0] bg-[#f6f7f8] px-[18px] py-[14px] text-[14px] leading-relaxed text-[#475569] ${
+        tall ? "min-h-[118px]" : ""
+      }`}
+    >
       {children}
     </div>
   );
