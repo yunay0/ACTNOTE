@@ -31,6 +31,9 @@ export function MemberAvatarRound(props: {
         alt=""
         width={size}
         height={size}
+        // 인라인 style 로 정사각형 고정 — Tailwind preflight 의 `img { height: auto }`
+        // 가 width/height 속성을 덮어 비율이 깨지는(늘어나는) 문제 방지.
+        style={{ width: dim, height: dim }}
         className={`shrink-0 rounded-full object-cover ${className}`}
         referrerPolicy="no-referrer"
         onError={() => setBroken(true)}
