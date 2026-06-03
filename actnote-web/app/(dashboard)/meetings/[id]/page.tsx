@@ -1442,7 +1442,12 @@ export default function MeetingDetailPage() {
     return (membership?.workspace.name ?? workspaceName).trim() || "your";
   })();
 
-  const showDraftNotionBanner = isReady && !isPublished && notionConnected !== null;
+  const draftOnOverviewStep = canEdit
+    ? draftSurfaceStep === "overview"
+    : readOnlySurfaceStep === "overview";
+  /** Draft — Notion 안내는 overview(첫 페이지)에서만; Next 후 detail에서는 숨김 */
+  const showDraftNotionBanner =
+    isReady && !isPublished && notionConnected !== null && draftOnOverviewStep;
   /** Published — Notion 안내는 overview(첫 페이지)에서만; Next 후 detail에서는 숨김 */
   const showPublishedNotionBanner =
     isPublished && readOnlySurfaceStep === "overview" && notionConnected !== null;
