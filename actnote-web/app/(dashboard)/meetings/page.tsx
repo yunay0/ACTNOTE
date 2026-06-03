@@ -432,14 +432,6 @@ function MeetingsPageContent() {
                 const canDelete = isElevatedWsRole
                   ? true
                   : (isCreatorById || isCreatorByEmail) && !isPublished;
-                const participantAvatars = (meeting.participants ?? []).map((p) => {
-                  const m = memberAvatars.byEmail.get(p.trim().toLowerCase());
-                  return {
-                    avatarUrl: m?.avatarUrl ?? null,
-                    name: m?.name ?? p,
-                    email: m?.email ?? p,
-                  };
-                });
                 const creatorMember =
                   (meeting.created_by
                     ? memberAvatars.byUserId.get(meeting.created_by)
@@ -461,7 +453,6 @@ function MeetingsPageContent() {
                     highlighted={highlightId === meeting.id}
                     onDelete={handleDeleteMeeting}
                     canDelete={canDelete}
-                    participantAvatars={participantAvatars}
                     creatorAvatar={creatorAvatar}
                     onClick={() => router.push(`/meetings/${meeting.id}`)}
                   />

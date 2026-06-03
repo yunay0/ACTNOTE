@@ -29,8 +29,6 @@ interface MeetingCardProps {
    * View error 같은 기능이 필요해 그대로 노출.
    */
   canDelete?: boolean;
-  /** 참여자 프로필 사진(스택). meeting.participants 순서와 동일. */
-  participantAvatars?: MeetingCardAvatarPerson[];
   /** 생성자 프로필 사진. 매칭 안 되면 null → 이니셜 폴백. */
   creatorAvatar?: MeetingCardAvatarPerson | null;
 }
@@ -80,7 +78,6 @@ export function MeetingCard({
   onDelete,
   onClick,
   canDelete = true,
-  participantAvatars = [],
   creatorAvatar = null,
 }: MeetingCardProps) {
   const router = useRouter();
@@ -245,24 +242,9 @@ export function MeetingCard({
 
         <div className="flex flex-wrap items-center gap-[15px] border-t border-[#f1f5f9] pt-[17px]">
           <span className="flex items-center gap-1.5 text-[12px] text-[#64748b]">
-            {participantAvatars.length > 0 ? (
-              <span className="flex items-center">
-                {participantAvatars.slice(0, 3).map((p, i) => (
-                  <MemberAvatarRound
-                    key={`${p.email || p.name || "p"}-${i}`}
-                    avatarUrl={p.avatarUrl}
-                    name={p.name ?? p.email}
-                    email={p.email}
-                    size={18}
-                    className={`ring-2 ring-white ${i > 0 ? "-ml-1.5" : ""}`}
-                  />
-                ))}
-              </span>
-            ) : (
-              <span className="text-[15px]" aria-hidden>
-                👥
-              </span>
-            )}
+            <span className="text-[15px]" aria-hidden>
+              👥
+            </span>
             <span>{participantCountLabel}</span>
           </span>
 
