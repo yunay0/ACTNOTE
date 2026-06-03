@@ -2,6 +2,8 @@
 
 회의 음성 → STT → 화자 분리 → LLM 요약·결정·액션 추출 → (발행 시) Notion 연동까지 이어지는 **풀스택 모노레포**입니다.
 
+> **상태 (2026-06-03):** 0.3v MVP · 0.5v 메인 2 **완료** (백엔드 + 프론트 통합). 완료 기능 전체는 [§10](#10-완료-기능-요약-03v--05v) 참고.
+
 | 영역 | 경로 | 스택 |
 |------|------|------|
 | **백엔드 / 파이프라인** | 레포 루트 (`src/`, `scripts/`) | Python 3.11 (Modal 이미지 고정), uv, Modal 서버리스, Supabase (service_role) |
@@ -139,9 +141,11 @@ uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_
 
 # 5) Supabase 마이그레이션
 #    SQL Editor 에서 migrations/*.sql 을 팀이 정한 순서로 실행합니다.
-#    파일명에 동일 번호(예: 014_*) 가 두 개 있을 수 있으므로, 순서는 docs/frontend-handoff.md 및 운영 DB 기준을 따르세요.
-#    현재 레포에는 001 … 059 등이 포함되어 있습니다 (목록은 migrations/ 디렉터리 참고).
-#    0.5v: 050~055 (유형별 섹션·발행검증·정규화·backfill·last_error), 059 (join_request ambiguous 재수정).
+#    파일명에 동일 번호(예: 014_*, 059_*, 065_*) 가 두 개 있을 수 있으므로, 순서는 docs/frontend-handoff.md 및 운영 DB 기준을 따르세요.
+#    현재 레포에는 001 … 065 등이 포함되어 있습니다 (목록은 migrations/ 디렉터리 참고).
+#    0.5v: 050~055 (유형별 섹션·발행검증·정규화·backfill·last_error), 059 (join_request ambiguous 재수정),
+#          063 (액션 미완료여도 발행 허용), 064 (risks_and_issues 컬럼 보강), 065 (액션 task_title · 알림 영문화).
+#    워크스페이스/프로필 미디어: 056~058·060·062 (로고·아바타 컬럼 + Storage RLS), 061 (workspaces update 권한).
 ```
 
 **Storage**: `meetings` 버킷(private) 생성.
@@ -249,6 +253,8 @@ modal run scripts/diagnose_modal.py --meeting-id <MEETING_ID>
 | [docs/rpc.md](./docs/rpc.md) | Supabase RPC |
 | [docs/notion-oauth.md](./docs/notion-oauth.md) | Notion OAuth |
 | [docs/features.md](./docs/features.md) | 기능 ID 카탈로그 |
+| [docs/v0.3.md](./docs/v0.3.md) | 0.3v MVP 트랙 (잔여·버그 이력) |
+| [docs/v0.5.md](./docs/v0.5.md) | 0.5v 메인 2 트랙 (유형별 결과·Notion 발행·접근 요청) |
 | [docs/local-qa-guidebook.md](./docs/local-qa-guidebook.md) | 로컬 QA 체크리스트 |
 | [CLAUDE.md](./CLAUDE.md) | 프로젝트 컨텍스트 · 백로그 · 메인 2 진행 상황 |
 | [`.cursor/rules/*.mdc`](./.cursor/rules) | 코딩 룰 |
@@ -300,7 +306,9 @@ actnote-web/                       # Next.js 앱
 
 ---
 
-## 10. 메인 1단계 완료 기능 요약
+## 10. 완료 기능 요약 (0.3v + 0.5v)
+
+### 0.3v MVP / 메인 1 (백엔드·파이프라인)
 
 | 기능 ID | 산출물 (요약) |
 |---------|----------------|
@@ -312,11 +320,25 @@ actnote-web/                       # Next.js 앱
 | SEC-006 / WS-004 | 초대 RPC · 멤버 역할 · 강퇴 등 |
 | 재분석 멱등성 | `pipeline.py` `_cleanup_for_reanalysis()` |
 
+### 0.5v 메인 2 (✅ 완료 — 백엔드 + 프론트 통합)
+
+| 기능 ID | 산출물 (요약) | 비고 |
+|---------|----------------|------|
+| MTG-004-002 / DRAFT-008-002 | 회의 유형 4종(standup/project_review/one_on_one/other) 유형별 prompt + 필수·선택 섹션 분기 | `migrations/050·052·054`, `meetings/[id]/page.tsx` 4종 렌더 + Edit Mode |
+| PUB-003 / PUB-004 | 회의록 Notion push + 액션 티켓 자동 생성, 발행 후 링크 노출 | `notion_sync.push_meeting` / `push_action_items`, `063` (액션 미완료여도 발행 허용) |
+| INTEG-001 / INTEG-002 | 회의록용·티켓용 Notion 연동 독립 설정 (`meeting_db_id`/`action_db_id`) | 설정 카드 2개 분리 UI |
+| INTEG-005 | 미연동 시 발행 제한 안내 (회의록/티켓 분리, 역할별 분기) | `validate` RPC `051` |
+| INTEG-006-001/002 | ACTNOTE 공식 Notion 템플릿 복제 버튼 (회의록·이슈트래커) | `NotionTemplateDuplicateBox.tsx` + `NOTION_TEMPLATE_*_URL` env |
+| SEC-009 | Notion 토큰 Fernet 암호화 + 만료/회수 시 재연동 알림 | `encryption.py`, `notify_reauth_required`, `055` (`last_error`) |
+| WS-006-002 / WS-007 / NOTI-002 | 워크스페이스 접근 요청 → Owner 승인/거절 + 인앱·메일 알림 | `find-by-domain` · `review_join_request` RPC, `053·059·065`, `settings/workspace` 요청 목록 UI |
+| CONTEXT-001 | 이전 발행 회의록 RAG (Draft 제외) | `src/crag.py` (변경 없음) |
+| 워크스페이스/프로필 미디어 | 워크스페이스 로고 · 프로필 아바타 + 회의 카드 작성자 사진 | `056~058·060·062` Storage RLS |
+
 **DB 확장 예시** (운영 적용 여부는 마이그레이션 실행 기준과 동기화)
 
 - 사용자별 분석 완료/실패 **이메일 수신 설정**: `migrations/022_user_notification_email_prefs.sql`
 
-**현재 단계**: 백엔드 메인 1 완료 후 **메인 2 (프론트 통합·운영 폴리싱)** 진행 중이라면 상세 백로그는 [CLAUDE.md](./CLAUDE.md) 를 참고하세요.
+**현재 단계**: 0.3v MVP·0.5v 메인 2 모두 완료. 발표 이후 백로그(Notion data source API 정식 마이그레이션, 비용 산정/모델 업그레이드, 다중 워크스페이스 고도화)는 [CLAUDE.md](./CLAUDE.md) 참고.
 
 ---
 
