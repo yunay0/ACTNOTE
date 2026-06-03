@@ -8,6 +8,14 @@ import { isProcessing } from "@/lib/types/meeting";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 import { attributionNameOnlyLabel } from "@/lib/meetings/meeting-attribution";
 import { MeetingDeleteConfirmModal } from "@/components/meetings/MeetingDeleteConfirmModal";
+import { MemberAvatarRound } from "@/components/user/MemberAvatarRound";
+
+/** 카드에 표시할 1명의 프로필 사진 정보 */
+export type MeetingCardAvatarPerson = {
+  avatarUrl: string | null;
+  name: string | null;
+  email: string;
+};
 
 interface MeetingCardProps {
   meeting: Meeting;
@@ -21,6 +29,10 @@ interface MeetingCardProps {
    * View error 같은 기능이 필요해 그대로 노출.
    */
   canDelete?: boolean;
+  /** 참여자 프로필 사진(스택). meeting.participants 순서와 동일. */
+  participantAvatars?: MeetingCardAvatarPerson[];
+  /** 생성자 프로필 사진. 매칭 안 되면 null → 이니셜 폴백. */
+  creatorAvatar?: MeetingCardAvatarPerson | null;
 }
 
 const STATUS_STYLE: Record<string, { bg: string; dot: string; text: string; label: string }> = {
@@ -68,6 +80,8 @@ export function MeetingCard({
   onDelete,
   onClick,
   canDelete = true,
+  participantAvatars = [],
+  creatorAvatar = null,
 }: MeetingCardProps) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -231,9 +245,24 @@ export function MeetingCard({
 
         <div className="flex flex-wrap items-center gap-[15px] border-t border-[#f1f5f9] pt-[17px]">
           <span className="flex items-center gap-1.5 text-[12px] text-[#64748b]">
-            <span className="text-[15px]" aria-hidden>
-              👥
-            </span>
+            {participantAvatars.length > 0 ? (
+              <span className="flex items-center">
+                {participantAvatars.slice(0, 3).map((p, i) => (
+                  <MemberAvatarRound
+                    key={`${p.email || p.name || "p"}-${i}`}
+                    avatarUrl={p.avatarUrl}
+                    name={p.name ?? p.email}
+                    email={p.email}
+                    size={18}
+                    className={`ring-2 ring-white ${i > 0 ? "-ml-1.5" : ""}`}
+                  />
+                ))}
+              </span>
+            ) : (
+              <span className="text-[15px]" aria-hidden>
+                👥
+              </span>
+            )}
             <span>{participantCountLabel}</span>
           </span>
 
@@ -248,16 +277,21 @@ export function MeetingCard({
 
           {creatorDisplay ? (
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
-              <div
-                className={
-                  creatorIsFormerMember
-                    ? "flex size-4 shrink-0 items-center justify-center rounded-[18px] bg-[#e2e8f0] text-[8px] font-bold leading-none text-[#94a3b8]"
-                    : "flex size-4 shrink-0 items-center justify-center rounded-[18px] bg-gradient-to-br from-[#4284f4] to-[#34a853] text-[8px] font-bold leading-none text-white"
-                }
-                aria-hidden
-              >
-                {initialsFromParticipant(creatorDisplay)}
-              </div>
+              {creatorIsFormerMember ? (
+                <div
+                  className="flex size-4 shrink-0 items-center justify-center rounded-[18px] bg-[#e2e8f0] text-[8px] font-bold leading-none text-[#94a3b8]"
+                  aria-hidden
+                >
+                  {initialsFromParticipant(creatorDisplay)}
+                </div>
+              ) : (
+                <MemberAvatarRound
+                  avatarUrl={creatorAvatar?.avatarUrl ?? null}
+                  name={creatorAvatar?.name ?? creatorDisplay}
+                  email={creatorAvatar?.email ?? meeting.creator_email ?? ""}
+                  size={16}
+                />
+              )}
               <span
                 className={`truncate pl-0.5 text-[12px] ${
                   creatorIsFormerMember ? "text-[#94a3b8]" : "text-[#64748b]"

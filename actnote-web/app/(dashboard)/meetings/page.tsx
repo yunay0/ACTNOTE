@@ -9,6 +9,7 @@ import { ConnectNotionModal } from "@/components/meetings/ConnectNotionModal";
 import { LimitedFeaturesWithoutNotionModal } from "@/components/meetings/LimitedFeaturesWithoutNotionModal";
 import { HomeNotionStatusBanner } from "@/components/meetings/HomeNotionStatusBanner";
 import { useMeetings } from "@/lib/hooks/useMeetings";
+import { useWorkspaceMemberAvatars } from "@/lib/hooks/useWorkspaceMemberAvatars";
 import { useNotionIntegrationStatus } from "@/lib/hooks/useNotionIntegrationStatus";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
 import { createClient } from "@/lib/supabase/client";
@@ -135,6 +136,7 @@ function MeetingsPageContent() {
   const searchParams = useSearchParams();
   const { meetings, deleteMeeting, hydrated } = useMeetings();
   const { memberships, workspaceId } = useWorkspaceContext();
+  const memberAvatars = useWorkspaceMemberAvatars(workspaceId);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
   useEffect(() => {
@@ -430,6 +432,28 @@ function MeetingsPageContent() {
                 const canDelete = isElevatedWsRole
                   ? true
                   : (isCreatorById || isCreatorByEmail) && !isPublished;
+                const participantAvatars = (meeting.participants ?? []).map((p) => {
+                  const m = memberAvatars.byEmail.get(p.trim().toLowerCase());
+                  return {
+                    avatarUrl: m?.avatarUrl ?? null,
+                    name: m?.name ?? p,
+                    email: m?.email ?? p,
+                  };
+                });
+                const creatorMember =
+                  (meeting.created_by
+                    ? memberAvatars.byUserId.get(meeting.created_by)
+                    : undefined) ??
+                  (meeting.creator_email
+                    ? memberAvatars.byEmail.get(meeting.creator_email.toLowerCase())
+                    : undefined);
+                const creatorAvatar = creatorMember
+                  ? {
+                      avatarUrl: creatorMember.avatarUrl,
+                      name: creatorMember.name,
+                      email: creatorMember.email,
+                    }
+                  : null;
                 return (
                   <MeetingCard
                     key={meeting.id}
@@ -437,6 +461,8 @@ function MeetingsPageContent() {
                     highlighted={highlightId === meeting.id}
                     onDelete={handleDeleteMeeting}
                     canDelete={canDelete}
+                    participantAvatars={participantAvatars}
+                    creatorAvatar={creatorAvatar}
                     onClick={() => router.push(`/meetings/${meeting.id}`)}
                   />
                 );
