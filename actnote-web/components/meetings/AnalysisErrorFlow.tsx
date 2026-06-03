@@ -18,6 +18,9 @@ import { analysisFailureSupportComposeUrl } from "@/lib/meetings/analysis-suppor
 import { responsibleLabelFromSnapshot } from "@/lib/meetings/meeting-attribution";
 import { retryMeetingPipeline } from "@/lib/meetings/retry-pipeline";
 import { useWorkspaceContext } from "@/components/workspace/WorkspaceProvider";
+import { MemberAvatarRound } from "@/components/user/MemberAvatarRound";
+import { resolveMeetingsImageDisplayUrl } from "@/lib/storage/meetings-image-url";
+import { resolveMeetingParticipantDisplays } from "@/lib/meetings/participant-display-labels";
 
 type LoadedMeeting = {
   id: string;
@@ -33,6 +36,13 @@ type LoadedMeeting = {
   responsible_user_id: string | null;
   responsible_display_name: string | null;
   responsible_display_email: string | null;
+};
+
+type WorkspaceMemberWithAvatar = {
+  user_id: string;
+  name: string | null;
+  email: string;
+  avatar_url: string | null;
 };
 
 function normalizeParticipants(raw: unknown): string[] {
@@ -53,6 +63,7 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }): ReactEl
   const [busy, setBusy] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [responsibleLabel, setResponsibleLabel] = useState<string | null>(null);
+  const [members, setMembers] = useState<WorkspaceMemberWithAvatar[]>([]);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -132,11 +143,67 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }): ReactEl
   }, [meetingId, workspaceId]);
 
   useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from("workspace_members")
+        .select("user_id, users(name, email, avatar_url)")
+        .eq("workspace_id", workspaceId);
+      if (cancelled) return;
+      if (error || !data?.length) {
+        setMembers([]);
+        return;
+      }
+      const resolved = await Promise.all(
+        (data as { user_id: string; users: unknown }[]).map(async (r) => {
+          const u = Array.isArray(r.users) ? r.users[0] : r.users;
+          const uo = u && typeof u === "object" ? (u as Record<string, unknown>) : null;
+          const name = typeof uo?.name === "string" ? uo.name : null;
+          const email = typeof uo?.email === "string" ? uo.email : "";
+          const ar = uo?.avatar_url;
+          const stored = typeof ar === "string" && ar.trim() ? ar.trim() : null;
+          const avatar_url = await resolveMeetingsImageDisplayUrl(supabase, stored);
+          return { user_id: r.user_id, name, email, avatar_url };
+        }),
+      );
+      if (!cancelled) setMembers(resolved);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
+
+  useEffect(() => {
     if (row === undefined || row === null) return;
     if (row.status !== "error") {
       router.replace(`/meetings/${meetingId}`);
     }
   }, [row, meetingId, router]);
+
+  const participantDisplays = useMemo(
+    () => (row ? resolveMeetingParticipantDisplays(row.participants, members) : []),
+    [row, members],
+  );
+
+  const responsibleMember = useMemo(
+    () => members.find((m) => m.user_id === row?.responsible_user_id) ?? null,
+    [members, row?.responsible_user_id],
+  );
+
+  const createdByNode = responsibleLabel ? (
+    <span className="inline-flex flex-wrap items-center gap-2 font-medium text-[#0a2540]">
+      <MemberAvatarRound
+        avatarUrl={responsibleMember?.avatar_url ?? null}
+        name={responsibleMember?.name ?? responsibleLabel}
+        email={responsibleMember?.email ?? ""}
+        size={24}
+      />
+      <span>{responsibleLabel}</span>
+    </span>
+  ) : null;
 
   const code = parsePipelineErrorCode(row?.error_message ?? "");
   const kind: AnalysisErrorUxKind = analysisErrorUxKindFromCode(code);
@@ -239,7 +306,8 @@ export function AnalysisErrorFlow({ meetingId }: { meetingId: string }): ReactEl
           meetingTypeRaw={row.meeting_type}
           meetingScheduledAtIso={row.meeting_date}
           description={row.description}
-          participantNames={row.participants}
+          participants={participantDisplays}
+          createdBy={createdByNode}
           responsibleLabel={responsibleLabel}
         />
         {actionErr ? (

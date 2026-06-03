@@ -3,13 +3,16 @@
 import type { ReactElement, ReactNode } from "react";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
+import { MemberAvatarRound } from "@/components/user/MemberAvatarRound";
+import type { MeetingParticipantDisplay } from "@/lib/meetings/participant-display-labels";
 
 export interface DraftMeetingInformationFieldsProps {
   meetingTitle: string | null;
   meetingTypeRaw: string | null;
   meetingScheduledAtIso: string | null;
   description: string | null;
-  participantNames: string[];
+  /** 참석자 — 라벨 + 현재 프로필 사진 */
+  participants: MeetingParticipantDisplay[];
   /** Defaults to em dash when omitted. */
   createdBy?: ReactNode;
   responsibleLabel?: string | null;
@@ -80,17 +83,19 @@ export function DraftMeetingInformationFields(
             Participants<span className="text-[#ff6b35]"> *</span>
           </span>
           <div className="flex flex-wrap gap-2">
-            {props.participantNames.length > 0 ? (
-              props.participantNames.map((p, i) => (
+            {props.participants.length > 0 ? (
+              props.participants.map((p, i) => (
                 <span
-                  key={`${p}-${i}`}
+                  key={`${p.email || p.label}-${i}`}
                   className="inline-flex items-center gap-1.5 rounded-full border border-[#e2e8f0] bg-[#f8fafc] py-1 pl-1.5 pr-3 text-xs font-semibold text-[#0a2540]"
                 >
-                  <span
-                    className="size-2.5 shrink-0 rounded-full border border-[#e2e8f0] bg-white"
-                    aria-hidden
+                  <MemberAvatarRound
+                    avatarUrl={p.avatarUrl}
+                    name={p.name ?? p.label}
+                    email={p.email}
+                    size={20}
                   />
-                  {p}
+                  {p.label}
                 </span>
               ))
             ) : (

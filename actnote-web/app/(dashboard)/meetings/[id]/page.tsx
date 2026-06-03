@@ -42,7 +42,7 @@ import { MeetingAnalysisResultsBlock } from "@/components/meetings/MeetingAnalys
 import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
 import { DraftGuidanceSidebar } from "@/components/meetings/DraftGuidanceSidebar";
 import { MeetingUploadedRecordingReadonlyCard } from "@/components/meetings/MeetingUploadedRecordingReadonlyCard";
-import { resolveMeetingParticipantLabels } from "@/lib/meetings/participant-display-labels";
+import { resolveMeetingParticipantDisplays } from "@/lib/meetings/participant-display-labels";
 import { DraftDeleteMeetingModal } from "@/components/meetings/DraftDeleteMeetingModal";
 import { DraftPublishSuccessModal } from "@/components/meetings/DraftPublishSuccessModal";
 import {
@@ -1297,13 +1297,42 @@ export default function MeetingDetailPage() {
     [members, meeting?.participants],
   );
 
-  const participantDisplayLabels = useMemo(
+  const participantDisplays = useMemo(
     () =>
       meeting
-        ? resolveMeetingParticipantLabels(meeting.participants ?? [], members)
+        ? resolveMeetingParticipantDisplays(meeting.participants ?? [], members)
         : [],
     [meeting, members],
   );
+
+  /** Created by — 프로필 사진 포함 노드 (분석 중 / Draft / Published 공통) */
+  const createdByNode = useMemo(() => {
+    if (responsibleDisplayLabel) {
+      if (responsibleIsFormerMember) {
+        return (
+          <span className="inline-flex items-center gap-2 text-[#94a3b8]">
+            <FormerMemberSnapshotAvatar label={responsibleDisplayLabel} />
+            <span>{responsibleDisplayLabel}</span>
+          </span>
+        );
+      }
+      return (
+        <span className="inline-flex flex-wrap items-center gap-2 font-medium text-[#475569]">
+          {responsibleMember ? <CreatedByAvatar member={responsibleMember} /> : null}
+          <span>{responsibleDisplayLabel}</span>
+        </span>
+      );
+    }
+    if (meeting?.responsible_user_id) {
+      return <span className="italic text-[#94a3b8]">Loading…</span>;
+    }
+    return <span className="text-[#94a3b8]">—</span>;
+  }, [
+    responsibleDisplayLabel,
+    responsibleIsFormerMember,
+    responsibleMember,
+    meeting?.responsible_user_id,
+  ]);
 
   // ─── 로딩 / 에러 ────────────────────────────────────────────
   if (loading) {
@@ -1442,7 +1471,9 @@ export default function MeetingDetailPage() {
     return (membership?.workspace.name ?? workspaceName).trim() || "your";
   })();
 
-  const showDraftNotionBanner = isReady && !isPublished && notionConnected !== null;
+  /** Draft — Notion 안내는 overview(첫 페이지)에서만; Next 후 detail에서는 숨김 */
+  const showDraftNotionBanner =
+    isReady && !isPublished && !draftOnDetailStep && notionConnected !== null;
   /** Published — Notion 안내는 overview(첫 페이지)에서만; Next 후 detail에서는 숨김 */
   const showPublishedNotionBanner =
     isPublished && readOnlySurfaceStep === "overview" && notionConnected !== null;
@@ -1641,28 +1672,8 @@ export default function MeetingDetailPage() {
                   meetingTypeRaw={meeting.meeting_type}
                   meetingScheduledAtIso={meeting.meeting_date ?? meeting.created_at ?? null}
                   description={meeting.description}
-                  participantNames={participantDisplayLabels}
-                  createdBy={
-                    responsibleDisplayLabel ? (
-                      responsibleIsFormerMember ? (
-                        <span className="inline-flex items-center gap-2 text-[#94a3b8]">
-                          <FormerMemberSnapshotAvatar label={responsibleDisplayLabel} />
-                          <span>{responsibleDisplayLabel}</span>
-                        </span>
-                      ) : (
-                        <span className="inline-flex flex-wrap items-center gap-2 font-medium text-[#475569]">
-                          {responsibleMember ? (
-                            <CreatedByAvatar member={responsibleMember} />
-                          ) : null}
-                          <span>{responsibleDisplayLabel}</span>
-                        </span>
-                      )
-                    ) : meeting.responsible_user_id ? (
-                      <span className="italic text-[#94a3b8]">Loading…</span>
-                    ) : (
-                      <span className="text-[#94a3b8]">—</span>
-                    )
-                  }
+                  participants={participantDisplays}
+                  createdBy={createdByNode}
                 />
                 {/* Uploaded Recording 카드: 분석 중(ready 이전)만 표시. */}
                 {showWideAnalyzingLayout ? (
@@ -1716,7 +1727,8 @@ export default function MeetingDetailPage() {
               meetingTypeRaw={meeting.meeting_type}
               meetingScheduledAtIso={meeting.meeting_date ?? meeting.created_at ?? null}
               description={meeting.description}
-              participantNames={participantDisplayLabels}
+              participants={participantDisplays}
+              createdBy={createdByNode}
               responsibleLabel={responsibleDisplayLabel}
               responsibleIsFormerMember={responsibleIsFormerMember}
               recordingUrl={meeting.audio_file_url}
