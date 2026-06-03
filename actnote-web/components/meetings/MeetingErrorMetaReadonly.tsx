@@ -1,15 +1,20 @@
 "use client";
 
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { formatMeetingTypeLabel } from "@/lib/meetings/meeting-types";
 import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
+import { MemberAvatarRound } from "@/components/user/MemberAvatarRound";
+import type { MeetingParticipantDisplay } from "@/lib/meetings/participant-display-labels";
 
 export interface MeetingErrorMetaReadonlyProps {
   meetingTitle: string | null;
   meetingTypeRaw: string | null;
   meetingScheduledAtIso: string | null;
   description: string | null;
-  participantNames: string[];
+  /** 참석자 — 라벨 + 현재 프로필 사진 */
+  participants: MeetingParticipantDisplay[];
+  /** Created by — 프로필 사진 포함 노드 (없으면 em dash) */
+  createdBy?: ReactNode;
   responsibleLabel: string | null;
 }
 
@@ -54,13 +59,19 @@ export function MeetingErrorMetaReadonly(props: MeetingErrorMetaReadonlyProps): 
               Participants<span className="text-[#ff6b35]"> *</span>
             </span>
             <div className="flex flex-wrap gap-2">
-              {props.participantNames.length > 0 ? (
-                props.participantNames.map((p, i) => (
+              {props.participants.length > 0 ? (
+                props.participants.map((p, i) => (
                   <span
-                    key={`${p}-${i}`}
-                    className="rounded-full border border-[#e2e8f0] bg-[#f8fafc] px-3 py-1 text-xs font-semibold text-[#0a2540]"
+                    key={`${p.email || p.label}-${i}`}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-[#e2e8f0] bg-[#f8fafc] py-1 pl-1.5 pr-3 text-xs font-semibold text-[#0a2540]"
                   >
-                    {p}
+                    <MemberAvatarRound
+                      avatarUrl={p.avatarUrl}
+                      name={p.name ?? p.label}
+                      email={p.email}
+                      size={20}
+                    />
+                    {p.label}
                   </span>
                 ))
               ) : (
@@ -69,7 +80,11 @@ export function MeetingErrorMetaReadonly(props: MeetingErrorMetaReadonlyProps): 
             </div>
           </div>
           <MetaField label="Created by">
-            {props.responsibleLabel?.trim() || "—"}
+            {props.createdBy ?? (
+              <span className="text-[#94a3b8]">
+                {props.responsibleLabel?.trim() || "—"}
+              </span>
+            )}
           </MetaField>
         </div>
       </section>

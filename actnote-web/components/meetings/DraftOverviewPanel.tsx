@@ -1,10 +1,11 @@
 "use client";
 
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 import { DraftSectionHeading } from "@/components/meetings/DraftSectionHeading";
 import { DraftMeetingInformationFields } from "@/components/meetings/DraftMeetingInformationFields";
 import { MeetingUploadedRecordingReadonlyCard } from "@/components/meetings/MeetingUploadedRecordingReadonlyCard";
+import type { MeetingParticipantDisplay } from "@/lib/meetings/participant-display-labels";
 
 function resolveRecordingLabel(
   fileName: string | null | undefined,
@@ -26,7 +27,9 @@ interface DraftOverviewPanelProps {
   meetingTypeRaw: string | null;
   meetingScheduledAtIso: string | null;
   description: string | null;
-  participantNames: string[];
+  participants: MeetingParticipantDisplay[];
+  /** Created by — 프로필 사진을 포함한 노드 (없으면 responsibleLabel 폴백) */
+  createdBy?: ReactNode;
   responsibleLabel: string | null;
   responsibleIsFormerMember?: boolean;
   recordingFileName?: string | null;
@@ -52,7 +55,8 @@ export function DraftOverviewPanel(props: DraftOverviewPanelProps): ReactElement
         meetingTypeRaw={props.meetingTypeRaw}
         meetingScheduledAtIso={props.meetingScheduledAtIso}
         description={props.description}
-        participantNames={props.participantNames}
+        participants={props.participants}
+        createdBy={props.createdBy}
         responsibleLabel={props.responsibleLabel}
         responsibleIsFormerMember={props.responsibleIsFormerMember}
       />
