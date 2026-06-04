@@ -607,6 +607,31 @@ export default function MeetingDetailPage() {
     return () => clearInterval(interval);
   }, [meeting, fetchMeeting]);
 
+  // 발행 직후 Notion push(Modal 백그라운드)가 notion_page_id 를 기록할 때까지 짧게 폴링 →
+  // 백엔드가 끝나는 즉시 "Published to Notion" 파란 배너로 자동 전환 (수동 새로고침 불필요).
+  // push 실패 시 무한 폴링 방지를 위해 ~2분(40회) 상한.
+  useEffect(() => {
+    const published = meeting?.approval_status === "published";
+    const awaitingNotionSync =
+      published && notionConnected === true && !meeting?.notion_page_id?.trim();
+    if (!awaitingNotionSync) return;
+    let attempts = 0;
+    const interval = setInterval(() => {
+      attempts += 1;
+      if (attempts > 40) {
+        clearInterval(interval);
+        return;
+      }
+      void fetchMeeting();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [
+    meeting?.approval_status,
+    meeting?.notion_page_id,
+    notionConnected,
+    fetchMeeting,
+  ]);
+
   useEffect(() => {
     const url = meeting?.audio_file_url?.trim() ?? "";
     const persistedDuration = meeting?.duration_seconds;
@@ -1951,37 +1976,13 @@ export default function MeetingDetailPage() {
           aria-label="Meeting actions during analysis"
           className="fixed bottom-0 left-[240px] right-0 z-[42] flex flex-wrap items-center justify-end gap-3 border-t border-[#e2e8f0] bg-white/95 px-6 py-4 shadow-[0_-4px_24px_rgba(10,37,64,0.08)] backdrop-blur supports-[backdrop-filter]:bg-white/90"
         >
-          <button
-            type="button"
-            onClick={enterEditMode}
-            disabled={!isReady}
-            className="flex h-11 min-w-[5.5rem] items-center justify-center gap-2 rounded-[10px] border-2 border-[#e2e8f0] bg-white px-5 text-[14px] font-bold text-[#0f172a] transition-colors hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Pencil className="h-4 w-4" aria-hidden /> Edit
-          </button>
+          {/* 분석 중에는 Delete 만 노출 (Edit/Publish 는 분석 완료 후 Draft 단계에서) */}
           <button
             type="button"
             onClick={openDeleteMeetingModal}
             className="flex h-11 min-w-[7rem] items-center justify-center rounded-[10px] bg-red-600 px-6 text-[14px] font-bold text-white transition-colors hover:bg-red-700"
           >
             Delete
-          </button>
-          <button
-            type="button"
-            onClick={() => void handlePublishClick()}
-            disabled={publishButtonDisabled || !isReady}
-            className="inline-flex h-11 min-w-[8rem] items-center justify-center gap-2 rounded-[10px] px-8 text-[14px] font-bold text-white shadow-[0px_4px_8px_rgba(255,107,53,0.25)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            style={{ background: "linear-gradient(134deg, #ff6b35 0%, #ff8555 100%)" }}
-          >
-            {publishing ? (
-              <span
-                className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"
-                aria-hidden
-              />
-            ) : (
-              <Send className="h-4 w-4" aria-hidden />
-            )}
-            Publish
           </button>
         </div>
       ) : null}
