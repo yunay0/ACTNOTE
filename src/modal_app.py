@@ -19,10 +19,17 @@
 Secret "actnote-secrets" (Modal 대시보드) 필수 키:
     OPENAI_API_KEY, ANTHROPIC_API_KEY, HUGGINGFACE_TOKEN,
     SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_STORAGE_BUCKET,
-    ACTNOTE_ENCRYPTION_KEY, RESEND_API_KEY, EMAIL_FROM, NEXT_PUBLIC_APP_URL,
+    ACTNOTE_ENCRYPTION_KEY, EMAIL_FROM, NEXT_PUBLIC_APP_URL,
     NOTION_CLIENT_ID, NOTION_CLIENT_SECRET,
     USE_MODAL_DIARIZATION=true, MODAL_DIARIZATION_URL_TTL,
     MODAL_TRIGGER_SECRET   ← Next.js 라우트가 보내는 X-Actnote-Secret 과 동일 값
+
+메일 발송 (send_email 우선순위: SMTP → Resend → dry_run; SMTP-only 결정):
+    SMTP_USER       : 발신 Gmail 주소 (예: ttojo6@gmail.com)
+    SMTP_PASSWORD   : 그 Gmail 의 앱 비밀번호(16자) — 일반 비밀번호 아님
+    SMTP_HOST       : (선택) 기본 smtp.gmail.com
+    EMAIL_FROM      : (선택) "From" 헤더. 미설정 시 Actnote <SMTP_USER>
+    RESEND_API_KEY  : (deprecated) SMTP 미설정 시에만 폴백. SMTP 설정 시 무시됨
 
 배포 후 두 엔드포인트 URL 을 Next.js env 에 설정:
     MODAL_PIPELINE_TRIGGER_URL, MODAL_PUBLISH_TRIGGER_URL  (+ MODAL_TRIGGER_SECRET)
