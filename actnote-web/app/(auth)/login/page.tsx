@@ -1,10 +1,9 @@
 "use client";
 
 import { Suspense, useEffect } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { AuthSplitShell } from "@/components/auth/AuthSplitShell";
 import { AuthSocialChrome } from "@/components/auth/AuthSocialChrome";
-import { PersonalEmailBlockModal } from "@/components/auth/PersonalEmailBlockModal";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
 import { extractInviteEmailFromReturnPath } from "@/lib/auth/invite-token";
 import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
@@ -14,7 +13,6 @@ import { clearStoredWorkspaceId } from "@/lib/workspace/storage";
  */
 function LoginForm() {
   const searchParams = useSearchParams();
-  const router = useRouter();
 
   useEffect(() => {
     clearStoredWorkspaceId();
@@ -22,14 +20,11 @@ function LoginForm() {
   const returnTo = getSafeInternalReturnPath(searchParams.get("next"));
   const verified = searchParams.get("verified") === "1";
   const urlError = searchParams.get("error");
-  const blockedDomain = searchParams.get("domain") ?? "";
   const inviteEmailFromQuery = searchParams.get("invite_email")?.trim();
   const loginHintEmail =
     (inviteEmailFromQuery && inviteEmailFromQuery.includes("@")
       ? inviteEmailFromQuery
       : extractInviteEmailFromReturnPath(returnTo ?? null)) ?? null;
-
-  const isPersonalEmailBlocked = urlError === "personal_email";
 
   let queryBanner: { kind: "success" | "error"; text: string } | null = null;
   if (verified) {
@@ -55,19 +50,8 @@ function LoginForm() {
     };
   }
 
-  function handleRetryWithCompanyAccount() {
-    // 에러 파라미터 제거 후 동일 페이지로 돌아와 Google OAuth 재시도
-    router.replace("/login" + (returnTo ? `?next=${encodeURIComponent(returnTo)}` : ""));
-  }
-
   return (
     <>
-      {isPersonalEmailBlocked && (
-        <PersonalEmailBlockModal
-          domain={blockedDomain}
-          onRetry={handleRetryWithCompanyAccount}
-        />
-      )}
       <AuthSplitShell>
         <div className="flex flex-col gap-3 pb-4 text-center">
           <h1 className="text-[31.5px] font-bold leading-tight tracking-tight text-[#0a2540]">Welcome to ACTNOTE</h1>
