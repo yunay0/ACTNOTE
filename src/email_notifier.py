@@ -238,7 +238,7 @@ def _common_footer(app_url: str) -> str:
         f'<hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">'
         f'<p style="color:#6b7280;font-size:12px;line-height:1.5">'
         f'이 메일은 <a href="{safe_url}" style="color:#6b7280">Actnote</a> 에서 자동 발송되었습니다.<br>'
-        f'문의: support@actnote.xyz'
+        f'문의: ttojo6@gmail.com'
         f'</p>'
     )
 

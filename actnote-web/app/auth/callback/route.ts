@@ -4,7 +4,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 import { getSafeInternalReturnPath } from "@/lib/auth/safe-return-path";
-import { isFreeEmailDomain } from "@/lib/auth/domain-check";
 
 function callbackRedirectPath(rawNext: string | null): string {
   const path = getSafeInternalReturnPath(rawNext) ?? "/workspace/select";
@@ -39,16 +38,6 @@ export async function GET(request: Request) {
       if (profileErr || !dbUser) {
         await supabase.auth.signOut();
         return NextResponse.redirect(`${origin}/login?error=account_deleted`);
-      }
-
-      const email = user.email ?? "";
-
-      if (isFreeEmailDomain(email)) {
-        const domain = email.split("@")[1] ?? "";
-        await supabase.auth.signOut();
-        return NextResponse.redirect(
-          `${origin}/login?error=personal_email&domain=${encodeURIComponent(domain)}`
-        );
       }
 
       // Bug 1 — Defensive guard: after exchange, public.users 행이 없으면 (계정 삭제 후 OAuth 재진입 등의

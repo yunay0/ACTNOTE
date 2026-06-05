@@ -12,7 +12,7 @@ function supportMailbox(): string {
     typeof process !== "undefined" && process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim()
       ? process.env.NEXT_PUBLIC_SUPPORT_EMAIL.trim()
       : "";
-  return fromEnv || "support@actnote.xyz";
+  return fromEnv || "ttojo6@gmail.com";
 }
 
 export type SupportAnalysisMailParams = {

@@ -7,7 +7,6 @@ import {
   resolvePublicAppUrl,
   sendViaSmtp,
 } from "@/lib/server/invite-email";
-import { isFreeEmailDomain } from "@/lib/auth/domain-check";
 
 export const runtime = "nodejs";
 
@@ -37,14 +36,6 @@ export async function POST(req: NextRequest) {
   }
 
   const normalizedEmail = invite.invited_email.trim().toLowerCase();
-
-  if (isFreeEmailDomain(normalizedEmail)) {
-    const domain = normalizedEmail.split("@")[1] ?? "";
-    return NextResponse.json(
-      { error: "personal_email_not_allowed", domain },
-      { status: 400 }
-    );
-  }
 
   const supabase = await createClient();
   const {

@@ -14,7 +14,7 @@ def default_support_mailbox() -> str:
         os.getenv("NEXT_PUBLIC_SUPPORT_EMAIL", "").strip()
         or os.getenv("ACTNOTE_SUPPORT_EMAIL", "").strip()
     )
-    return raw or "actnote.support@gmail.com"
+    return raw or "ttojo6@gmail.com"
 
 
 def support_mailto_analysis_failed_href(meeting_title: str) -> str:
