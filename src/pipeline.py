@@ -17,6 +17,7 @@ from src import (
     stt,
 )
 from src import crag as _crag
+from src.lang import output_language
 from src.policy import get_opt_out_status
 from src.storage import LocalStorage, StorageBackend, SupabaseStorage
 
@@ -287,13 +288,14 @@ def run_pipeline(
     meeting_title: str | None = None,
     meeting_type: str | None = None,
     tracker: cost_tracker.CostTracker | None = None,
-    language: str = "en",
+    language: str | None = None,
     backend: StorageBackend | None = None,
     diarization_remote_url: str | None = None,
 ) -> dict:
     """음성 파일에서 최종 추출 결과까지 실행하고 중간 산출물을 저장한다.
 
-    Whisper ``language`` 는 ISO 639-1 코드 (기본값 ``en``).
+    Whisper ``language`` 는 ISO 639-1 코드. ``None`` 이면 ``ACTNOTE_OUTPUT_LANG``
+    환경변수(기본 ``en``)를 따른다 — 한국어 데모 시 ``ko``.
 
     Steps 1-4 실패 시 예외를 그대로 전파한다.
     Steps 5-6 (A.U.D.N, 임베딩) 실패 시 에러를 _pipeline_meta에 기록하고 4단계 결과를 반환한다.
@@ -304,6 +306,9 @@ def run_pipeline(
     넘길 Supabase signed URL. 로컬 경로(기본)에서는 무시된다.
     """
     store: StorageBackend = backend if backend is not None else LocalStorage(Path(output_dir))
+
+    # 출력 언어 토글 (ACTNOTE_OUTPUT_LANG, 기본 en). 명시 인자가 있으면 우선.
+    language = language or output_language()
 
     # SEC-001: 옵트아웃 상태 조회 (SupabaseStorage 전용, 실패 시 보수적으로 True)
     _sb_for_policy = store.client if isinstance(store, SupabaseStorage) else None
@@ -918,7 +923,7 @@ if __name__ == "__main__":
         sys.exit(1)
     ap = sys.argv[1]
     od = sys.argv[2] if len(sys.argv) > 2 else "output"
-    lang = sys.argv[3] if len(sys.argv) > 3 else "en"
+    lang = sys.argv[3] if len(sys.argv) > 3 else None  # None → ACTNOTE_OUTPUT_LANG
     uid = sys.argv[4] if len(sys.argv) > 4 else "cli-user"
     wid = sys.argv[5] if len(sys.argv) > 5 else "cli-workspace"
     mid = sys.argv[6] if len(sys.argv) > 6 else Path(ap).stem

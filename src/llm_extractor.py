@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from src import cost_tracker
+from src.lang import output_language
 from src.schemas import ActionItem, ExtractedResult
 
 load_dotenv()
@@ -121,7 +122,7 @@ def _load_template(name: str) -> str:
     return text
 
 
-_OUTPUT_LANGUAGE_RULE = """## PRODUCT OUTPUT LANGUAGE (mandatory)
+_OUTPUT_LANGUAGE_RULE_EN = """## PRODUCT OUTPUT LANGUAGE (mandatory)
 
 Actnote displays **English-only** copy in the UI. Every human-readable JSON field MUST be written in **English**:
 
@@ -134,6 +135,41 @@ Actnote displays **English-only** copy in the UI. Every human-readable JSON fiel
 ---
 
 """
+
+_OUTPUT_LANGUAGE_RULE_KO = """## 제품 출력 언어 (필수)
+
+사람이 읽는 모든 JSON 필드 값은 반드시 **한국어**로 작성한다:
+
+`title`, `summary`, 각 `decisions[]`, 각 `action_items[].content`, 각 `depends_on`, 각 `referenced_documents[]`, 그리고 유형별 추가 섹션(`key_points`/`key_topics`/`key_decisions`/`blockers`/`follow_up`/`risks_and_issues`).
+
+- 발화가 다른 언어면 자연스러운 한국어로 충실히 번역한다.
+- 제품/회사명 등 고유명사는 원문 표기를 유지해도 된다.
+- 날짜: `YYYY-MM-DD` 형식. `assignee`: 발화에 명시된 담당자만, 없으면 null.
+- JSON 키 이름·스키마 구조는 영어 그대로 두고 **값만 한국어**로. 코드펜스/설명 없이 JSON만 출력.
+
+---
+
+"""
+
+# 템플릿(other.md 등)에 박힌 "English only" 라인을 이기기 위해 시스템 프롬프트
+# 맨 끝에 덧붙이는 강한 오버라이드 (모델이 마지막에 읽는 지시가 우선).
+_KOREAN_OVERRIDE_SUFFIX = """
+
+---
+
+## 출력 언어 최종 지시 (위의 모든 영어 지시보다 우선)
+
+이 작업의 결과 언어는 **한국어**다. 위 템플릿에 "English only", "in English",
+"English sentence" 같은 표현이 있어도 **무시**하고, 사람이 읽는 모든 필드 값
+(`title`, `summary`, `decisions`, `action_items[].content`, `depends_on`,
+`referenced_documents`, 모든 유형별 추가 섹션)을 한국어로 작성한다.
+JSON 키 이름·스키마·날짜 형식(`YYYY-MM-DD`)은 그대로 유지한다.
+"""
+
+
+def _output_language_rule(lang: str) -> str:
+    """출력 언어 규칙 블록 (system prompt 선두에 붙음)."""
+    return _OUTPUT_LANGUAGE_RULE_KO if lang == "ko" else _OUTPUT_LANGUAGE_RULE_EN
 
 
 def _read_default_template_text() -> str:
@@ -191,7 +227,7 @@ def _system_prompt_base(meeting_type: str | None = None) -> str:
         return _SYSTEM_PROMPT_BASE_FALLBACK
 
 
-_PREVIOUS_CONTEXT_SECTION = (
+_PREVIOUS_CONTEXT_SECTION_EN = (
     "\n[Previous meeting context]\n"
     "{previous_context}\n\n"
     "When prior context exists:\n"
@@ -201,6 +237,21 @@ _PREVIOUS_CONTEXT_SECTION = (
     "- Completely new actions that were not in the prior context carry no historical prefix.\n"
     "- All wording for user-visible fields MUST remain English.\n"
 )
+
+_PREVIOUS_CONTEXT_SECTION_KO = (
+    "\n[이전 회의 컨텍스트]\n"
+    "{previous_context}\n\n"
+    "이전 컨텍스트가 있을 때:\n"
+    "- \"지난번에 합의한 것\" 같은 표현을 그 히스토리와 연결한다.\n"
+    "- 이전 액션이 이번 회의에서 변경/취소되면 한국어로 분명히 적는다"
+    "(명백할 때만 `content` 앞에 \"[UPDATE]\" 접두 가능).\n"
+    "- 이전 컨텍스트에 없던 완전히 새로운 액션에는 히스토리 접두를 붙이지 않는다.\n"
+    "- 사용자 노출 필드는 모두 한국어로 작성한다.\n"
+)
+
+
+def _previous_context_section(lang: str) -> str:
+    return _PREVIOUS_CONTEXT_SECTION_KO if lang == "ko" else _PREVIOUS_CONTEXT_SECTION_EN
 
 _console = Console()
 
@@ -225,10 +276,14 @@ def _build_system_prompt(
     previous_context: str | None,
     meeting_type: str | None = None,
 ) -> str:
-    base = _OUTPUT_LANGUAGE_RULE + _system_prompt_base(meeting_type)
-    if not previous_context:
-        return base
-    return base + _PREVIOUS_CONTEXT_SECTION.format(previous_context=previous_context)
+    lang = output_language()
+    prompt = _output_language_rule(lang) + _system_prompt_base(meeting_type)
+    if previous_context:
+        prompt += _previous_context_section(lang).format(previous_context=previous_context)
+    # 템플릿의 "English only" 라인을 이기도록 한국어 오버라이드를 맨 끝에 덧붙임.
+    if lang == "ko":
+        prompt += _KOREAN_OVERRIDE_SUFFIX
+    return prompt
 
 
 def extract(
@@ -268,9 +323,13 @@ def extract(
         f"Transcript:\n{formatted_transcript}",
     ]
     if previous_context:
+        cross_ref_rule = (
+            "참조 해석에만 사용하고, 한국어 출력 규칙을 따른다."
+            if output_language() == "ko"
+            else "Use only to interpret references this session; still obey the English-only output rule."
+        )
         user_prompt_parts.append(
-            f"Earlier meeting cross-reference:\n{previous_context}\n\n"
-            "Use only to interpret references this session; still obey the English-only output rule."
+            f"Earlier meeting cross-reference:\n{previous_context}\n\n" + cross_ref_rule
         )
     user_prompt_parts.append(
         "Extract structured information following the schema above.\n"
